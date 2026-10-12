@@ -1,3 +1,15 @@
+# Environment
+.env
+.env.local
+.env.production
+
+# Java / Maven
+target/
+*.class
+*.jar
+*.war
+!.mvn/wrapper/maven-wrapper.jar
+
 HELP.md
 target/
 .mvn/wrapper/maven-wrapper.jar
