@@ -1,0 +1,31 @@
+package uz.minipolya.minipolya_backend.dto.response;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class PricingRuleResponse {
+
+    private Long id;
+    private Long stadiumId;
+    private Integer dayOfWeek;
+    private LocalTime startTime;
+    private LocalTime endTime;
+    private Integer pricePerHour;
+
+    @JsonProperty("isActive")
+    private boolean isActive;
+
+    private OffsetDateTime createdAt;
+}
