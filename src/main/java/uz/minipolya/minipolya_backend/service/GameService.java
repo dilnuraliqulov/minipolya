@@ -16,6 +16,7 @@ import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
+import uz.minipolya.minipolya_backend.entity.Notification;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.User;
@@ -74,6 +75,7 @@ public class GameService {
     private final GameParticipantMapper participantMapper;
     private final AppProperties appProperties;
     private final PaymentService paymentService;
+    private final NotificationService notificationService;
 
     @Transactional
     public GameDetailResponse createGame(CreateGameRequest request, Long creatorUserId) {
@@ -156,6 +158,9 @@ public class GameService {
 
         GameParticipant participant = participantRepository.save(GameParticipant.builder()
                 .game(game).user(user).side(assignedSide).status(GameParticipant.Status.JOINED).build());
+        safeNotify(() -> notificationService.notify(game.getCreator().getId(),
+                Notification.Type.GAME_PLAYER_JOINED, "Новый игрок",
+                user.getName() + " присоединился к вашей игре.", Notification.ReferenceType.GAME, game.getId()));
         log.info("Game joined: gameId={} userId={} side={}", gameId, userId, assignedSide);
         return participantMapper.toResponse(participant);
     }
@@ -180,6 +185,10 @@ public class GameService {
             paymentService.refundFullPayment(participant.getPayment().getId(), "Left the game");
         }
         participantRepository.delete(participant);
+        safeNotify(() -> notificationService.notify(game.getCreator().getId(),
+                Notification.Type.GAME_PLAYER_LEFT, "Игрок вышел",
+                participant.getUser().getName() + " покинул вашу игру.",
+                Notification.ReferenceType.GAME, game.getId()));
         log.info("Game left: gameId={} userId={}", gameId, userId);
     }
 
@@ -213,6 +222,8 @@ public class GameService {
         game.setStatus("cancelled_by_creator");
         gameRepository.save(game);
         refundPaidParticipants(game, "Game cancelled by creator");
+        notifyParticipants(game, Notification.Type.GAME_CANCELLED, "Игра отменена",
+                "Игра в «" + game.getStadium().getName() + "» отменена создателем.");
         log.info("Game cancelled by creator: id={} userId={}", gameId, userId);
     }
 
@@ -238,6 +249,8 @@ public class GameService {
                 game.setStatus("cancelled_slot_taken");
                 gameRepository.save(game);
                 refundPaidParticipants(game, "Slot taken by another booking");
+                notifyParticipants(game, Notification.Type.GAME_CANCELLED, "Игра отменена",
+                        "Слот игры в «" + game.getStadium().getName() + "» занят другим бронированием.");
                 log.info("Game {} cancelled: slot taken on stadium {}", game.getId(), stadiumId);
             }
         }
@@ -252,6 +265,8 @@ public class GameService {
             game.setStatus("cancelled_not_filled");
             gameRepository.save(game);
             refundPaidParticipants(game, "Game did not fill in time");
+            notifyParticipants(game, Notification.Type.GAME_CANCELLED, "Игра отменена",
+                    "Игра в «" + game.getStadium().getName() + "» не набрала игроков вовремя.");
         }
         if (!expired.isEmpty()) {
             log.info("Cancelled {} unfilled game(s)", expired.size());
@@ -279,6 +294,8 @@ public class GameService {
             game.setStatus("confirmed");
             assignSides(game);
             gameRepository.save(game);
+            notifyParticipants(game, Notification.Type.GAME_CONFIRMED, "Игра подтверждена",
+                    "Игра в «" + game.getStadium().getName() + "» подтверждена. Слот забронирован.");
             log.info("Game confirmed: id={} bookingId={}", game.getId(), saved.getId());
         } catch (DataIntegrityViolationException ex) {
             game.setStatus("cancelled_slot_taken");
@@ -367,5 +384,24 @@ public class GameService {
     private Game requireGame(Long gameId) {
         return gameRepository.findById(gameId)
                 .orElseThrow(() -> new ResourceNotFoundException("Game not found"));
+    }
+
+    private void notifyParticipants(Game game, Notification.Type type, String title, String message) {
+        for (GameParticipant participant : participantRepository.findByGameId(game.getId())) {
+            if (participant.getUser() != null) {
+                Long uid = participant.getUser().getId();
+                safeNotify(() -> notificationService.notify(uid, type, title, message,
+                        Notification.ReferenceType.GAME, game.getId()));
+            }
+        }
+    }
+
+    /** Notifications are best-effort — a failure must never break the game flow. */
+    private void safeNotify(Runnable action) {
+        try {
+            action.run();
+        } catch (Exception ex) {
+            log.warn("Notification failed: {}", ex.toString());
+        }
     }
 }

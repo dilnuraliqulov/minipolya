@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.dto.request.CreateReviewRequest;
 import uz.minipolya.minipolya_backend.dto.response.ReviewResponse;
+import uz.minipolya.minipolya_backend.entity.Notification;
 import uz.minipolya.minipolya_backend.entity.Review;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
@@ -38,6 +39,7 @@ public class ReviewService {
     private final BookingRepository bookingRepository;
     private final UserRepository userRepository;
     private final ReviewMapper reviewMapper;
+    private final NotificationService notificationService;
 
     @Transactional
     public ReviewResponse createReview(CreateReviewRequest request, Long userId) {
@@ -77,6 +79,14 @@ public class ReviewService {
         review.setOwnerReply(reply);
         review.setOwnerReplyAt(OffsetDateTime.now(ZoneOffset.UTC));
         Review saved = reviewRepository.save(review);
+        Long reviewerId = review.getUser().getId();
+        try {
+            notificationService.notify(reviewerId, Notification.Type.REVIEW_REPLY, "Ответ на отзыв",
+                    "Владелец стадиона ответил на ваш отзыв о «" + review.getStadium().getName() + "».",
+                    Notification.ReferenceType.REVIEW, review.getId());
+        } catch (Exception ex) {
+            log.warn("Review-reply notification failed: {}", ex.toString());
+        }
         log.info("Owner replied to review: id={} ownerId={}", reviewId, ownerUserId);
         return reviewMapper.toResponse(saved);
     }

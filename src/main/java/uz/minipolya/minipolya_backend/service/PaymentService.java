@@ -11,6 +11,7 @@ import uz.minipolya.minipolya_backend.dto.response.PaymentResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
+import uz.minipolya.minipolya_backend.entity.Notification;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
@@ -53,6 +54,7 @@ public class PaymentService {
     private final PaymentMapper paymentMapper;
     private final List<PaymentProvider> paymentProviders;
     private final GameService gameService;
+    private final NotificationService notificationService;
 
     public PaymentService(PaymentRepository paymentRepository,
                           BookingRepository bookingRepository,
@@ -61,7 +63,8 @@ public class PaymentService {
                           GameParticipantRepository gameParticipantRepository,
                           PaymentMapper paymentMapper,
                           List<PaymentProvider> paymentProviders,
-                          @Lazy GameService gameService) {
+                          @Lazy GameService gameService,
+                          NotificationService notificationService) {
         this.paymentRepository = paymentRepository;
         this.bookingRepository = bookingRepository;
         this.userRepository = userRepository;
@@ -70,6 +73,7 @@ public class PaymentService {
         this.paymentMapper = paymentMapper;
         this.paymentProviders = paymentProviders;
         this.gameService = gameService;
+        this.notificationService = notificationService;
     }
 
     @Transactional
@@ -258,6 +262,17 @@ public class PaymentService {
         booking.setStatus("confirmed");
         booking.setExpiresAt(null);
         bookingRepository.save(booking);
+        if (booking.getUser() != null) {
+            try {
+                notificationService.notify(booking.getUser().getId(),
+                        Notification.Type.BOOKING_CONFIRMED,
+                        "Бронь подтверждена",
+                        "Ваша бронь в «" + booking.getStadium().getName() + "» подтверждена.",
+                        Notification.ReferenceType.BOOKING, booking.getId());
+            } catch (Exception ex) {
+                log.warn("Booking-confirmed notification failed: {}", ex.toString());
+            }
+        }
     }
 
     /**

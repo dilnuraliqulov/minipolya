@@ -13,6 +13,7 @@ import uz.minipolya.minipolya_backend.dto.request.CreateBookingRequest;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
+import uz.minipolya.minipolya_backend.entity.Notification;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
@@ -62,6 +63,7 @@ public class BookingService {
     private final AppProperties appProperties;
     private final PaymentService paymentService;
     private final GameService gameService;
+    private final NotificationService notificationService;
 
     @Transactional
     public BookingResponse createBooking(Long userId, CreateBookingRequest request) {
@@ -151,6 +153,9 @@ public class BookingService {
         if (refundAmount > 0) {
             paymentService.refundBookingPayment(booking.getId(), refundAmount, reason);
         }
+        safeNotify(() -> notificationService.notify(userId, Notification.Type.BOOKING_CANCELLED,
+                "Бронь отменена", "Вы отменили бронь в «" + booking.getStadium().getName() + "».",
+                Notification.ReferenceType.BOOKING, booking.getId()));
         log.info("Booking cancelled by user: id={} userId={} refundPercent={} refundAmount={}",
                 bookingId, userId, refundPercent, refundAmount);
         return withRefund(booking, refundAmount);
@@ -169,6 +174,14 @@ public class BookingService {
         applyCancellation(booking, "cancelled_by_owner", reason);
         if (refundAmount > 0) {
             paymentService.refundBookingPayment(booking.getId(), refundAmount, reason);
+        }
+        if (booking.getUser() != null) {
+            Long uid = booking.getUser().getId();
+            safeNotify(() -> notificationService.notify(uid, Notification.Type.BOOKING_CANCELLED,
+                    "Бронь отменена владельцем",
+                    "Владелец отменил вашу бронь в «" + booking.getStadium().getName()
+                            + "». Возврат средств оформлен.",
+                    Notification.ReferenceType.BOOKING, booking.getId()));
         }
         log.info("Booking cancelled by owner: id={} ownerId={} refundAmount={}", bookingId, ownerId, refundAmount);
         return withRefund(booking, refundAmount);
@@ -245,5 +258,14 @@ public class BookingService {
     private Booking requireBooking(Long bookingId) {
         return bookingRepository.findById(bookingId)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
+    }
+
+    /** Notifications are best-effort — a failure must never break the booking flow. */
+    private void safeNotify(Runnable action) {
+        try {
+            action.run();
+        } catch (Exception ex) {
+            log.warn("Notification failed: {}", ex.toString());
+        }
     }
 }

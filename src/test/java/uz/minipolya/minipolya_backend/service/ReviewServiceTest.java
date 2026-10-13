@@ -40,6 +40,7 @@ class ReviewServiceTest {
     private FavoriteRepository favoriteRepository;
     private ReviewMapper reviewMapper;
     private StadiumMapper stadiumMapper;
+    private NotificationService notificationService;
 
     private ReviewService reviewService;
     private FavoriteService favoriteService;
@@ -57,9 +58,10 @@ class ReviewServiceTest {
         favoriteRepository = mock(FavoriteRepository.class);
         reviewMapper = mock(ReviewMapper.class);
         stadiumMapper = mock(StadiumMapper.class);
+        notificationService = mock(NotificationService.class);
 
         reviewService = new ReviewService(reviewRepository, stadiumRepository, bookingRepository,
-                userRepository, reviewMapper);
+                userRepository, reviewMapper, notificationService);
         favoriteService = new FavoriteService(favoriteRepository, stadiumRepository, userRepository,
                 reviewRepository, stadiumMapper);
 

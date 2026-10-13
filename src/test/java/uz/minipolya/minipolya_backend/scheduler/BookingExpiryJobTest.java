@@ -7,6 +7,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
+import uz.minipolya.minipolya_backend.service.NotificationService;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -23,6 +24,8 @@ class BookingExpiryJobTest {
 
     @Mock
     private BookingRepository bookingRepository;
+    @Mock
+    private NotificationService notificationService;
 
     @InjectMocks
     private BookingExpiryJob job;

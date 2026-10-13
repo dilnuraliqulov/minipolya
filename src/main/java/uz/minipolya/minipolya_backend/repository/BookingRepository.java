@@ -22,6 +22,9 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     /** Used by BookingExpiryJob to find pending bookings past their hold deadline. */
     List<Booking> findByStatusAndExpiresAtBefore(String status, OffsetDateTime time);
 
+    /** Used by ReminderJob to find bookings starting within a window. */
+    List<Booking> findByStatusAndStartsAtBetween(String status, OffsetDateTime from, OffsetDateTime to);
+
     Page<Booking> findByUserId(Long userId, Pageable pageable);
 
     Page<Booking> findByStadiumId(Long stadiumId, Pageable pageable);

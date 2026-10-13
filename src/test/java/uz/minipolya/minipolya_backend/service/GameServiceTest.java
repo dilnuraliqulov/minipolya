@@ -54,6 +54,7 @@ class GameServiceTest {
     private GameMapper gameMapper;
     private GameParticipantMapper participantMapper;
     private PaymentService paymentService;
+    private NotificationService notificationService;
     private GameService service;
 
     private User creator;
@@ -72,10 +73,11 @@ class GameServiceTest {
         gameMapper = mock(GameMapper.class);
         participantMapper = mock(GameParticipantMapper.class);
         paymentService = mock(PaymentService.class);
+        notificationService = mock(NotificationService.class);
 
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, pricingRuleRepository, priceCalculator, bookingRepository,
-                gameMapper, participantMapper, new AppProperties(), paymentService);
+                gameMapper, participantMapper, new AppProperties(), paymentService, notificationService);
 
         creator = User.builder().id(7L).name("Creator").build();
         stadium = Stadium.builder().id(1L).status("approved").isActive(true).pricePerHour(50_000).build();
