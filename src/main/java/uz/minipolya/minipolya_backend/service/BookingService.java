@@ -41,8 +41,8 @@ import java.time.ZonedDateTime;
  * bookings_no_overlap} EXCLUDE constraint is the ultimate guard; this service
  * also cancels any waiting games whose slot a new booking takes.
  *
- * <p>Money movement (refund payment rows) is wired in step 9 and participant
- * refunds in step 10; here we compute refund amounts and transition statuses.
+ * <p>Cancellation refunds are issued as payment rows via {@link PaymentService}.
+ * Participant refunds for games whose slot is taken are wired in step 10.
  */
 @Slf4j
 @Service
@@ -62,6 +62,7 @@ public class BookingService {
     private final RefundCalculator refundCalculator;
     private final BookingMapper bookingMapper;
     private final AppProperties appProperties;
+    private final PaymentService paymentService;
 
     @Transactional
     public BookingResponse createBooking(Long userId, CreateBookingRequest request) {
@@ -148,6 +149,9 @@ public class BookingService {
         int refundAmount = refundCalculator.refundAmount(booking.getPrice(), refundPercent);
 
         applyCancellation(booking, "cancelled_by_user", reason);
+        if (refundAmount > 0) {
+            paymentService.refundBookingPayment(booking.getId(), refundAmount, reason);
+        }
         log.info("Booking cancelled by user: id={} userId={} refundPercent={} refundAmount={}",
                 bookingId, userId, refundPercent, refundAmount);
         return withRefund(booking, refundAmount);
@@ -164,6 +168,9 @@ public class BookingService {
 
         int refundAmount = booking.getPrice();
         applyCancellation(booking, "cancelled_by_owner", reason);
+        if (refundAmount > 0) {
+            paymentService.refundBookingPayment(booking.getId(), refundAmount, reason);
+        }
         log.info("Booking cancelled by owner: id={} ownerId={} refundAmount={}", bookingId, ownerId, refundAmount);
         return withRefund(booking, refundAmount);
     }

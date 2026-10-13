@@ -37,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -52,6 +53,7 @@ class BookingServiceTest {
     private GameRepository gameRepository;
     private PriceCalculator priceCalculator;
     private BookingMapper bookingMapper;
+    private PaymentService paymentService;
     private BookingService service;
 
     private User player;
@@ -67,10 +69,11 @@ class BookingServiceTest {
         gameRepository = mock(GameRepository.class);
         priceCalculator = mock(PriceCalculator.class);
         bookingMapper = mock(BookingMapper.class);
+        paymentService = mock(PaymentService.class);
 
         service = new BookingService(bookingRepository, stadiumRepository, userRepository,
                 pricingRuleRepository, gameRepository, priceCalculator, new RefundCalculator(),
-                bookingMapper, new AppProperties());
+                bookingMapper, new AppProperties(), paymentService);
 
         player = User.builder().id(7L).name("Player").build();
         owner = User.builder().id(2L).name("Owner").build();
@@ -223,6 +226,7 @@ class BookingServiceTest {
         assertThat(booking.getStatus()).isEqualTo("cancelled_by_user");
         assertThat(booking.getCancelledAt()).isNotNull();
         assertThat(resp.getRefundAmount()).isEqualTo(100_000);
+        verify(paymentService).refundBookingPayment(5L, 100_000, "changed plans");
     }
 
     @Test
@@ -234,6 +238,7 @@ class BookingServiceTest {
         BookingResponse resp = service.cancelByUser(7L, 5L, null);
 
         assertThat(resp.getRefundAmount()).isEqualTo(50_000); // 50%
+        verify(paymentService).refundBookingPayment(5L, 50_000, null);
     }
 
     @Test
@@ -245,6 +250,7 @@ class BookingServiceTest {
         BookingResponse resp = service.cancelByUser(7L, 5L, null);
 
         assertThat(resp.getRefundAmount()).isZero();
+        verify(paymentService, never()).refundBookingPayment(anyLong(), anyInt(), any());
     }
 
     @Test
@@ -258,6 +264,7 @@ class BookingServiceTest {
 
         assertThat(booking.getStatus()).isEqualTo("cancelled_by_user");
         assertThat(resp.getRefundAmount()).isZero();
+        verify(paymentService, never()).refundBookingPayment(anyLong(), anyInt(), any());
     }
 
     @Test
@@ -282,6 +289,7 @@ class BookingServiceTest {
 
         assertThat(booking.getStatus()).isEqualTo("cancelled_by_owner");
         assertThat(resp.getRefundAmount()).isEqualTo(80_000);
+        verify(paymentService).refundBookingPayment(5L, 80_000, "pitch flooded");
     }
 
     @Test
