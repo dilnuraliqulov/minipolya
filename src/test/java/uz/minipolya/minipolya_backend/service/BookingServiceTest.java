@@ -11,7 +11,6 @@ import uz.minipolya.minipolya_backend.dto.request.CreateBookingRequest;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
-import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
@@ -21,7 +20,6 @@ import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.exception.SlotAlreadyBookedException;
 import uz.minipolya.minipolya_backend.mapper.BookingMapper;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
-import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.PricingRuleRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
@@ -50,10 +48,11 @@ class BookingServiceTest {
     private StadiumRepository stadiumRepository;
     private UserRepository userRepository;
     private PricingRuleRepository pricingRuleRepository;
-    private GameRepository gameRepository;
     private PriceCalculator priceCalculator;
     private BookingMapper bookingMapper;
     private PaymentService paymentService;
+    private GameService gameService;
+    private NotificationService notificationService;
     private BookingService service;
 
     private User player;
@@ -66,14 +65,15 @@ class BookingServiceTest {
         stadiumRepository = mock(StadiumRepository.class);
         userRepository = mock(UserRepository.class);
         pricingRuleRepository = mock(PricingRuleRepository.class);
-        gameRepository = mock(GameRepository.class);
         priceCalculator = mock(PriceCalculator.class);
         bookingMapper = mock(BookingMapper.class);
         paymentService = mock(PaymentService.class);
+        gameService = mock(GameService.class);
+        notificationService = mock(NotificationService.class);
 
         service = new BookingService(bookingRepository, stadiumRepository, userRepository,
-                pricingRuleRepository, gameRepository, priceCalculator, new RefundCalculator(),
-                bookingMapper, new AppProperties(), paymentService);
+                pricingRuleRepository, priceCalculator, new RefundCalculator(),
+                bookingMapper, new AppProperties(), paymentService, gameService, notificationService);
 
         player = User.builder().id(7L).name("Player").build();
         owner = User.builder().id(2L).name("Owner").build();
@@ -94,7 +94,6 @@ class BookingServiceTest {
         when(userRepository.findById(7L)).thenReturn(Optional.of(player));
         when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(gameRepository.findByStadiumIdAndStatus(1L, "open")).thenReturn(List.of());
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
         CreateBookingRequest req = CreateBookingRequest.builder()
@@ -154,23 +153,19 @@ class BookingServiceTest {
     }
 
     @Test
-    void createBookingCancelsWaitingGameOnTheSameSlot() {
+    void createBookingAsksGameServiceToClearWaitingGamesOnTheSlot() {
         OffsetDateTime start = inHours(48);
-        Game waiting = Game.builder().id(9L).status("open")
-                .startsAt(start).endsAt(start.plusHours(1)).build();
         when(stadiumRepository.findByIdAndStatus(1L, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(7L)).thenReturn(Optional.of(player));
         when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(gameRepository.findByStadiumIdAndStatus(1L, "open")).thenReturn(List.of(waiting));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
         CreateBookingRequest req = CreateBookingRequest.builder()
                 .stadiumId(1L).startsAt(start).durationHours(2).build();
         service.createBooking(7L, req);
 
-        assertThat(waiting.getStatus()).isEqualTo("cancelled_slot_taken");
-        verify(gameRepository).save(waiting);
+        verify(gameService).cancelGamesOnSlot(1L, start, start.plusHours(2));
     }
 
     // ---- confirmBooking ----

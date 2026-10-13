@@ -1,7 +1,7 @@
 package uz.minipolya.minipolya_backend.service;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -9,6 +9,9 @@ import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.dto.response.PaymentResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
+import uz.minipolya.minipolya_backend.entity.Game;
+import uz.minipolya.minipolya_backend.entity.GameParticipant;
+import uz.minipolya.minipolya_backend.entity.Notification;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
@@ -17,6 +20,8 @@ import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
+import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
+import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
@@ -26,17 +31,17 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Payment lifecycle: initiate a checkout, handle the provider webhook, record
- * cash, and issue refunds. Completing a payment confirms its booking. Refunds
- * are always new rows with negative amounts — original rows are never mutated.
+ * Payment lifecycle: initiate a checkout (booking or game share), handle the
+ * provider webhook, record cash, and issue refunds. Completing a payment
+ * confirms its booking, or notifies {@link GameService} for a game share.
+ * Refunds are always new rows with negative amounts — originals are never
+ * mutated.
  *
- * <p>Does not depend on {@link BookingService}; it confirms bookings directly
- * so the one-way dependency BookingService → PaymentService (for refunds) stays
- * acyclic.
+ * <p>{@link GameService} is injected lazily to break the
+ * GameService ↔ PaymentService cycle.
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class PaymentService {
 
     private static final Set<String> SUCCESS_TOKENS = Set.of("completed", "success", "paid", "ok", "1");
@@ -44,8 +49,32 @@ public class PaymentService {
     private final PaymentRepository paymentRepository;
     private final BookingRepository bookingRepository;
     private final UserRepository userRepository;
+    private final GameRepository gameRepository;
+    private final GameParticipantRepository gameParticipantRepository;
     private final PaymentMapper paymentMapper;
     private final List<PaymentProvider> paymentProviders;
+    private final GameService gameService;
+    private final NotificationService notificationService;
+
+    public PaymentService(PaymentRepository paymentRepository,
+                          BookingRepository bookingRepository,
+                          UserRepository userRepository,
+                          GameRepository gameRepository,
+                          GameParticipantRepository gameParticipantRepository,
+                          PaymentMapper paymentMapper,
+                          List<PaymentProvider> paymentProviders,
+                          @Lazy GameService gameService,
+                          NotificationService notificationService) {
+        this.paymentRepository = paymentRepository;
+        this.bookingRepository = bookingRepository;
+        this.userRepository = userRepository;
+        this.gameRepository = gameRepository;
+        this.gameParticipantRepository = gameParticipantRepository;
+        this.paymentMapper = paymentMapper;
+        this.paymentProviders = paymentProviders;
+        this.gameService = gameService;
+        this.notificationService = notificationService;
+    }
 
     @Transactional
     public PaymentInitResponse initiateBookingPayment(Long bookingId, String providerName, Long userId) {
@@ -68,21 +97,40 @@ public class PaymentService {
                 .provider(provider)
                 .status(Payment.Status.PENDING)
                 .build();
-        Payment saved = paymentRepository.saveAndFlush(payment);
-
-        // Mock txn id derived from our payment id; the webhook echoes it back.
-        // TODO: Replace with the transaction id returned by the real provider.
-        saved.setProviderTxnId("mock-" + saved.getId());
-        paymentRepository.save(saved);
+        Payment saved = withMockTxnId(paymentRepository.saveAndFlush(payment));
 
         String checkoutUrl = resolveProvider(provider).createCheckoutUrl(saved.getId());
         log.info("Payment initiated: id={} bookingId={} userId={} provider={}",
                 saved.getId(), bookingId, userId, provider.getValue());
-        return PaymentInitResponse.builder()
-                .paymentId(saved.getId())
-                .checkoutUrl(checkoutUrl)
-                .provider(provider.getValue())
+        return initResponse(saved, provider, checkoutUrl);
+    }
+
+    @Transactional
+    public PaymentInitResponse initiateGamePayment(Long gameId, String providerName, Long userId) {
+        Payment.Provider provider = parseCheckoutProvider(providerName);
+
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new ResourceNotFoundException("Game not found"));
+        GameParticipant participant = gameParticipantRepository.findByGameIdAndUserId(gameId, userId)
+                .orElseThrow(() -> new BadRequestException("Join the game before paying"));
+
+        Payment payment = Payment.builder()
+                .game(game)
+                .user(participant.getUser())
+                .amount(gameShareAmount(game, participant))
+                .paymentType(Payment.PaymentType.GAME_SHARE)
+                .provider(provider)
+                .status(Payment.Status.PENDING)
                 .build();
+        Payment saved = withMockTxnId(paymentRepository.saveAndFlush(payment));
+
+        participant.setPayment(saved);
+        gameParticipantRepository.save(participant);
+
+        String checkoutUrl = resolveProvider(provider).createCheckoutUrl(saved.getId());
+        log.info("Game payment initiated: id={} gameId={} userId={} amount={} provider={}",
+                saved.getId(), gameId, userId, saved.getAmount(), provider.getValue());
+        return initResponse(saved, provider, checkoutUrl);
     }
 
     @Transactional
@@ -99,11 +147,9 @@ public class PaymentService {
         if (isSuccess(providerStatus)) {
             payment.setStatus(Payment.Status.COMPLETED);
             paymentRepository.save(payment);
-            if (payment.getBooking() != null) {
-                confirmPaidBooking(payment.getBooking());
-            }
-            log.info("Payment completed: id={} provider={} txn={}",
-                    payment.getId(), provider.getValue(), providerTxnId);
+            onPaymentCompleted(payment);
+            log.info("Payment completed: id={} type={} provider={} txn={}",
+                    payment.getId(), payment.getPaymentType().getValue(), provider.getValue(), providerTxnId);
         } else {
             payment.setStatus(Payment.Status.FAILED);
             paymentRepository.save(payment);
@@ -154,6 +200,14 @@ public class PaymentService {
         return createRefund(original.get().getId(), refundAmount, reason);
     }
 
+    /** Refund a payment in full by its id. Called by GameService for participant refunds. */
+    @Transactional
+    public Payment refundFullPayment(Long paymentId, String reason) {
+        Payment original = paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        return createRefund(paymentId, Math.abs(original.getAmount()), reason);
+    }
+
     @Transactional
     public Payment recordCashPayment(Long bookingId, Long ownerUserId) {
         Booking booking = bookingRepository.findById(bookingId)
@@ -196,10 +250,59 @@ public class PaymentService {
 
     // ---- Helpers ----
 
+    private void onPaymentCompleted(Payment payment) {
+        if (payment.getPaymentType() == Payment.PaymentType.BOOKING && payment.getBooking() != null) {
+            confirmPaidBooking(payment.getBooking());
+        } else if (payment.getPaymentType() == Payment.PaymentType.GAME_SHARE && payment.getGame() != null) {
+            gameService.handleGamePaymentConfirmed(payment.getGame().getId(), payment.getUser().getId());
+        }
+    }
+
     private void confirmPaidBooking(Booking booking) {
         booking.setStatus("confirmed");
         booking.setExpiresAt(null);
         bookingRepository.save(booking);
+        if (booking.getUser() != null) {
+            try {
+                notificationService.notify(booking.getUser().getId(),
+                        Notification.Type.BOOKING_CONFIRMED,
+                        "Бронь подтверждена",
+                        "Ваша бронь в «" + booking.getStadium().getName() + "» подтверждена.",
+                        Notification.ReferenceType.BOOKING, booking.getId());
+            } catch (Exception ex) {
+                log.warn("Booking-confirmed notification failed: {}", ex.toString());
+            }
+        }
+    }
+
+    /**
+     * Mock txn id derived from our payment id; the webhook echoes it back.
+     * TODO: Replace with the transaction id returned by the real provider.
+     */
+    private Payment withMockTxnId(Payment saved) {
+        saved.setProviderTxnId("mock-" + saved.getId());
+        return paymentRepository.save(saved);
+    }
+
+    private int gameShareAmount(Game game, GameParticipant participant) {
+        int fee = game.getServiceFeePerPerson() == null ? 0 : game.getServiceFeePerPerson();
+        int total = game.getTotalPrice();
+        if ("team_vs_team".equals(game.getType())) {
+            int pct = participant.getSide() == GameParticipant.Side.B
+                    ? 100 - game.getCreatorSharePct()
+                    : game.getCreatorSharePct();
+            return (int) ((long) total * pct / 100) + fee;
+        }
+        int players = game.getMaxPlayers() == null || game.getMaxPlayers() < 1 ? 1 : game.getMaxPlayers();
+        return total / players + fee;
+    }
+
+    private PaymentInitResponse initResponse(Payment saved, Payment.Provider provider, String checkoutUrl) {
+        return PaymentInitResponse.builder()
+                .paymentId(saved.getId())
+                .checkoutUrl(checkoutUrl)
+                .provider(provider.getValue())
+                .build();
     }
 
     private Payment.Provider parseCheckoutProvider(String providerName) {

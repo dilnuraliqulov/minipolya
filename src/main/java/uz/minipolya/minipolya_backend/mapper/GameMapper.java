@@ -10,8 +10,8 @@ import uz.minipolya.minipolya_backend.entity.Game;
 /**
  * Game entity → DTO mapping. Builder is disabled so MapStruct uses setters,
  * keeping Lombok's boolean {@code isPublic} property aligned across types.
- * Participant-derived fields ({@code currentPlayers}, {@code participants})
- * are left unset here — the service fills them in step 10.
+ * Participant-derived fields ({@code currentPlayers}, {@code participants}) and
+ * the {@code inviteLink} are left unset here — the service fills them.
  */
 @Mapper(componentModel = "spring", builder = @Builder(disableBuilder = true))
 public interface GameMapper {
@@ -31,5 +31,6 @@ public interface GameMapper {
     @Mapping(source = "teamB.name", target = "teamBName")
     @Mapping(target = "currentPlayers", ignore = true)
     @Mapping(target = "participants", ignore = true)
+    @Mapping(target = "inviteLink", ignore = true)
     GameDetailResponse toDetailResponse(Game game);
 }

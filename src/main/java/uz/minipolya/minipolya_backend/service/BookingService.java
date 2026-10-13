@@ -13,7 +13,7 @@ import uz.minipolya.minipolya_backend.dto.request.CreateBookingRequest;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
-import uz.minipolya.minipolya_backend.entity.Game;
+import uz.minipolya.minipolya_backend.entity.Notification;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
@@ -23,7 +23,6 @@ import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.exception.SlotAlreadyBookedException;
 import uz.minipolya.minipolya_backend.mapper.BookingMapper;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
-import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.PricingRuleRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
@@ -42,7 +41,8 @@ import java.time.ZonedDateTime;
  * also cancels any waiting games whose slot a new booking takes.
  *
  * <p>Cancellation refunds are issued as payment rows via {@link PaymentService}.
- * Participant refunds for games whose slot is taken are wired in step 10.
+ * When a booking takes a slot, {@link GameService} cancels any waiting games on
+ * that slot and refunds their participants.
  */
 @Slf4j
 @Service
@@ -57,12 +57,13 @@ public class BookingService {
     private final StadiumRepository stadiumRepository;
     private final UserRepository userRepository;
     private final PricingRuleRepository pricingRuleRepository;
-    private final GameRepository gameRepository;
     private final PriceCalculator priceCalculator;
     private final RefundCalculator refundCalculator;
     private final BookingMapper bookingMapper;
     private final AppProperties appProperties;
     private final PaymentService paymentService;
+    private final GameService gameService;
+    private final NotificationService notificationService;
 
     @Transactional
     public BookingResponse createBooking(Long userId, CreateBookingRequest request) {
@@ -108,7 +109,7 @@ public class BookingService {
             throw new SlotAlreadyBookedException("Slot is already booked");
         }
 
-        cancelWaitingGamesForSlot(stadium.getId(), startsAt, endsAt);
+        gameService.cancelGamesOnSlot(stadium.getId(), startsAt, endsAt);
 
         log.info("Booking created: id={} stadiumId={} userId={} {}-{} price={}",
                 saved.getId(), stadium.getId(), userId, startsAt, endsAt, price);
@@ -152,6 +153,9 @@ public class BookingService {
         if (refundAmount > 0) {
             paymentService.refundBookingPayment(booking.getId(), refundAmount, reason);
         }
+        safeNotify(() -> notificationService.notify(userId, Notification.Type.BOOKING_CANCELLED,
+                "Бронь отменена", "Вы отменили бронь в «" + booking.getStadium().getName() + "».",
+                Notification.ReferenceType.BOOKING, booking.getId()));
         log.info("Booking cancelled by user: id={} userId={} refundPercent={} refundAmount={}",
                 bookingId, userId, refundPercent, refundAmount);
         return withRefund(booking, refundAmount);
@@ -170,6 +174,14 @@ public class BookingService {
         applyCancellation(booking, "cancelled_by_owner", reason);
         if (refundAmount > 0) {
             paymentService.refundBookingPayment(booking.getId(), refundAmount, reason);
+        }
+        if (booking.getUser() != null) {
+            Long uid = booking.getUser().getId();
+            safeNotify(() -> notificationService.notify(uid, Notification.Type.BOOKING_CANCELLED,
+                    "Бронь отменена владельцем",
+                    "Владелец отменил вашу бронь в «" + booking.getStadium().getName()
+                            + "». Возврат средств оформлен.",
+                    Notification.ReferenceType.BOOKING, booking.getId()));
         }
         log.info("Booking cancelled by owner: id={} ownerId={} refundAmount={}", bookingId, ownerId, refundAmount);
         return withRefund(booking, refundAmount);
@@ -213,27 +225,6 @@ public class BookingService {
                 stadium.getPricePerHour());
     }
 
-    /**
-     * When a booking takes a slot, any still-waiting ('open') game on the same
-     * stadium and overlapping time is cancelled. Participant refunds are issued
-     * in step 10 once game_participants exists.
-     */
-    private void cancelWaitingGamesForSlot(Long stadiumId, OffsetDateTime startsAt, OffsetDateTime endsAt) {
-        for (Game game : gameRepository.findByStadiumIdAndStatus(stadiumId, "open")) {
-            if (overlaps(game.getStartsAt(), game.getEndsAt(), startsAt, endsAt)) {
-                game.setStatus("cancelled_slot_taken");
-                gameRepository.save(game);
-                log.info("Game {} cancelled: slot taken by a new booking on stadium {}", game.getId(), stadiumId);
-                // TODO(step 10): refund all participants of this game.
-            }
-        }
-    }
-
-    private static boolean overlaps(OffsetDateTime aStart, OffsetDateTime aEnd,
-                                    OffsetDateTime bStart, OffsetDateTime bEnd) {
-        return aStart.isBefore(bEnd) && bStart.isBefore(aEnd);
-    }
-
     private int refundPercentFor(Booking booking) {
         long hoursLeft = Duration.between(OffsetDateTime.now(ZoneOffset.UTC), booking.getStartsAt()).toHours();
         Stadium stadium = booking.getStadium();
@@ -267,5 +258,14 @@ public class BookingService {
     private Booking requireBooking(Long bookingId) {
         return bookingRepository.findById(bookingId)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
+    }
+
+    /** Notifications are best-effort — a failure must never break the booking flow. */
+    private void safeNotify(Runnable action) {
+        try {
+            action.run();
+        } catch (Exception ex) {
+            log.warn("Notification failed: {}", ex.toString());
+        }
     }
 }

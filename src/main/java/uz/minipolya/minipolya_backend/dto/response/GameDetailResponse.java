@@ -53,6 +53,9 @@ public class GameDetailResponse {
 
     private Long bookingId;
 
+    /** Telegram deep link to invite friends: t.me/{bot}?start=game_{id}. */
+    private String inviteLink;
+
     private List<GameParticipantResponse> participants;
 
     private OffsetDateTime createdAt;
