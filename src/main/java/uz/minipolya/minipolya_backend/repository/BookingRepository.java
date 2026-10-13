@@ -37,6 +37,12 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
 
     long countByStadiumIdAndStatusIn(Long stadiumId, Collection<String> statuses);
 
+    long countByUserId(Long userId);
+
+    long countByStatusIn(Collection<String> statuses);
+
+    long countByStatusInAndStartsAtBetween(Collection<String> statuses, OffsetDateTime from, OffsetDateTime to);
+
     @Query("""
             SELECT COUNT(b) FROM Booking b
             WHERE b.stadium.id = :stadiumId

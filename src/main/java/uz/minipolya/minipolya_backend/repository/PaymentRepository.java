@@ -60,4 +60,17 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
                                              @Param("type") Payment.PaymentType type,
                                              @Param("from") OffsetDateTime from,
                                              @Param("to") OffsetDateTime to);
+
+    // ---- Platform-wide (admin) revenue; amount > 0 excludes refund rows ----
+
+    @Query("SELECT COALESCE(SUM(p.amount), 0) FROM Payment p WHERE p.status = :status AND p.amount > 0")
+    long sumTotalRevenue(@Param("status") Payment.Status status);
+
+    @Query("SELECT COALESCE(SUM(p.amount), 0) FROM Payment p "
+            + "WHERE p.status = :status AND p.amount > 0 AND p.createdAt >= :from")
+    long sumRevenueAfter(@Param("status") Payment.Status status, @Param("from") OffsetDateTime from);
+
+    @Query("SELECT p FROM Payment p WHERE p.status = :status AND p.amount > 0 AND p.createdAt >= :from")
+    List<Payment> findPositiveCompletedSince(@Param("status") Payment.Status status,
+                                             @Param("from") OffsetDateTime from);
 }

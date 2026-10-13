@@ -18,4 +18,6 @@ public interface OwnerApplicationRepository extends JpaRepository<OwnerApplicati
     List<OwnerApplication> findByUserIdAndStatusIn(Long userId, Collection<OwnerApplication.Status> statuses);
 
     Page<OwnerApplication> findByStatus(OwnerApplication.Status status, Pageable pageable);
+
+    long countByStatus(OwnerApplication.Status status);
 }

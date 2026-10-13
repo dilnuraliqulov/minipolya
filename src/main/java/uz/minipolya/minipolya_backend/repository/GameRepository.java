@@ -16,6 +16,8 @@ public interface GameRepository extends JpaRepository<Game, Long> {
 
     List<Game> findByStadiumIdAndStatus(Long stadiumId, String status);
 
+    long countByStatus(String status);
+
     List<Game> findByCreatorId(Long creatorId);
 
     /** Used by GameTimeoutJob to find games past their start time. */

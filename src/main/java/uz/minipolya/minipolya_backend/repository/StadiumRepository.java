@@ -20,6 +20,26 @@ public interface StadiumRepository extends JpaRepository<Stadium, Long> {
 
     Page<Stadium> findByStatus(String status, Pageable pageable);
 
+    long countByStatus(String status);
+
+    long countByOwnerId(Long ownerId);
+
+    @Query("""
+            SELECT s FROM Stadium s
+            WHERE LOWER(s.name) LIKE LOWER(CONCAT('%', :search, '%'))
+               OR LOWER(s.address) LIKE LOWER(CONCAT('%', :search, '%'))
+            """)
+    Page<Stadium> searchStadiums(@Param("search") String search, Pageable pageable);
+
+    @Query("""
+            SELECT s FROM Stadium s
+            WHERE s.status = :status
+              AND (LOWER(s.name) LIKE LOWER(CONCAT('%', :search, '%'))
+                   OR LOWER(s.address) LIKE LOWER(CONCAT('%', :search, '%')))
+            """)
+    Page<Stadium> searchStadiumsByStatus(@Param("status") String status,
+                                         @Param("search") String search, Pageable pageable);
+
     /**
      * Public search over approved, active stadiums. Every filter is optional —
      * a null argument disables that clause.
