@@ -1,0 +1,78 @@
+package uz.minipolya.minipolya_backend.dto.request;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.math.BigDecimal;
+import java.time.LocalTime;
+import java.util.List;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class CreateStadiumRequest {
+
+    @NotBlank
+    @Size(max = 150)
+    private String name;
+
+    @NotBlank
+    @Size(max = 300)
+    private String address;
+
+    @DecimalMin(value = "-90.0")
+    @DecimalMax(value = "90.0")
+    private BigDecimal latitude;
+
+    @DecimalMin(value = "-180.0")
+    @DecimalMax(value = "180.0")
+    private BigDecimal longitude;
+
+    @Size(max = 20)
+    private String phone;
+
+    private String description;
+
+    @NotBlank
+    @Pattern(regexp = "5x5|7x7|9x9|11x11", message = "format must be one of: 5x5, 7x7, 9x9, 11x11")
+    private String format;
+
+    @NotBlank
+    @Pattern(regexp = "natural|artificial|hybrid", message = "surfaceType must be one of: natural, artificial, hybrid")
+    private String surfaceType;
+
+    @NotNull
+    private LocalTime openTime;
+
+    @NotNull
+    private LocalTime closeTime;
+
+    @NotNull
+    @PositiveOrZero
+    private Integer pricePerHour;
+
+    @PositiveOrZero
+    private Integer fullRefundHours;
+
+    @PositiveOrZero
+    private Integer partialRefundHours;
+
+    @PositiveOrZero
+    private Integer partialRefundPercent;
+
+    private List<@NotBlank @Size(max = 500) String> photos;
+
+    @Valid
+    private AmenitiesRequest amenities;
+}
