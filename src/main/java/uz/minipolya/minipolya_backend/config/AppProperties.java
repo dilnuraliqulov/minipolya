@@ -28,6 +28,8 @@ public class AppProperties {
     @Setter
     public static class Bot {
         private String token;
+        /** Bot username (without @) used to build game invite deep links. */
+        private String username;
     }
 
     @Getter
@@ -49,5 +51,6 @@ public class AppProperties {
     @Setter
     public static class Game {
         private int defaultServiceFeePerPerson = 5000;
+        private int defaultCreatorSharePct = 50;
     }
 }

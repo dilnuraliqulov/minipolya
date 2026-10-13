@@ -1,16 +1,18 @@
 package uz.minipolya.minipolya_backend.dto.response;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import uz.minipolya.minipolya_backend.entity.GameParticipant;
+import uz.minipolya.minipolya_backend.entity.Payment;
+
+import java.time.OffsetDateTime;
 
 /**
- * One participant row in a {@link GameDetailResponse}. Placeholder shape until
- * the game_participants table and its service land in step 10 — fields may be
- * refined there.
+ * One participant row in a {@link GameDetailResponse}. Enum fields serialize to
+ * their lowercase value (via {@code @JsonValue} on the enums).
  */
 @Data
 @Builder
@@ -19,11 +21,13 @@ import lombok.NoArgsConstructor;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class GameParticipantResponse {
 
+    private Long id;
+    private Long gameId;
     private Long userId;
     private String userName;
-    /** Assigned side for open / team_vs_team games: "a" or "b". */
-    private String side;
-
-    @JsonProperty("hasPaid")
-    private boolean hasPaid;
+    private GameParticipant.Side side;
+    private GameParticipant.Status status;
+    /** Status of the participant's share payment, if any. */
+    private Payment.Status paymentStatus;
+    private OffsetDateTime joinedAt;
 }

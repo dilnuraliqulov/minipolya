@@ -13,6 +13,8 @@ import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
 import uz.minipolya.minipolya_backend.provider.ClickProvider;
 import uz.minipolya.minipolya_backend.provider.PaymeProvider;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
+import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
+import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
@@ -32,7 +34,10 @@ class PaymentServiceTest {
     private PaymentRepository paymentRepository;
     private BookingRepository bookingRepository;
     private UserRepository userRepository;
+    private GameRepository gameRepository;
+    private GameParticipantRepository gameParticipantRepository;
     private PaymentMapper paymentMapper;
+    private GameService gameService;
     private PaymentService service;
 
     private User player;
@@ -44,10 +49,14 @@ class PaymentServiceTest {
         paymentRepository = mock(PaymentRepository.class);
         bookingRepository = mock(BookingRepository.class);
         userRepository = mock(UserRepository.class);
+        gameRepository = mock(GameRepository.class);
+        gameParticipantRepository = mock(GameParticipantRepository.class);
         paymentMapper = mock(PaymentMapper.class);
+        gameService = mock(GameService.class);
 
-        service = new PaymentService(paymentRepository, bookingRepository, userRepository, paymentMapper,
-                List.of(new PaymeProvider(), new ClickProvider()));
+        service = new PaymentService(paymentRepository, bookingRepository, userRepository,
+                gameRepository, gameParticipantRepository, paymentMapper,
+                List.of(new PaymeProvider(), new ClickProvider()), gameService);
 
         player = User.builder().id(7L).name("Player").build();
         owner = User.builder().id(2L).name("Owner").build();
