@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.dto.request.CreateBookingRequest;
+import uz.minipolya.minipolya_backend.dto.request.CreateManualBookingRequest;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
@@ -30,6 +31,7 @@ import uz.minipolya.minipolya_backend.util.PriceCalculator;
 import uz.minipolya.minipolya_backend.util.RefundCalculator;
 
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -115,6 +117,56 @@ public class BookingService {
         auditService.log(userId, "BOOKING_CREATED", "booking", saved.getId());
         log.info("Booking created: id={} stadiumId={} userId={} {}-{} price={}",
                 saved.getId(), stadium.getId(), userId, startsAt, endsAt, price);
+        return bookingMapper.toResponse(saved);
+    }
+
+    /** Owner adds a walk-in/phone booking: confirmed immediately, no hold. */
+    @Transactional
+    public BookingResponse createManualBooking(CreateManualBookingRequest request, Long ownerUserId) {
+        Stadium stadium = stadiumRepository.findById(request.getStadiumId())
+                .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
+        if (!stadium.getOwner().getId().equals(ownerUserId)) {
+            throw new ForbiddenException("You do not own this stadium");
+        }
+
+        int duration = request.getDuration();
+        OffsetDateTime startsAt = request.getStartsAt();
+        OffsetDateTime endsAt = startsAt.plusHours(duration);
+        int price = calculatePrice(stadium, startsAt, duration);
+
+        Booking booking = Booking.builder()
+                .stadium(stadium)
+                .user(null) // walk-in client is not a registered user
+                .source("manual")
+                .status("confirmed")
+                .isWalkin(true)
+                .clientName(request.getClientName())
+                .clientPhone(request.getClientPhone())
+                .startsAt(startsAt)
+                .endsAt(endsAt)
+                .durationHours(duration)
+                .price(price)
+                .build();
+
+        Booking saved;
+        try {
+            saved = bookingRepository.saveAndFlush(booking);
+        } catch (DataIntegrityViolationException ex) {
+            log.info("Manual booking rejected by overlap constraint: stadiumId={} {}-{}",
+                    stadium.getId(), startsAt, endsAt);
+            throw new SlotAlreadyBookedException("Slot is already booked");
+        }
+
+        gameService.cancelGamesOnSlot(stadium.getId(), startsAt, endsAt);
+
+        String method = request.getPaymentMethod();
+        if (method == null || method.isBlank() || "cash".equalsIgnoreCase(method.trim())) {
+            paymentService.recordCashPayment(saved.getId(), ownerUserId);
+        }
+
+        auditService.log(ownerUserId, "MANUAL_BOOKING_CREATED", "booking", saved.getId());
+        log.info("Manual booking created: id={} stadiumId={} ownerId={} client='{}'",
+                saved.getId(), stadium.getId(), ownerUserId, request.getClientName());
         return bookingMapper.toResponse(saved);
     }
 
@@ -207,14 +259,23 @@ public class BookingService {
         return bookingMapper.toResponse(booking);
     }
 
+    /** Owner's unified schedule (app + manual bookings), optionally within a date range. */
     @Transactional(readOnly = true)
-    public PageResponse<BookingResponse> getStadiumBookings(Long ownerId, Long stadiumId, int page, int size) {
+    public PageResponse<BookingResponse> getStadiumBookings(Long ownerId, Long stadiumId,
+                                                            LocalDate from, LocalDate to, int page, int size) {
         Stadium stadium = stadiumRepository.findById(stadiumId)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
         if (!stadium.getOwner().getId().equals(ownerId)) {
             throw new ForbiddenException("You do not own this stadium");
         }
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"));
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"));
+        if (from != null && to != null) {
+            OffsetDateTime fromUtc = from.atStartOfDay(TASHKENT).toOffsetDateTime();
+            OffsetDateTime toUtc = to.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime();
+            return PageResponse.from(
+                    bookingRepository.findByStadiumIdAndStartsAtBetween(stadiumId, fromUtc, toUtc, pageable),
+                    bookingMapper::toResponse);
+        }
         return PageResponse.from(bookingRepository.findByStadiumId(stadiumId, pageable), bookingMapper::toResponse);
     }
 

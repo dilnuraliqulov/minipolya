@@ -8,6 +8,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.dto.request.CreateBookingRequest;
+import uz.minipolya.minipolya_backend.dto.request.CreateManualBookingRequest;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
@@ -310,5 +311,70 @@ class BookingServiceTest {
 
         assertThat(result.getContent()).hasSize(1);
         assertThat(result.getTotalElements()).isEqualTo(1);
+    }
+
+    @Test
+    void getStadiumBookingsReturnsOwnerSchedule() {
+        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
+        when(bookingRepository.findByStadiumId(eq(1L), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(confirmedBooking(inHours(48), 100_000))));
+        when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
+
+        PageResponse<BookingResponse> result = service.getStadiumBookings(2L, 1L, null, null, 0, 20);
+
+        assertThat(result.getContent()).hasSize(1);
+    }
+
+    // ---- manual bookings ----
+
+    private CreateManualBookingRequest manualRequest() {
+        return CreateManualBookingRequest.builder()
+                .stadiumId(1L).clientName("Walk-in").clientPhone("+998901112233")
+                .startsAt(inHours(5)).duration(1).build();
+    }
+
+    @Test
+    void createManualBookingConfirmsImmediatelyAndRecordsCash() {
+        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
+        when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
+        when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> {
+            Booking b = inv.getArgument(0);
+            b.setId(500L);
+            return b;
+        });
+        when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
+
+        service.createManualBooking(manualRequest(), 2L);
+
+        ArgumentCaptor<Booking> captor = ArgumentCaptor.forClass(Booking.class);
+        verify(bookingRepository).saveAndFlush(captor.capture());
+        Booking saved = captor.getValue();
+        assertThat(saved.getStatus()).isEqualTo("confirmed");
+        assertThat(saved.getSource()).isEqualTo("manual");
+        assertThat(saved.isWalkin()).isTrue();
+        assertThat(saved.getUser()).isNull();
+        assertThat(saved.getClientName()).isEqualTo("Walk-in");
+        verify(gameService).cancelGamesOnSlot(eq(1L), any(), any());
+        verify(paymentService).recordCashPayment(500L, 2L);
+    }
+
+    @Test
+    void createManualBookingRejectsForeignOwner() {
+        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
+
+        assertThatThrownBy(() -> service.createManualBooking(manualRequest(), 999L))
+                .isInstanceOf(ForbiddenException.class);
+        verify(bookingRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void createManualBookingTranslatesOverlapToSlotAlreadyBooked() {
+        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
+        when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
+        when(bookingRepository.saveAndFlush(any(Booking.class)))
+                .thenThrow(new DataIntegrityViolationException("bookings_no_overlap"));
+
+        assertThatThrownBy(() -> service.createManualBooking(manualRequest(), 2L))
+                .isInstanceOf(SlotAlreadyBookedException.class);
     }
 }
