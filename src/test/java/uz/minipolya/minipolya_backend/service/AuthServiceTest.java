@@ -1,0 +1,73 @@
+package uz.minipolya.minipolya_backend.service;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import uz.minipolya.minipolya_backend.config.JwtProvider;
+import uz.minipolya.minipolya_backend.dto.response.AuthResponse;
+import uz.minipolya.minipolya_backend.dto.response.UserResponse;
+import uz.minipolya.minipolya_backend.entity.User;
+import uz.minipolya.minipolya_backend.mapper.UserMapper;
+import uz.minipolya.minipolya_backend.repository.UserRepository;
+import uz.minipolya.minipolya_backend.util.TelegramAuthValidator;
+import uz.minipolya.minipolya_backend.util.TelegramUserData;
+
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class AuthServiceTest {
+
+    @Mock
+    private TelegramAuthValidator telegramAuthValidator;
+    @Mock
+    private UserRepository userRepository;
+    @Mock
+    private UserMapper userMapper;
+    @Mock
+    private JwtProvider jwtProvider;
+
+    @InjectMocks
+    private AuthService authService;
+
+    @Test
+    void createsUserWhenTelegramIdIsNew() {
+        TelegramUserData data = new TelegramUserData(777L, "Ali", "Valiyev", "ali", "ru");
+        when(telegramAuthValidator.validate("init")).thenReturn(data);
+        when(userRepository.findByTelegramId(777L)).thenReturn(Optional.empty());
+
+        User saved = User.builder().id(1L).telegramId(777L).name("Ali Valiyev").language("ru").build();
+        when(userRepository.save(any(User.class))).thenReturn(saved);
+        when(jwtProvider.generateToken(saved)).thenReturn("jwt-token");
+        UserResponse mapped = UserResponse.builder().id(1L).telegramId(777L).name("Ali Valiyev").build();
+        when(userMapper.toResponse(saved)).thenReturn(mapped);
+
+        AuthResponse result = authService.authenticateTelegram("init");
+
+        assertThat(result.getToken()).isEqualTo("jwt-token");
+        assertThat(result.getUser()).isEqualTo(mapped);
+        verify(userRepository).save(any(User.class));
+    }
+
+    @Test
+    void reusesExistingUserWithoutSaving() {
+        TelegramUserData data = new TelegramUserData(777L, "Ali", null, "ali", "uz");
+        when(telegramAuthValidator.validate("init")).thenReturn(data);
+        User existing = User.builder().id(5L).telegramId(777L).name("Ali").build();
+        when(userRepository.findByTelegramId(777L)).thenReturn(Optional.of(existing));
+        when(jwtProvider.generateToken(existing)).thenReturn("jwt-token");
+        when(userMapper.toResponse(existing)).thenReturn(UserResponse.builder().id(5L).build());
+
+        AuthResponse result = authService.authenticateTelegram("init");
+
+        assertThat(result.getToken()).isEqualTo("jwt-token");
+        verify(userRepository, never()).save(any(User.class));
+    }
+}
