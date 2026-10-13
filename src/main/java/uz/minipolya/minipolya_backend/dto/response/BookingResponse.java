@@ -26,6 +26,7 @@ public class BookingResponse {
     private String stadiumName;
     private Long userId;
     private Long gameId;
+    private Long seriesId;
     private String source;
     private String status;
     private OffsetDateTime startsAt;

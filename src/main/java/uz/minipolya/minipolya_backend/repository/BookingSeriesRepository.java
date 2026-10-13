@@ -12,4 +12,7 @@ public interface BookingSeriesRepository extends JpaRepository<BookingSeries, Lo
     List<BookingSeries> findByUserIdAndIsActiveTrue(Long userId);
 
     List<BookingSeries> findByStadiumIdAndIsActiveTrue(Long stadiumId);
+
+    /** All active series — used by BookingSeriesJob. */
+    List<BookingSeries> findByIsActiveTrue();
 }

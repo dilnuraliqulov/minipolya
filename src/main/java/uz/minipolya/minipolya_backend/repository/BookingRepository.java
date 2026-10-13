@@ -32,6 +32,9 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
 
     Page<Booking> findByStadiumId(Long stadiumId, Pageable pageable);
 
+    /** Bookings generated from a recurring series. */
+    List<Booking> findByBookingSeriesId(Long bookingSeriesId);
+
     /** True if an active (pending/confirmed) booking already overlaps the given slot. */
     @Query("""
             SELECT COUNT(b) > 0 FROM Booking b

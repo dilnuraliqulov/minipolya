@@ -18,6 +18,7 @@ public interface BookingMapper {
     @Mapping(source = "stadium.id", target = "stadiumId")
     @Mapping(source = "stadium.name", target = "stadiumName")
     @Mapping(source = "user.id", target = "userId")
+    @Mapping(source = "bookingSeriesId", target = "seriesId")
     @Mapping(source = "stadium.fullRefundHours", target = "cancellationPolicy.fullRefundHours")
     @Mapping(source = "stadium.partialRefundHours", target = "cancellationPolicy.partialRefundHours")
     @Mapping(source = "stadium.partialRefundPercent", target = "cancellationPolicy.partialRefundPercent")
