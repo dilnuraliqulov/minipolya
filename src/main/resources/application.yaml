@@ -1,3 +1,39 @@
 spring:
   application:
     name: minipolya-backend
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        default_schema: public
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+
+server:
+  port: 8080
+
+app:
+  jwt:
+    secret: ${JWT_SECRET}
+    expiration-ms: 86400000
+  bot:
+    token: ${BOT_TOKEN}
+  cancellation:
+    default-full-refund-hours: 24
+    default-partial-refund-hours: 12
+    default-partial-refund-percent: 50
+  booking:
+    max-weeks-ahead: 4
+    hold-expiry-minutes: 10
+  game:
+    default-service-fee-per-person: 5000
