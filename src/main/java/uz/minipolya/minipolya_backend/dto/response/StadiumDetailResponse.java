@@ -1,0 +1,52 @@
+package uz.minipolya.minipolya_backend.dto.response;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.math.BigDecimal;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
+import java.util.List;
+
+/**
+ * Full stadium view: owner info, photos, amenities and the cancellation policy.
+ */
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class StadiumDetailResponse {
+
+    private Long id;
+    private Long ownerId;
+    private String ownerName;
+    private String ownerPhone;
+
+    private String name;
+    private String address;
+    private BigDecimal latitude;
+    private BigDecimal longitude;
+    private String phone;
+    private String description;
+    private String format;
+    private String surfaceType;
+    private LocalTime openTime;
+    private LocalTime closeTime;
+    private Integer pricePerHour;
+    private String status;
+
+    @JsonProperty("isActive")
+    private boolean isActive;
+
+    private CancellationPolicyResponse cancellationPolicy;
+    private List<PhotoResponse> photos;
+    private AmenitiesResponse amenities;
+
+    private OffsetDateTime createdAt;
+    private OffsetDateTime updatedAt;
+}
