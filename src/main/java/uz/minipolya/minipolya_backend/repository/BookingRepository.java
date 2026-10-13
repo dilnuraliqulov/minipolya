@@ -35,6 +35,19 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     /** Bookings generated from a recurring series. */
     List<Booking> findByBookingSeriesId(Long bookingSeriesId);
 
+    long countByStadiumIdAndStatusIn(Long stadiumId, Collection<String> statuses);
+
+    @Query("""
+            SELECT COUNT(b) FROM Booking b
+            WHERE b.stadium.id = :stadiumId
+              AND b.startsAt >= :from AND b.startsAt < :to
+              AND b.status IN :statuses
+            """)
+    long countByStadiumAndDateRange(@Param("stadiumId") Long stadiumId,
+                                    @Param("from") OffsetDateTime from,
+                                    @Param("to") OffsetDateTime to,
+                                    @Param("statuses") Collection<String> statuses);
+
     /** True if an active (pending/confirmed) booking already overlaps the given slot. */
     @Query("""
             SELECT COUNT(b) > 0 FROM Booking b
