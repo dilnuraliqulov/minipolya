@@ -43,6 +43,10 @@ public class StadiumDetailResponse {
     @JsonProperty("isActive")
     private boolean isActive;
 
+    /** Whether the requesting (authenticated) user has favorited this stadium. */
+    @JsonProperty("isFavorited")
+    private Boolean favorited;
+
     private CancellationPolicyResponse cancellationPolicy;
     private List<PhotoResponse> photos;
     private AmenitiesResponse amenities;

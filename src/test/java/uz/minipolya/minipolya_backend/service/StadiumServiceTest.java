@@ -14,6 +14,8 @@ import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.StadiumMapper;
+import uz.minipolya.minipolya_backend.repository.FavoriteRepository;
+import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
@@ -35,6 +37,10 @@ class StadiumServiceTest {
     private UserRepository userRepository;
     @Mock
     private StadiumMapper stadiumMapper;
+    @Mock
+    private ReviewRepository reviewRepository;
+    @Mock
+    private FavoriteRepository favoriteRepository;
 
     @InjectMocks
     private StadiumService stadiumService;
@@ -87,7 +93,7 @@ class StadiumServiceTest {
     void publicDetailHidesUnapprovedStadium() {
         when(stadiumRepository.findByIdAndStatus(7L, "approved")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> stadiumService.getPublicDetail(7L))
+        assertThatThrownBy(() -> stadiumService.getPublicDetail(7L, null))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
@@ -96,7 +102,7 @@ class StadiumServiceTest {
         Stadium inactive = Stadium.builder().id(7L).status("approved").isActive(false).build();
         when(stadiumRepository.findByIdAndStatus(7L, "approved")).thenReturn(Optional.of(inactive));
 
-        assertThatThrownBy(() -> stadiumService.getPublicDetail(7L))
+        assertThatThrownBy(() -> stadiumService.getPublicDetail(7L, null))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 }

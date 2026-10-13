@@ -19,6 +19,8 @@ import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.StadiumMapper;
+import uz.minipolya.minipolya_backend.repository.FavoriteRepository;
+import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
@@ -35,6 +37,8 @@ public class StadiumService {
     private final StadiumRepository stadiumRepository;
     private final UserRepository userRepository;
     private final StadiumMapper stadiumMapper;
+    private final ReviewRepository reviewRepository;
+    private final FavoriteRepository favoriteRepository;
 
     // ---- Owner operations ----
 
@@ -90,7 +94,7 @@ public class StadiumService {
     @Transactional(readOnly = true)
     public List<StadiumResponse> listOwnerStadiums(Long ownerId) {
         return stadiumRepository.findByOwnerId(ownerId).stream()
-                .map(stadiumMapper::toResponse)
+                .map(this::toResponseWithRatings)
                 .toList();
     }
 
@@ -101,18 +105,31 @@ public class StadiumService {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "id"));
         return PageResponse.from(
                 stadiumRepository.search(blankToNull(q), blankToNull(format), maxPrice, pageable),
-                stadiumMapper::toResponse);
+                this::toResponseWithRatings);
     }
 
+    /** @param userId the viewer, or null for an anonymous request (no favorite flag). */
     @Transactional(readOnly = true)
-    public StadiumDetailResponse getPublicDetail(Long id) {
+    public StadiumDetailResponse getPublicDetail(Long id, Long userId) {
         Stadium stadium = stadiumRepository.findByIdAndStatus(id, STATUS_APPROVED)
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
-        return stadiumMapper.toDetailResponse(stadium);
+        StadiumDetailResponse response = stadiumMapper.toDetailResponse(stadium);
+        if (userId != null) {
+            response.setFavorited(favoriteRepository.existsByUserIdAndStadiumId(userId, id));
+        }
+        return response;
     }
 
     // ---- Helpers ----
+
+    /** Maps a stadium and attaches its computed average rating and review count. */
+    private StadiumResponse toResponseWithRatings(Stadium stadium) {
+        StadiumResponse response = stadiumMapper.toResponse(stadium);
+        response.setAverageRating(reviewRepository.averageRatingByStadiumId(stadium.getId()));
+        response.setReviewCount(reviewRepository.countByStadiumId(stadium.getId()));
+        return response;
+    }
 
     private void applyRefundOverrides(Stadium stadium, Integer fullHours, Integer partialHours, Integer partialPercent) {
         if (fullHours != null) {

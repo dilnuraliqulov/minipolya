@@ -39,8 +39,9 @@ public class StadiumController {
     }
 
     @GetMapping("/api/stadiums/{id}")
-    public ApiResponse<StadiumDetailResponse> detail(@PathVariable Long id) {
-        return ApiResponse.ok(stadiumService.getPublicDetail(id));
+    public ApiResponse<StadiumDetailResponse> detail(@AuthenticationPrincipal Long userId,
+                                                     @PathVariable Long id) {
+        return ApiResponse.ok(stadiumService.getPublicDetail(id, userId));
     }
 
     // ---- Owner ----

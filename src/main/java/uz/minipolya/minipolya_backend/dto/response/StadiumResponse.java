@@ -33,4 +33,8 @@ public class StadiumResponse {
 
     @JsonProperty("isActive")
     private boolean isActive;
+
+    /** Computed from reviews — null when the stadium has no reviews yet. */
+    private Double averageRating;
+    private Integer reviewCount;
 }
