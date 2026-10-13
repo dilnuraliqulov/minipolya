@@ -21,7 +21,9 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 /** Owner-managed stadium discounts, applied in availability/pricing. */
 @Slf4j
@@ -77,12 +79,16 @@ public class PromotionService {
     /** Best (highest) discount for the stadium at the given instant, or null if none applies. */
     @Transactional(readOnly = true)
     public Integer getDiscountPercent(Long stadiumId, OffsetDateTime dateTime) {
+        return getBestPromotion(stadiumId, dateTime).map(Promotion::getDiscountPercent).orElse(null);
+    }
+
+    /** The highest-discount promotion covering the given instant, used by availability. */
+    @Transactional(readOnly = true)
+    public Optional<Promotion> getBestPromotion(Long stadiumId, OffsetDateTime dateTime) {
         ZonedDateTime local = dateTime.atZoneSameInstant(TASHKENT);
         int dayOfWeek = local.getDayOfWeek().getValue() - 1;
         return promotionRepository.findMatching(stadiumId, dateTime, dayOfWeek, local.toLocalTime()).stream()
-                .map(Promotion::getDiscountPercent)
-                .max(Integer::compareTo)
-                .orElse(null);
+                .max(Comparator.comparingInt(Promotion::getDiscountPercent));
     }
 
     /** Deactivates active promotions whose window has ended. Idempotent. */

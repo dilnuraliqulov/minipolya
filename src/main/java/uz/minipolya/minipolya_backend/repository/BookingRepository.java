@@ -37,4 +37,16 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     boolean existsActiveOverlap(@Param("stadiumId") Long stadiumId,
                                 @Param("startsAt") OffsetDateTime startsAt,
                                 @Param("endsAt") OffsetDateTime endsAt);
+
+    /** Active (pending/confirmed) bookings starting within [from, to) — used by availability. */
+    @Query("""
+            SELECT b FROM Booking b
+            WHERE b.stadium.id = :stadiumId
+              AND b.status IN ('pending', 'confirmed')
+              AND b.startsAt >= :from
+              AND b.startsAt < :to
+            """)
+    List<Booking> findActiveForStadiumBetween(@Param("stadiumId") Long stadiumId,
+                                              @Param("from") OffsetDateTime from,
+                                              @Param("to") OffsetDateTime to);
 }

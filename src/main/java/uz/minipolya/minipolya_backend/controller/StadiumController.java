@@ -2,6 +2,7 @@ package uz.minipolya.minipolya_backend.controller;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -13,11 +14,14 @@ import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.CreateStadiumRequest;
 import uz.minipolya.minipolya_backend.dto.request.UpdateStadiumRequest;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
+import uz.minipolya.minipolya_backend.dto.response.AvailabilityResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.dto.response.StadiumDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.StadiumResponse;
+import uz.minipolya.minipolya_backend.service.AvailabilityService;
 import uz.minipolya.minipolya_backend.service.StadiumService;
 
+import java.time.LocalDate;
 import java.util.List;
 
 @RestController
@@ -25,6 +29,7 @@ import java.util.List;
 public class StadiumController {
 
     private final StadiumService stadiumService;
+    private final AvailabilityService availabilityService;
 
     // ---- Public (players) ----
 
@@ -42,6 +47,13 @@ public class StadiumController {
     public ApiResponse<StadiumDetailResponse> detail(@AuthenticationPrincipal Long userId,
                                                      @PathVariable Long id) {
         return ApiResponse.ok(stadiumService.getPublicDetail(id, userId));
+    }
+
+    @GetMapping("/api/stadiums/{stadiumId}/availability")
+    public ApiResponse<AvailabilityResponse> availability(
+            @PathVariable Long stadiumId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return ApiResponse.ok(availabilityService.getAvailability(stadiumId, date));
     }
 
     // ---- Owner ----
