@@ -39,6 +39,7 @@ public class StadiumService {
     private final StadiumMapper stadiumMapper;
     private final ReviewRepository reviewRepository;
     private final FavoriteRepository favoriteRepository;
+    private final AuditService auditService;
 
     // ---- Owner operations ----
 
@@ -61,6 +62,7 @@ public class StadiumService {
         replacePhotos(stadium, request.getPhotos());
 
         Stadium saved = stadiumRepository.save(stadium);
+        auditService.log(ownerId, "STADIUM_CREATED", "stadium", saved.getId());
         log.info("Stadium created: id={} ownerId={} status={}", saved.getId(), ownerId, saved.getStatus());
         return stadiumMapper.toDetailResponse(saved);
     }
@@ -87,6 +89,7 @@ public class StadiumService {
         }
 
         Stadium saved = stadiumRepository.save(stadium);
+        auditService.log(ownerId, "STADIUM_UPDATED", "stadium", saved.getId());
         log.info("Stadium updated: id={} ownerId={}", saved.getId(), ownerId);
         return stadiumMapper.toDetailResponse(saved);
     }

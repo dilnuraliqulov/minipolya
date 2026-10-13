@@ -34,6 +34,7 @@ class OwnerApplicationServiceTest {
     private UserRepository userRepository;
     private OwnerApplicationMapper applicationMapper;
     private NotificationService notificationService;
+    private AuditService auditService;
     private OwnerApplicationService service;
 
     private User applicant;
@@ -44,8 +45,9 @@ class OwnerApplicationServiceTest {
         userRepository = mock(UserRepository.class);
         applicationMapper = mock(OwnerApplicationMapper.class);
         notificationService = mock(NotificationService.class);
+        auditService = mock(AuditService.class);
         service = new OwnerApplicationService(applicationRepository, userRepository,
-                applicationMapper, notificationService);
+                applicationMapper, notificationService, auditService);
 
         applicant = User.builder().id(7L).name("Player").isOwner(false).build();
     }

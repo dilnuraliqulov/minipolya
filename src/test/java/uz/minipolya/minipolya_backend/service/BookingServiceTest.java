@@ -53,6 +53,7 @@ class BookingServiceTest {
     private PaymentService paymentService;
     private GameService gameService;
     private NotificationService notificationService;
+    private AuditService auditService;
     private BookingService service;
 
     private User player;
@@ -70,10 +71,11 @@ class BookingServiceTest {
         paymentService = mock(PaymentService.class);
         gameService = mock(GameService.class);
         notificationService = mock(NotificationService.class);
+        auditService = mock(AuditService.class);
 
         service = new BookingService(bookingRepository, stadiumRepository, userRepository,
                 pricingRuleRepository, priceCalculator, new RefundCalculator(),
-                bookingMapper, new AppProperties(), paymentService, gameService, notificationService);
+                bookingMapper, new AppProperties(), paymentService, gameService, notificationService, auditService);
 
         player = User.builder().id(7L).name("Player").build();
         owner = User.builder().id(2L).name("Owner").build();

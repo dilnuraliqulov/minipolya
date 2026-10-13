@@ -39,6 +39,7 @@ class PaymentServiceTest {
     private PaymentMapper paymentMapper;
     private GameService gameService;
     private NotificationService notificationService;
+    private AuditService auditService;
     private PaymentService service;
 
     private User player;
@@ -55,10 +56,11 @@ class PaymentServiceTest {
         paymentMapper = mock(PaymentMapper.class);
         gameService = mock(GameService.class);
         notificationService = mock(NotificationService.class);
+        auditService = mock(AuditService.class);
 
         service = new PaymentService(paymentRepository, bookingRepository, userRepository,
                 gameRepository, gameParticipantRepository, paymentMapper,
-                List.of(new PaymeProvider(), new ClickProvider()), gameService, notificationService);
+                List.of(new PaymeProvider(), new ClickProvider()), gameService, notificationService, auditService);
 
         player = User.builder().id(7L).name("Player").build();
         owner = User.builder().id(2L).name("Owner").build();

@@ -36,6 +36,7 @@ public class OwnerApplicationService {
     private final UserRepository userRepository;
     private final OwnerApplicationMapper applicationMapper;
     private final NotificationService notificationService;
+    private final AuditService auditService;
 
     @Transactional
     public OwnerApplicationResponse apply(CreateOwnerApplicationRequest request, Long userId) {
@@ -109,11 +110,14 @@ public class OwnerApplicationService {
             application.setStatus(OwnerApplication.Status.APPROVED);
             applicant.setOwner(true);
             userRepository.save(applicant);
+            auditService.log(adminUserId, "APPLICATION_APPROVED", "owner_application", applicationId);
+            auditService.log(adminUserId, "USER_ROLE_CHANGED", "user", applicant.getId(), "{\"isOwner\":true}");
             notifyApplicant(applicant.getId(), applicationId,
                     "Заявка одобрена",
                     "Ваша заявка на владельца одобрена! Теперь вы можете добавлять стадионы.");
         } else {
             application.setStatus(OwnerApplication.Status.REJECTED);
+            auditService.log(adminUserId, "APPLICATION_REJECTED", "owner_application", applicationId);
             notifyApplicant(applicant.getId(), applicationId,
                     "Заявка отклонена",
                     "Ваша заявка на владельца не одобрена. Причина: "

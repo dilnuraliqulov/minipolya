@@ -76,6 +76,7 @@ public class GameService {
     private final AppProperties appProperties;
     private final PaymentService paymentService;
     private final NotificationService notificationService;
+    private final AuditService auditService;
 
     @Transactional
     public GameDetailResponse createGame(CreateGameRequest request, Long creatorUserId) {
@@ -127,6 +128,7 @@ public class GameService {
         participantRepository.save(GameParticipant.builder()
                 .game(saved).user(creator).side(creatorSide).status(GameParticipant.Status.JOINED).build());
 
+        auditService.log(creatorUserId, "GAME_CREATED", "game", saved.getId(), "{\"type\":\"" + type + "\"}");
         log.info("Game created: id={} type={} stadiumId={} creatorId={}",
                 saved.getId(), type, stadium.getId(), creatorUserId);
         return toDetail(saved);
@@ -224,6 +226,7 @@ public class GameService {
         refundPaidParticipants(game, "Game cancelled by creator");
         notifyParticipants(game, Notification.Type.GAME_CANCELLED, "Игра отменена",
                 "Игра в «" + game.getStadium().getName() + "» отменена создателем.");
+        auditService.log(userId, "GAME_CANCELLED", "game", gameId, "{\"reason\":\"cancelled_by_creator\"}");
         log.info("Game cancelled by creator: id={} userId={}", gameId, userId);
     }
 
@@ -251,6 +254,7 @@ public class GameService {
                 refundPaidParticipants(game, "Slot taken by another booking");
                 notifyParticipants(game, Notification.Type.GAME_CANCELLED, "Игра отменена",
                         "Слот игры в «" + game.getStadium().getName() + "» занят другим бронированием.");
+                auditService.log(null, "GAME_CANCELLED", "game", game.getId(), "{\"reason\":\"slot_taken\"}");
                 log.info("Game {} cancelled: slot taken on stadium {}", game.getId(), stadiumId);
             }
         }
@@ -267,6 +271,7 @@ public class GameService {
             refundPaidParticipants(game, "Game did not fill in time");
             notifyParticipants(game, Notification.Type.GAME_CANCELLED, "Игра отменена",
                     "Игра в «" + game.getStadium().getName() + "» не набрала игроков вовремя.");
+            auditService.log(null, "GAME_CANCELLED", "game", game.getId(), "{\"reason\":\"not_filled\"}");
         }
         if (!expired.isEmpty()) {
             log.info("Cancelled {} unfilled game(s)", expired.size());
@@ -296,6 +301,7 @@ public class GameService {
             gameRepository.save(game);
             notifyParticipants(game, Notification.Type.GAME_CONFIRMED, "Игра подтверждена",
                     "Игра в «" + game.getStadium().getName() + "» подтверждена. Слот забронирован.");
+            auditService.log(game.getCreator().getId(), "GAME_CONFIRMED", "game", game.getId());
             log.info("Game confirmed: id={} bookingId={}", game.getId(), saved.getId());
         } catch (DataIntegrityViolationException ex) {
             game.setStatus("cancelled_slot_taken");

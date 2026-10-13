@@ -55,6 +55,7 @@ public class PaymentService {
     private final List<PaymentProvider> paymentProviders;
     private final GameService gameService;
     private final NotificationService notificationService;
+    private final AuditService auditService;
 
     public PaymentService(PaymentRepository paymentRepository,
                           BookingRepository bookingRepository,
@@ -64,7 +65,8 @@ public class PaymentService {
                           PaymentMapper paymentMapper,
                           List<PaymentProvider> paymentProviders,
                           @Lazy GameService gameService,
-                          NotificationService notificationService) {
+                          NotificationService notificationService,
+                          AuditService auditService) {
         this.paymentRepository = paymentRepository;
         this.bookingRepository = bookingRepository;
         this.userRepository = userRepository;
@@ -74,6 +76,7 @@ public class PaymentService {
         this.paymentProviders = paymentProviders;
         this.gameService = gameService;
         this.notificationService = notificationService;
+        this.auditService = auditService;
     }
 
     @Transactional
@@ -147,6 +150,8 @@ public class PaymentService {
         if (isSuccess(providerStatus)) {
             payment.setStatus(Payment.Status.COMPLETED);
             paymentRepository.save(payment);
+            auditService.log(payment.getUser().getId(), "PAYMENT_COMPLETED", "payment", payment.getId(),
+                    "{\"amount\":" + payment.getAmount() + ",\"provider\":\"" + payment.getProvider().getValue() + "\"}");
             onPaymentCompleted(payment);
             log.info("Payment completed: id={} type={} provider={} txn={}",
                     payment.getId(), payment.getPaymentType().getValue(), provider.getValue(), providerTxnId);
@@ -183,6 +188,8 @@ public class PaymentService {
         original.setStatus(Payment.Status.REFUNDED);
         paymentRepository.save(original);
 
+        auditService.log(original.getUser().getId(), "REFUND_CREATED", "payment", savedRefund.getId(),
+                "{\"originalPaymentId\":" + originalPaymentId + ",\"amount\":" + savedRefund.getAmount() + "}");
         log.info("Refund created: id={} originalId={} amount={}",
                 savedRefund.getId(), originalPaymentId, savedRefund.getAmount());
         return savedRefund;
@@ -228,6 +235,8 @@ public class PaymentService {
                 .build();
         Payment saved = paymentRepository.save(payment);
 
+        auditService.log(ownerUserId, "PAYMENT_COMPLETED", "payment", saved.getId(),
+                "{\"amount\":" + saved.getAmount() + ",\"provider\":\"cash\"}");
         confirmPaidBooking(booking);
         log.info("Cash payment recorded: id={} bookingId={} ownerId={}", saved.getId(), bookingId, ownerUserId);
         return saved;
@@ -262,6 +271,8 @@ public class PaymentService {
         booking.setStatus("confirmed");
         booking.setExpiresAt(null);
         bookingRepository.save(booking);
+        Long bookingUserId = booking.getUser() == null ? null : booking.getUser().getId();
+        auditService.log(bookingUserId, "BOOKING_CONFIRMED", "booking", booking.getId());
         if (booking.getUser() != null) {
             try {
                 notificationService.notify(booking.getUser().getId(),

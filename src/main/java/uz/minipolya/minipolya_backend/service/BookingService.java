@@ -64,6 +64,7 @@ public class BookingService {
     private final PaymentService paymentService;
     private final GameService gameService;
     private final NotificationService notificationService;
+    private final AuditService auditService;
 
     @Transactional
     public BookingResponse createBooking(Long userId, CreateBookingRequest request) {
@@ -111,6 +112,7 @@ public class BookingService {
 
         gameService.cancelGamesOnSlot(stadium.getId(), startsAt, endsAt);
 
+        auditService.log(userId, "BOOKING_CREATED", "booking", saved.getId());
         log.info("Booking created: id={} stadiumId={} userId={} {}-{} price={}",
                 saved.getId(), stadium.getId(), userId, startsAt, endsAt, price);
         return bookingMapper.toResponse(saved);
@@ -156,6 +158,8 @@ public class BookingService {
         safeNotify(() -> notificationService.notify(userId, Notification.Type.BOOKING_CANCELLED,
                 "Бронь отменена", "Вы отменили бронь в «" + booking.getStadium().getName() + "».",
                 Notification.ReferenceType.BOOKING, booking.getId()));
+        auditService.log(userId, "BOOKING_CANCELLED_BY_USER", "booking", booking.getId(),
+                "{\"refundAmount\":" + refundAmount + "}");
         log.info("Booking cancelled by user: id={} userId={} refundPercent={} refundAmount={}",
                 bookingId, userId, refundPercent, refundAmount);
         return withRefund(booking, refundAmount);
@@ -183,6 +187,7 @@ public class BookingService {
                             + "». Возврат средств оформлен.",
                     Notification.ReferenceType.BOOKING, booking.getId()));
         }
+        auditService.log(ownerId, "BOOKING_CANCELLED_BY_OWNER", "booking", booking.getId());
         log.info("Booking cancelled by owner: id={} ownerId={} refundAmount={}", bookingId, ownerId, refundAmount);
         return withRefund(booking, refundAmount);
     }

@@ -41,6 +41,8 @@ class StadiumServiceTest {
     private ReviewRepository reviewRepository;
     @Mock
     private FavoriteRepository favoriteRepository;
+    @Mock
+    private AuditService auditService;
 
     @InjectMocks
     private StadiumService stadiumService;
