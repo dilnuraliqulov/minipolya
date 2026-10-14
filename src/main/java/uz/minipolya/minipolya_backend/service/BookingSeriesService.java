@@ -33,6 +33,7 @@ import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -63,7 +64,7 @@ public class BookingSeriesService {
     private final AppProperties appProperties;
 
     @Transactional
-    public BookingSeriesResponse createSeries(CreateBookingSeriesRequest request, Long userId) {
+    public BookingSeriesResponse createSeries(CreateBookingSeriesRequest request, UUID userId) {
         Stadium stadium = stadiumRepository.findByIdAndStatus(request.getStadiumId(), STATUS_APPROVED)
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not available"));
@@ -102,14 +103,14 @@ public class BookingSeriesService {
     }
 
     @Transactional(readOnly = true)
-    public List<BookingSeriesResponse> getMySeries(Long userId) {
+    public List<BookingSeriesResponse> getMySeries(UUID userId) {
         return seriesRepository.findByUserIdAndIsActiveTrue(userId).stream()
                 .map(s -> toResponse(s, nextOccurrences(s.getDayOfWeek(), s.getStartTime(), 1).get(0)))
                 .toList();
     }
 
     @Transactional
-    public void cancelSeries(Long seriesId, Long userId) {
+    public void cancelSeries(UUID seriesId, UUID userId) {
         BookingSeries series = seriesRepository.findById(seriesId)
                 .orElseThrow(() -> new ResourceNotFoundException("Series not found"));
         if (!series.getUser().getId().equals(userId)) {
@@ -200,7 +201,7 @@ public class BookingSeriesService {
     }
 
     private void notifyGeneration(BookingSeries series, LocalDate date, boolean created) {
-        Long userId = series.getUser().getId();
+        UUID userId = series.getUser().getId();
         String stadiumName = series.getStadium().getName();
         try {
             if (created) {

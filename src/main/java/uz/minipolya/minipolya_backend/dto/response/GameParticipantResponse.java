@@ -9,6 +9,7 @@ import uz.minipolya.minipolya_backend.entity.GameParticipant;
 import uz.minipolya.minipolya_backend.entity.Payment;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 /**
  * One participant row in a {@link GameDetailResponse}. Enum fields serialize to
@@ -21,9 +22,9 @@ import java.time.OffsetDateTime;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class GameParticipantResponse {
 
-    private Long id;
-    private Long gameId;
-    private Long userId;
+    private UUID id;
+    private UUID gameId;
+    private UUID userId;
     private String userName;
     private GameParticipant.Side side;
     private GameParticipant.Status status;

@@ -25,6 +25,7 @@ import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
 import java.util.List;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -44,7 +45,7 @@ public class StadiumService {
     // ---- Owner operations ----
 
     @Transactional
-    public StadiumDetailResponse create(Long ownerId, CreateStadiumRequest request) {
+    public StadiumDetailResponse create(UUID ownerId, CreateStadiumRequest request) {
         User owner = userRepository.findById(ownerId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
@@ -68,7 +69,7 @@ public class StadiumService {
     }
 
     @Transactional
-    public StadiumDetailResponse update(Long ownerId, Long stadiumId, UpdateStadiumRequest request) {
+    public StadiumDetailResponse update(UUID ownerId, UUID stadiumId, UpdateStadiumRequest request) {
         Stadium stadium = stadiumRepository.findById(stadiumId)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
         if (!stadium.getOwner().getId().equals(ownerId)) {
@@ -95,7 +96,7 @@ public class StadiumService {
     }
 
     @Transactional(readOnly = true)
-    public List<StadiumResponse> listOwnerStadiums(Long ownerId) {
+    public List<StadiumResponse> listOwnerStadiums(UUID ownerId) {
         return stadiumRepository.findByOwnerId(ownerId).stream()
                 .map(this::toResponseWithRatings)
                 .toList();
@@ -105,7 +106,7 @@ public class StadiumService {
 
     @Transactional(readOnly = true)
     public PageResponse<StadiumResponse> searchPublic(String q, String format, Integer maxPrice, int page, int size) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "id"));
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "createdAt"));
         return PageResponse.from(
                 stadiumRepository.search(blankToNull(q), blankToNull(format), maxPrice, pageable),
                 this::toResponseWithRatings);
@@ -113,7 +114,7 @@ public class StadiumService {
 
     /** @param userId the viewer, or null for an anonymous request (no favorite flag). */
     @Transactional(readOnly = true)
-    public StadiumDetailResponse getPublicDetail(Long id, Long userId) {
+    public StadiumDetailResponse getPublicDetail(UUID id, UUID userId) {
         Stadium stadium = stadiumRepository.findByIdAndStatus(id, STATUS_APPROVED)
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));

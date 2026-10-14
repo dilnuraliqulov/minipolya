@@ -13,6 +13,8 @@ import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.UserResponse;
 import uz.minipolya.minipolya_backend.service.UserService;
 
+import java.util.UUID;
+
 @RestController
 @RequestMapping("/api/users")
 @RequiredArgsConstructor
@@ -21,12 +23,12 @@ public class UserController {
     private final UserService userService;
 
     @GetMapping("/me")
-    public ApiResponse<UserResponse> me(@AuthenticationPrincipal Long userId) {
+    public ApiResponse<UserResponse> me(@AuthenticationPrincipal UUID userId) {
         return ApiResponse.ok(userService.getCurrentUser(userId));
     }
 
     @PatchMapping("/me")
-    public ApiResponse<UserResponse> updateMe(@AuthenticationPrincipal Long userId,
+    public ApiResponse<UserResponse> updateMe(@AuthenticationPrincipal UUID userId,
                                               @Valid @RequestBody UpdateUserRequest request) {
         return ApiResponse.ok(userService.updateProfile(userId, request));
     }

@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.service.AdminService;
 
+import java.util.UUID;
 import java.util.function.Function;
 
 @RestController
@@ -34,13 +35,13 @@ public class AdminUserController {
     }
 
     @GetMapping("/api/admin/users/{id}")
-    public ApiResponse<AdminUserResponse> detail(@PathVariable Long id) {
+    public ApiResponse<AdminUserResponse> detail(@PathVariable UUID id) {
         return ApiResponse.ok(adminService.getUser(id));
     }
 
     @PutMapping("/api/admin/users/{id}")
-    public ApiResponse<AdminUserResponse> update(@AuthenticationPrincipal Long adminUserId,
-                                                 @PathVariable Long id,
+    public ApiResponse<AdminUserResponse> update(@AuthenticationPrincipal UUID adminUserId,
+                                                 @PathVariable UUID id,
                                                  @Valid @RequestBody AdminUpdateUserRequest request) {
         return ApiResponse.ok(adminService.updateUser(id, request, adminUserId), "User updated");
     }

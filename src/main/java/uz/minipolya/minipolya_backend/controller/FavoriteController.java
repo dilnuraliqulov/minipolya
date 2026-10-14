@@ -15,6 +15,7 @@ import uz.minipolya.minipolya_backend.dto.response.StadiumResponse;
 import uz.minipolya.minipolya_backend.service.FavoriteService;
 
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Function;
 
 @RestController
@@ -24,15 +25,15 @@ public class FavoriteController {
     private final FavoriteService favoriteService;
 
     @PostMapping("/api/favorites/{stadiumId}/toggle")
-    public ApiResponse<Map<String, Boolean>> toggle(@AuthenticationPrincipal Long userId,
-                                                    @PathVariable Long stadiumId) {
+    public ApiResponse<Map<String, Boolean>> toggle(@AuthenticationPrincipal UUID userId,
+                                                    @PathVariable UUID stadiumId) {
         boolean favorited = favoriteService.toggleFavorite(stadiumId, userId);
         return ApiResponse.ok(Map.of("favorited", favorited),
                 favorited ? "Added to favorites" : "Removed from favorites");
     }
 
     @GetMapping("/api/favorites")
-    public ApiResponse<PageResponse<StadiumResponse>> myFavorites(@AuthenticationPrincipal Long userId,
+    public ApiResponse<PageResponse<StadiumResponse>> myFavorites(@AuthenticationPrincipal UUID userId,
                                                                   @RequestParam(defaultValue = "0") int page,
                                                                   @RequestParam(defaultValue = "20") int size) {
         PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));

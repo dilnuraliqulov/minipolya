@@ -135,7 +135,9 @@ src/main/java/uz/minipolya/minipolya_backend/
   - Each changeset has a unique `--changeset minipolya:<id>` tag
   - Liquibase tracks applied changesets in `DATABASECHANGELOG` and `DATABASECHANGELOGLOCK` tables
   - **NEVER edit an already-applied changeset** — always create a new changeset file for schema changes
+    - One-time exception, already taken: changesets 001–017 were edited in place once to convert all ids from BIGINT to UUID, before the first deployment, and the local dev database was dropped and recreated. The "never edit an applied changeset" rule applies again from now on — any further schema change is a new changeset (018+).
 - Hibernate: `ddl-auto: validate` — Hibernate validates against existing schema, NEVER creates or alters tables
+- **All primary keys are UUID** (PostgreSQL `UUID` type). UUIDs are generated application-side by Hibernate as **UUID v7** (`@UuidGenerator(style = UuidGenerator.Style.VERSION_7)` on each entity's `@Id private UUID id;`), with a DB-side `DEFAULT gen_random_uuid()` as a fallback. All foreign-key and raw entity-id columns are `UUID` too. The only non-UUID id is `users.telegram_id` (Telegram's own id, stays `BIGINT`); `payments.provider_txn_id` stays `VARCHAR`.
 - All money: integer so'm (never use float/double for money)
 - All timestamps: TIMESTAMPTZ stored in UTC, convert to `Asia/Tashkent` only for display/response
 - Double-booking prevention: PostgreSQL `EXCLUDE USING gist` constraint on bookings table — the database itself rejects overlapping bookings on the same stadium

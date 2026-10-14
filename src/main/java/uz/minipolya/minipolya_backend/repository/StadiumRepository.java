@@ -10,19 +10,20 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Repository
-public interface StadiumRepository extends JpaRepository<Stadium, Long> {
+public interface StadiumRepository extends JpaRepository<Stadium, UUID> {
 
-    Optional<Stadium> findByIdAndStatus(Long id, String status);
+    Optional<Stadium> findByIdAndStatus(UUID id, String status);
 
-    List<Stadium> findByOwnerId(Long ownerId);
+    List<Stadium> findByOwnerId(UUID ownerId);
 
     Page<Stadium> findByStatus(String status, Pageable pageable);
 
     long countByStatus(String status);
 
-    long countByOwnerId(Long ownerId);
+    long countByOwnerId(UUID ownerId);
 
     @Query("""
             SELECT s FROM Stadium s

@@ -13,6 +13,7 @@ import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.service.AuditService;
 
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Function;
 
 /** Admin-only audit log views. {@code /api/admin/**} is gated to ROLE_ADMIN in SecurityConfig. */
@@ -30,7 +31,7 @@ public class AdminAuditController {
     }
 
     @GetMapping("/api/admin/audit-log/user/{userId}")
-    public ApiResponse<PageResponse<AuditLogResponse>> byUser(@PathVariable Long userId,
+    public ApiResponse<PageResponse<AuditLogResponse>> byUser(@PathVariable UUID userId,
                                                              @RequestParam(defaultValue = "0") int page,
                                                              @RequestParam(defaultValue = "20") int size) {
         PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
@@ -39,7 +40,7 @@ public class AdminAuditController {
 
     @GetMapping("/api/admin/audit-log/entity/{type}/{id}")
     public ApiResponse<List<AuditLogResponse>> byEntity(@PathVariable String type,
-                                                        @PathVariable Long id) {
+                                                        @PathVariable UUID id) {
         return ApiResponse.ok(auditService.getByEntity(type, id));
     }
 }

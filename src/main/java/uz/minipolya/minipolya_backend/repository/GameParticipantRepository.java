@@ -6,17 +6,18 @@ import uz.minipolya.minipolya_backend.entity.GameParticipant;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Repository
-public interface GameParticipantRepository extends JpaRepository<GameParticipant, Long> {
+public interface GameParticipantRepository extends JpaRepository<GameParticipant, UUID> {
 
-    List<GameParticipant> findByGameId(Long gameId);
+    List<GameParticipant> findByGameId(UUID gameId);
 
-    Optional<GameParticipant> findByGameIdAndUserId(Long gameId, Long userId);
+    Optional<GameParticipant> findByGameIdAndUserId(UUID gameId, UUID userId);
 
-    List<GameParticipant> findByUserId(Long userId);
+    List<GameParticipant> findByUserId(UUID userId);
 
-    int countByGameIdAndStatus(Long gameId, GameParticipant.Status status);
+    int countByGameIdAndStatus(UUID gameId, GameParticipant.Status status);
 
-    List<GameParticipant> findByGameIdAndSide(Long gameId, GameParticipant.Side side);
+    List<GameParticipant> findByGameIdAndSide(UUID gameId, GameParticipant.Side side);
 }

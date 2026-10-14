@@ -24,6 +24,7 @@ import java.time.ZonedDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /** Owner-managed stadium discounts, applied in availability/pricing. */
 @Slf4j
@@ -38,7 +39,7 @@ public class PromotionService {
     private final PromotionMapper promotionMapper;
 
     @Transactional
-    public PromotionResponse createPromotion(CreatePromotionRequest request, Long ownerUserId) {
+    public PromotionResponse createPromotion(CreatePromotionRequest request, UUID ownerUserId) {
         Stadium stadium = requireOwnedStadium(request.getStadiumId(), ownerUserId);
         if (!request.getEndsAt().isAfter(request.getStartsAt())) {
             throw new BadRequestException("endsAt must be after startsAt");
@@ -52,20 +53,20 @@ public class PromotionService {
     }
 
     @Transactional(readOnly = true)
-    public Page<PromotionResponse> getPromotions(Long stadiumId, Long ownerUserId, Pageable pageable) {
+    public Page<PromotionResponse> getPromotions(UUID stadiumId, UUID ownerUserId, Pageable pageable) {
         requireOwnedStadium(stadiumId, ownerUserId);
         return promotionRepository.findByStadiumId(stadiumId, pageable).map(promotionMapper::toResponse);
     }
 
     @Transactional(readOnly = true)
-    public List<PromotionResponse> getActivePromotions(Long stadiumId) {
+    public List<PromotionResponse> getActivePromotions(UUID stadiumId) {
         return promotionRepository.findByStadiumIdAndIsActiveTrue(stadiumId).stream()
                 .map(promotionMapper::toResponse)
                 .toList();
     }
 
     @Transactional
-    public void deactivatePromotion(Long promotionId, Long ownerUserId) {
+    public void deactivatePromotion(UUID promotionId, UUID ownerUserId) {
         Promotion promotion = promotionRepository.findById(promotionId)
                 .orElseThrow(() -> new ResourceNotFoundException("Promotion not found"));
         if (!promotion.getStadium().getOwner().getId().equals(ownerUserId)) {
@@ -78,13 +79,13 @@ public class PromotionService {
 
     /** Best (highest) discount for the stadium at the given instant, or null if none applies. */
     @Transactional(readOnly = true)
-    public Integer getDiscountPercent(Long stadiumId, OffsetDateTime dateTime) {
+    public Integer getDiscountPercent(UUID stadiumId, OffsetDateTime dateTime) {
         return getBestPromotion(stadiumId, dateTime).map(Promotion::getDiscountPercent).orElse(null);
     }
 
     /** The highest-discount promotion covering the given instant, used by availability. */
     @Transactional(readOnly = true)
-    public Optional<Promotion> getBestPromotion(Long stadiumId, OffsetDateTime dateTime) {
+    public Optional<Promotion> getBestPromotion(UUID stadiumId, OffsetDateTime dateTime) {
         ZonedDateTime local = dateTime.atZoneSameInstant(TASHKENT);
         int dayOfWeek = local.getDayOfWeek().getValue() - 1;
         return promotionRepository.findMatching(stadiumId, dateTime, dayOfWeek, local.toLocalTime()).stream()
@@ -104,7 +105,7 @@ public class PromotionService {
         return ended.size();
     }
 
-    private Stadium requireOwnedStadium(Long stadiumId, Long ownerUserId) {
+    private Stadium requireOwnedStadium(UUID stadiumId, UUID ownerUserId) {
         Stadium stadium = stadiumRepository.findById(stadiumId)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
         if (!stadium.getOwner().getId().equals(ownerUserId)) {

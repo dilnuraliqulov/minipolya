@@ -8,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 /**
  * Public-facing user projection. Never expose the {@link uz.minipolya.minipolya_backend.entity.User}
@@ -20,7 +21,7 @@ import java.time.OffsetDateTime;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class UserResponse {
 
-    private Long id;
+    private UUID id;
     private String phone;
     private String name;
     private Long telegramId;

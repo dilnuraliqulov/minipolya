@@ -31,12 +31,12 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -44,6 +44,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class BookingServiceTest {
+
+    private static final UUID USER_ID = UUID.randomUUID();
+    private static final UUID OWNER_ID = UUID.randomUUID();
+    private static final UUID STADIUM_ID = UUID.randomUUID();
+    private static final UUID BOOKING_ID = UUID.randomUUID();
+    private static final UUID FOREIGN_USER_ID = UUID.randomUUID();
+    private static final UUID NON_OWNER_ID = UUID.randomUUID();
+    private static final UUID MANUAL_BOOKING_ID = UUID.randomUUID();
 
     private BookingRepository bookingRepository;
     private StadiumRepository stadiumRepository;
@@ -78,9 +86,9 @@ class BookingServiceTest {
                 pricingRuleRepository, priceCalculator, new RefundCalculator(),
                 bookingMapper, new AppProperties(), paymentService, gameService, notificationService, auditService);
 
-        player = User.builder().id(7L).name("Player").build();
-        owner = User.builder().id(2L).name("Owner").build();
-        stadium = Stadium.builder().id(1L).status("approved").isActive(true).pricePerHour(50_000)
+        player = User.builder().id(USER_ID).name("Player").build();
+        owner = User.builder().id(OWNER_ID).name("Owner").build();
+        stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000)
                 .fullRefundHours(24).partialRefundHours(12).partialRefundPercent(50).owner(owner).build();
     }
 
@@ -93,15 +101,15 @@ class BookingServiceTest {
     @Test
     void createBookingHoldsSlotAsPending() {
         OffsetDateTime start = inHours(48);
-        when(stadiumRepository.findByIdAndStatus(1L, "approved")).thenReturn(Optional.of(stadium));
-        when(userRepository.findById(7L)).thenReturn(Optional.of(player));
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
         when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(1L).startsAt(start).durationHours(2).build();
-        service.createBooking(7L, req);
+                .stadiumId(STADIUM_ID).startsAt(start).durationHours(2).build();
+        service.createBooking(USER_ID, req);
 
         ArgumentCaptor<Booking> captor = ArgumentCaptor.forClass(Booking.class);
         verify(bookingRepository).saveAndFlush(captor.capture());
@@ -118,11 +126,11 @@ class BookingServiceTest {
 
     @Test
     void createBookingRejectsUnapprovedOrInactiveStadium() {
-        when(stadiumRepository.findByIdAndStatus(1L, "approved")).thenReturn(Optional.empty());
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.empty());
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(1L).startsAt(inHours(48)).durationHours(1).build();
-        assertThatThrownBy(() -> service.createBooking(7L, req))
+                .stadiumId(STADIUM_ID).startsAt(inHours(48)).durationHours(1).build();
+        assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(ResourceNotFoundException.class);
 
         verify(bookingRepository, never()).saveAndFlush(any());
@@ -130,12 +138,12 @@ class BookingServiceTest {
 
     @Test
     void createBookingRejectsTooFarAhead() {
-        when(stadiumRepository.findByIdAndStatus(1L, "approved")).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
 
         OffsetDateTime start = OffsetDateTime.now(ZoneOffset.UTC).plusWeeks(5); // default max is 4
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(1L).startsAt(start).durationHours(1).build();
-        assertThatThrownBy(() -> service.createBooking(7L, req))
+                .stadiumId(STADIUM_ID).startsAt(start).durationHours(1).build();
+        assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(BadRequestException.class);
 
         verify(bookingRepository, never()).saveAndFlush(any());
@@ -143,44 +151,44 @@ class BookingServiceTest {
 
     @Test
     void createBookingTranslatesOverlapConstraintToSlotAlreadyBooked() {
-        when(stadiumRepository.findByIdAndStatus(1L, "approved")).thenReturn(Optional.of(stadium));
-        when(userRepository.findById(7L)).thenReturn(Optional.of(player));
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
         when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
         when(bookingRepository.saveAndFlush(any(Booking.class)))
                 .thenThrow(new DataIntegrityViolationException("bookings_no_overlap"));
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(1L).startsAt(inHours(48)).durationHours(1).build();
-        assertThatThrownBy(() -> service.createBooking(7L, req))
+                .stadiumId(STADIUM_ID).startsAt(inHours(48)).durationHours(1).build();
+        assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(SlotAlreadyBookedException.class);
     }
 
     @Test
     void createBookingAsksGameServiceToClearWaitingGamesOnTheSlot() {
         OffsetDateTime start = inHours(48);
-        when(stadiumRepository.findByIdAndStatus(1L, "approved")).thenReturn(Optional.of(stadium));
-        when(userRepository.findById(7L)).thenReturn(Optional.of(player));
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
         when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(1L).startsAt(start).durationHours(2).build();
-        service.createBooking(7L, req);
+                .stadiumId(STADIUM_ID).startsAt(start).durationHours(2).build();
+        service.createBooking(USER_ID, req);
 
-        verify(gameService).cancelGamesOnSlot(1L, start, start.plusHours(2));
+        verify(gameService).cancelGamesOnSlot(STADIUM_ID, start, start.plusHours(2));
     }
 
     // ---- confirmBooking ----
 
     @Test
     void confirmBookingMovesPendingToConfirmed() {
-        Booking booking = Booking.builder().id(5L).status("pending").expiresAt(inHours(1)).stadium(stadium).build();
-        when(bookingRepository.findById(5L)).thenReturn(Optional.of(booking));
+        Booking booking = Booking.builder().id(BOOKING_ID).status("pending").expiresAt(inHours(1)).stadium(stadium).build();
+        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
-        service.confirmBooking(5L);
+        service.confirmBooking(BOOKING_ID);
 
         assertThat(booking.getStatus()).isEqualTo("confirmed");
         assertThat(booking.getExpiresAt()).isNull();
@@ -188,20 +196,20 @@ class BookingServiceTest {
 
     @Test
     void confirmBookingRejectsExpired() {
-        Booking booking = Booking.builder().id(5L).status("expired").stadium(stadium).build();
-        when(bookingRepository.findById(5L)).thenReturn(Optional.of(booking));
+        Booking booking = Booking.builder().id(BOOKING_ID).status("expired").stadium(stadium).build();
+        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
 
-        assertThatThrownBy(() -> service.confirmBooking(5L)).isInstanceOf(BookingExpiredException.class);
+        assertThatThrownBy(() -> service.confirmBooking(BOOKING_ID)).isInstanceOf(BookingExpiredException.class);
         verify(bookingRepository, never()).save(any());
     }
 
     @Test
     void confirmBookingIsIdempotentWhenAlreadyConfirmed() {
-        Booking booking = Booking.builder().id(5L).status("confirmed").stadium(stadium).build();
-        when(bookingRepository.findById(5L)).thenReturn(Optional.of(booking));
+        Booking booking = Booking.builder().id(BOOKING_ID).status("confirmed").stadium(stadium).build();
+        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
-        service.confirmBooking(5L);
+        service.confirmBooking(BOOKING_ID);
 
         verify(bookingRepository, never()).save(any());
     }
@@ -209,68 +217,68 @@ class BookingServiceTest {
     // ---- cancelByUser: cancellation policy ----
 
     private Booking confirmedBooking(OffsetDateTime start, int price) {
-        return Booking.builder().id(5L).status("confirmed").user(player).stadium(stadium)
+        return Booking.builder().id(BOOKING_ID).status("confirmed").user(player).stadium(stadium)
                 .price(price).startsAt(start).build();
     }
 
     @Test
     void cancelByUserFullRefundWhenWellAhead() {
         Booking booking = confirmedBooking(inHours(48), 100_000); // >= 24h
-        when(bookingRepository.findById(5L)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
-        BookingResponse resp = service.cancelByUser(7L, 5L, "changed plans");
+        BookingResponse resp = service.cancelByUser(USER_ID, BOOKING_ID, "changed plans");
 
         assertThat(booking.getStatus()).isEqualTo("cancelled_by_user");
         assertThat(booking.getCancelledAt()).isNotNull();
         assertThat(resp.getRefundAmount()).isEqualTo(100_000);
-        verify(paymentService).refundBookingPayment(5L, 100_000, "changed plans");
+        verify(paymentService).refundBookingPayment(BOOKING_ID, 100_000, "changed plans");
     }
 
     @Test
     void cancelByUserPartialRefundInsidePartialWindow() {
         Booking booking = confirmedBooking(inHours(18), 100_000); // >=12 and <24
-        when(bookingRepository.findById(5L)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
-        BookingResponse resp = service.cancelByUser(7L, 5L, null);
+        BookingResponse resp = service.cancelByUser(USER_ID, BOOKING_ID, null);
 
         assertThat(resp.getRefundAmount()).isEqualTo(50_000); // 50%
-        verify(paymentService).refundBookingPayment(5L, 50_000, null);
+        verify(paymentService).refundBookingPayment(BOOKING_ID, 50_000, null);
     }
 
     @Test
     void cancelByUserNoRefundWhenTooLate() {
         Booking booking = confirmedBooking(inHours(2), 100_000); // < 12h
-        when(bookingRepository.findById(5L)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
-        BookingResponse resp = service.cancelByUser(7L, 5L, null);
+        BookingResponse resp = service.cancelByUser(USER_ID, BOOKING_ID, null);
 
         assertThat(resp.getRefundAmount()).isZero();
-        verify(paymentService, never()).refundBookingPayment(anyLong(), anyInt(), any());
+        verify(paymentService, never()).refundBookingPayment(any(UUID.class), anyInt(), any());
     }
 
     @Test
     void cancelByUserGivesNoRefundForUnpaidPendingHold() {
-        Booking booking = Booking.builder().id(5L).status("pending").user(player).stadium(stadium)
+        Booking booking = Booking.builder().id(BOOKING_ID).status("pending").user(player).stadium(stadium)
                 .price(100_000).startsAt(inHours(48)).build();
-        when(bookingRepository.findById(5L)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
-        BookingResponse resp = service.cancelByUser(7L, 5L, null);
+        BookingResponse resp = service.cancelByUser(USER_ID, BOOKING_ID, null);
 
         assertThat(booking.getStatus()).isEqualTo("cancelled_by_user");
         assertThat(resp.getRefundAmount()).isZero();
-        verify(paymentService, never()).refundBookingPayment(anyLong(), anyInt(), any());
+        verify(paymentService, never()).refundBookingPayment(any(UUID.class), anyInt(), any());
     }
 
     @Test
     void cancelByUserRejectsForeignBooking() {
         Booking booking = confirmedBooking(inHours(48), 100_000);
-        when(bookingRepository.findById(5L)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
 
-        assertThatThrownBy(() -> service.cancelByUser(999L, 5L, null)).isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> service.cancelByUser(FOREIGN_USER_ID, BOOKING_ID, null)).isInstanceOf(ForbiddenException.class);
         verify(bookingRepository, never()).save(any());
     }
 
@@ -278,24 +286,24 @@ class BookingServiceTest {
 
     @Test
     void cancelByOwnerAlwaysRefundsFullEvenWhenLate() {
-        Booking booking = Booking.builder().id(5L).status("confirmed").user(player).stadium(stadium)
+        Booking booking = Booking.builder().id(BOOKING_ID).status("confirmed").user(player).stadium(stadium)
                 .price(80_000).startsAt(inHours(1)).build(); // < 12h: a user would get 0
-        when(bookingRepository.findById(5L)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
-        BookingResponse resp = service.cancelByOwner(2L, 5L, "pitch flooded");
+        BookingResponse resp = service.cancelByOwner(OWNER_ID, BOOKING_ID, "pitch flooded");
 
         assertThat(booking.getStatus()).isEqualTo("cancelled_by_owner");
         assertThat(resp.getRefundAmount()).isEqualTo(80_000);
-        verify(paymentService).refundBookingPayment(5L, 80_000, "pitch flooded");
+        verify(paymentService).refundBookingPayment(BOOKING_ID, 80_000, "pitch flooded");
     }
 
     @Test
     void cancelByOwnerRejectsNonOwner() {
         Booking booking = confirmedBooking(inHours(48), 100_000);
-        when(bookingRepository.findById(5L)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
 
-        assertThatThrownBy(() -> service.cancelByOwner(3L, 5L, null)).isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> service.cancelByOwner(NON_OWNER_ID, BOOKING_ID, null)).isInstanceOf(ForbiddenException.class);
     }
 
     // ---- listing ----
@@ -303,11 +311,11 @@ class BookingServiceTest {
     @Test
     void getMyBookingsWrapsPage() {
         Booking booking = confirmedBooking(inHours(48), 100_000);
-        when(bookingRepository.findByUserId(eq(7L), any(Pageable.class)))
+        when(bookingRepository.findByUserId(eq(USER_ID), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(booking)));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
-        PageResponse<BookingResponse> result = service.getMyBookings(7L, 0, 20);
+        PageResponse<BookingResponse> result = service.getMyBookings(USER_ID, 0, 20);
 
         assertThat(result.getContent()).hasSize(1);
         assertThat(result.getTotalElements()).isEqualTo(1);
@@ -315,12 +323,12 @@ class BookingServiceTest {
 
     @Test
     void getStadiumBookingsReturnsOwnerSchedule() {
-        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
-        when(bookingRepository.findByStadiumId(eq(1L), any(Pageable.class)))
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(bookingRepository.findByStadiumId(eq(STADIUM_ID), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(confirmedBooking(inHours(48), 100_000))));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
-        PageResponse<BookingResponse> result = service.getStadiumBookings(2L, 1L, null, null, 0, 20);
+        PageResponse<BookingResponse> result = service.getStadiumBookings(OWNER_ID, STADIUM_ID, null, null, 0, 20);
 
         assertThat(result.getContent()).hasSize(1);
     }
@@ -329,22 +337,22 @@ class BookingServiceTest {
 
     private CreateManualBookingRequest manualRequest() {
         return CreateManualBookingRequest.builder()
-                .stadiumId(1L).clientName("Walk-in").clientPhone("+998901112233")
+                .stadiumId(STADIUM_ID).clientName("Walk-in").clientPhone("+998901112233")
                 .startsAt(inHours(5)).duration(1).build();
     }
 
     @Test
     void createManualBookingConfirmsImmediatelyAndRecordsCash() {
-        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
         when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> {
             Booking b = inv.getArgument(0);
-            b.setId(500L);
+            b.setId(MANUAL_BOOKING_ID);
             return b;
         });
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
-        service.createManualBooking(manualRequest(), 2L);
+        service.createManualBooking(manualRequest(), OWNER_ID);
 
         ArgumentCaptor<Booking> captor = ArgumentCaptor.forClass(Booking.class);
         verify(bookingRepository).saveAndFlush(captor.capture());
@@ -354,27 +362,27 @@ class BookingServiceTest {
         assertThat(saved.isWalkin()).isTrue();
         assertThat(saved.getUser()).isNull();
         assertThat(saved.getClientName()).isEqualTo("Walk-in");
-        verify(gameService).cancelGamesOnSlot(eq(1L), any(), any());
-        verify(paymentService).recordCashPayment(500L, 2L);
+        verify(gameService).cancelGamesOnSlot(eq(STADIUM_ID), any(), any());
+        verify(paymentService).recordCashPayment(MANUAL_BOOKING_ID, OWNER_ID);
     }
 
     @Test
     void createManualBookingRejectsForeignOwner() {
-        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
 
-        assertThatThrownBy(() -> service.createManualBooking(manualRequest(), 999L))
+        assertThatThrownBy(() -> service.createManualBooking(manualRequest(), FOREIGN_USER_ID))
                 .isInstanceOf(ForbiddenException.class);
         verify(bookingRepository, never()).saveAndFlush(any());
     }
 
     @Test
     void createManualBookingTranslatesOverlapToSlotAlreadyBooked() {
-        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
         when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
         when(bookingRepository.saveAndFlush(any(Booking.class)))
                 .thenThrow(new DataIntegrityViolationException("bookings_no_overlap"));
 
-        assertThatThrownBy(() -> service.createManualBooking(manualRequest(), 2L))
+        assertThatThrownBy(() -> service.createManualBooking(manualRequest(), OWNER_ID))
                 .isInstanceOf(SlotAlreadyBookedException.class);
     }
 }

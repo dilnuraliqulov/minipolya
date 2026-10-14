@@ -15,6 +15,7 @@ import uz.minipolya.minipolya_backend.dto.response.StadiumClosureResponse;
 import uz.minipolya.minipolya_backend.service.StadiumClosureService;
 
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
@@ -23,22 +24,22 @@ public class StadiumClosureController {
     private final StadiumClosureService closureService;
 
     @PostMapping("/api/owner/stadiums/{stadiumId}/closures")
-    public ApiResponse<StadiumClosureResponse> create(@AuthenticationPrincipal Long ownerId,
-                                                      @PathVariable Long stadiumId,
+    public ApiResponse<StadiumClosureResponse> create(@AuthenticationPrincipal UUID ownerId,
+                                                      @PathVariable UUID stadiumId,
                                                       @Valid @RequestBody CreateStadiumClosureRequest request) {
         request.setStadiumId(stadiumId); // path is authoritative
         return ApiResponse.ok(closureService.createClosure(request, ownerId), "Closure created");
     }
 
     @GetMapping("/api/owner/stadiums/{stadiumId}/closures")
-    public ApiResponse<List<StadiumClosureResponse>> list(@AuthenticationPrincipal Long ownerId,
-                                                          @PathVariable Long stadiumId) {
+    public ApiResponse<List<StadiumClosureResponse>> list(@AuthenticationPrincipal UUID ownerId,
+                                                          @PathVariable UUID stadiumId) {
         return ApiResponse.ok(closureService.getClosures(stadiumId, ownerId));
     }
 
     @DeleteMapping("/api/owner/closures/{id}")
-    public ApiResponse<Void> delete(@AuthenticationPrincipal Long ownerId,
-                                    @PathVariable Long id) {
+    public ApiResponse<Void> delete(@AuthenticationPrincipal UUID ownerId,
+                                    @PathVariable UUID id) {
         closureService.deleteClosure(id, ownerId);
         return ApiResponse.ok(null, "Closure removed");
     }

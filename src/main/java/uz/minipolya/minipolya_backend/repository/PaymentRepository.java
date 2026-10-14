@@ -11,20 +11,21 @@ import uz.minipolya.minipolya_backend.entity.Payment;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Repository
-public interface PaymentRepository extends JpaRepository<Payment, Long> {
+public interface PaymentRepository extends JpaRepository<Payment, UUID> {
 
-    List<Payment> findByBookingId(Long bookingId);
+    List<Payment> findByBookingId(UUID bookingId);
 
-    List<Payment> findByGameId(Long gameId);
+    List<Payment> findByGameId(UUID gameId);
 
-    Page<Payment> findByUserId(Long userId, Pageable pageable);
+    Page<Payment> findByUserId(UUID userId, Pageable pageable);
 
     /** Looks up a payment by its provider transaction id — the webhook idempotency key. */
     Optional<Payment> findByProviderAndProviderTxnId(Payment.Provider provider, String providerTxnId);
 
-    Optional<Payment> findByBookingIdAndPaymentTypeAndStatus(Long bookingId,
+    Optional<Payment> findByBookingIdAndPaymentTypeAndStatus(UUID bookingId,
                                                              Payment.PaymentType paymentType,
                                                              Payment.Status status);
 
@@ -34,7 +35,7 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
               AND p.status = :status AND p.paymentType = :type
               AND p.createdAt >= :from AND p.createdAt < :to
             """)
-    long sumRevenueByStadiumAndDateRange(@Param("stadiumId") Long stadiumId,
+    long sumRevenueByStadiumAndDateRange(@Param("stadiumId") UUID stadiumId,
                                          @Param("status") Payment.Status status,
                                          @Param("type") Payment.PaymentType type,
                                          @Param("from") OffsetDateTime from,
@@ -45,7 +46,7 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
             WHERE b.stadium.id = :stadiumId
               AND p.status = :status AND p.paymentType = :type
             """)
-    long sumRevenueByStadium(@Param("stadiumId") Long stadiumId,
+    long sumRevenueByStadium(@Param("stadiumId") UUID stadiumId,
                              @Param("status") Payment.Status status,
                              @Param("type") Payment.PaymentType type);
 
@@ -55,7 +56,7 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
               AND p.status = :status AND p.paymentType = :type
               AND p.createdAt >= :from AND p.createdAt < :to
             """)
-    List<Payment> findStadiumBookingPayments(@Param("stadiumId") Long stadiumId,
+    List<Payment> findStadiumBookingPayments(@Param("stadiumId") UUID stadiumId,
                                              @Param("status") Payment.Status status,
                                              @Param("type") Payment.PaymentType type,
                                              @Param("from") OffsetDateTime from,

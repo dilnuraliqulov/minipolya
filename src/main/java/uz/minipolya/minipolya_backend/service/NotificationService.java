@@ -16,6 +16,8 @@ import uz.minipolya.minipolya_backend.mapper.NotificationMapper;
 import uz.minipolya.minipolya_backend.repository.NotificationRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
+import java.util.UUID;
+
 /**
  * Creates in-app notifications and best-effort pushes them via Telegram.
  *
@@ -35,8 +37,8 @@ public class NotificationService {
     private final NotificationMapper notificationMapper;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public Notification notify(Long userId, Notification.Type type, String title, String message,
-                               Notification.ReferenceType referenceType, Long referenceId) {
+    public Notification notify(UUID userId, Notification.Type type, String title, String message,
+                               Notification.ReferenceType referenceType, UUID referenceId) {
         User user = userRepository.findById(userId).orElse(null);
         if (user == null) {
             log.warn("Skipping notification for missing user {}", userId);
@@ -68,18 +70,18 @@ public class NotificationService {
     }
 
     @Transactional(readOnly = true)
-    public Page<NotificationResponse> getNotifications(Long userId, Pageable pageable) {
+    public Page<NotificationResponse> getNotifications(UUID userId, Pageable pageable) {
         return notificationRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable)
                 .map(notificationMapper::toResponse);
     }
 
     @Transactional(readOnly = true)
-    public int getUnreadCount(Long userId) {
+    public int getUnreadCount(UUID userId) {
         return notificationRepository.countByUserIdAndIsReadFalse(userId);
     }
 
     @Transactional
-    public void markAsRead(Long notificationId, Long userId) {
+    public void markAsRead(UUID notificationId, UUID userId) {
         Notification notification = notificationRepository.findById(notificationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Notification not found"));
         if (!notification.getUserId().equals(userId)) {
@@ -90,7 +92,7 @@ public class NotificationService {
     }
 
     @Transactional
-    public void markAllAsRead(Long userId) {
+    public void markAllAsRead(UUID userId) {
         notificationRepository.markAllAsRead(userId);
     }
 

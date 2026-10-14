@@ -22,6 +22,7 @@ import uz.minipolya.minipolya_backend.repository.UserRepository;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Owner-application flow: a user applies, an admin approves (promoting the user
@@ -39,7 +40,7 @@ public class OwnerApplicationService {
     private final AuditService auditService;
 
     @Transactional
-    public OwnerApplicationResponse apply(CreateOwnerApplicationRequest request, Long userId) {
+    public OwnerApplicationResponse apply(CreateOwnerApplicationRequest request, UUID userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         if (user.isOwner()) {
@@ -67,7 +68,7 @@ public class OwnerApplicationService {
     }
 
     @Transactional(readOnly = true)
-    public List<OwnerApplicationResponse> getMyApplications(Long userId) {
+    public List<OwnerApplicationResponse> getMyApplications(UUID userId) {
         return applicationRepository.findByUserId(userId).stream()
                 .map(applicationMapper::toResponse)
                 .toList();
@@ -85,13 +86,13 @@ public class OwnerApplicationService {
     }
 
     @Transactional(readOnly = true)
-    public OwnerApplicationResponse getApplication(Long applicationId) {
+    public OwnerApplicationResponse getApplication(UUID applicationId) {
         return applicationMapper.toResponse(requireApplication(applicationId));
     }
 
     @Transactional
-    public OwnerApplicationResponse reviewApplication(Long applicationId, ReviewApplicationRequest request,
-                                                      Long adminUserId) {
+    public OwnerApplicationResponse reviewApplication(UUID applicationId, ReviewApplicationRequest request,
+                                                      UUID adminUserId) {
         OwnerApplication application = requireApplication(applicationId);
         User admin = requireAdmin(adminUserId);
 
@@ -132,7 +133,7 @@ public class OwnerApplicationService {
 
     // ---- Helpers ----
 
-    private void notifyApplicant(Long userId, Long applicationId, String title, String message) {
+    private void notifyApplicant(UUID userId, UUID applicationId, String title, String message) {
         try {
             notificationService.notify(userId, Notification.Type.OWNER_APPLICATION_STATUS, title, message,
                     Notification.ReferenceType.APPLICATION, applicationId);
@@ -141,7 +142,7 @@ public class OwnerApplicationService {
         }
     }
 
-    private User requireAdmin(Long adminUserId) {
+    private User requireAdmin(UUID adminUserId) {
         User admin = userRepository.findById(adminUserId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         if (!admin.isAdmin()) {
@@ -150,7 +151,7 @@ public class OwnerApplicationService {
         return admin;
     }
 
-    private OwnerApplication requireApplication(Long applicationId) {
+    private OwnerApplication requireApplication(UUID applicationId) {
         return applicationRepository.findById(applicationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Application not found"));
     }

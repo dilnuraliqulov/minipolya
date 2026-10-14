@@ -13,6 +13,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -21,7 +22,7 @@ import java.time.OffsetDateTime;
 public class CreateGameRequest {
 
     @NotNull
-    private Long stadiumId;
+    private UUID stadiumId;
 
     @NotNull
     @Pattern(regexp = "casual|open|team_vs_team", message = "type must be casual, open or team_vs_team")
@@ -44,5 +45,5 @@ public class CreateGameRequest {
     private Integer duration;
 
     /** Only used for team_vs_team: the creating team. */
-    private Long teamAId;
+    private UUID teamAId;
 }

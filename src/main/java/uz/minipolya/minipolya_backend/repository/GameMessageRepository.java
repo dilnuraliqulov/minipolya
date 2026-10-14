@@ -8,14 +8,15 @@ import uz.minipolya.minipolya_backend.entity.GameMessage;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Repository
-public interface GameMessageRepository extends JpaRepository<GameMessage, Long> {
+public interface GameMessageRepository extends JpaRepository<GameMessage, UUID> {
 
-    List<GameMessage> findByGameIdOrderByCreatedAtAsc(Long gameId);
+    List<GameMessage> findByGameIdOrderByCreatedAtAsc(UUID gameId);
 
-    Page<GameMessage> findByGameIdOrderByCreatedAtDesc(Long gameId, Pageable pageable);
+    Page<GameMessage> findByGameIdOrderByCreatedAtDesc(UUID gameId, Pageable pageable);
 
     /** Unread count: messages posted since the user last looked. */
-    int countByGameIdAndCreatedAtAfter(Long gameId, OffsetDateTime since);
+    int countByGameIdAndCreatedAtAfter(UUID gameId, OffsetDateTime since);
 }

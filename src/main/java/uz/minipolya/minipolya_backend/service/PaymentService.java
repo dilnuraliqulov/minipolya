@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Payment lifecycle: initiate a checkout (booking or game share), handle the
@@ -80,7 +81,7 @@ public class PaymentService {
     }
 
     @Transactional
-    public PaymentInitResponse initiateBookingPayment(Long bookingId, String providerName, Long userId) {
+    public PaymentInitResponse initiateBookingPayment(UUID bookingId, String providerName, UUID userId) {
         Payment.Provider provider = parseCheckoutProvider(providerName);
 
         Booking booking = bookingRepository.findById(bookingId)
@@ -109,7 +110,7 @@ public class PaymentService {
     }
 
     @Transactional
-    public PaymentInitResponse initiateGamePayment(Long gameId, String providerName, Long userId) {
+    public PaymentInitResponse initiateGamePayment(UUID gameId, String providerName, UUID userId) {
         Payment.Provider provider = parseCheckoutProvider(providerName);
 
         Game game = gameRepository.findById(gameId)
@@ -165,7 +166,7 @@ public class PaymentService {
     }
 
     @Transactional
-    public Payment createRefund(Long originalPaymentId, int refundAmount, String reason) {
+    public Payment createRefund(UUID originalPaymentId, int refundAmount, String reason) {
         Payment original = paymentRepository.findById(originalPaymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
         if (original.getStatus() != Payment.Status.COMPLETED) {
@@ -197,7 +198,7 @@ public class PaymentService {
 
     /** Refund the completed booking payment, if one exists. Called by BookingService on cancellation. */
     @Transactional
-    public Payment refundBookingPayment(Long bookingId, int refundAmount, String reason) {
+    public Payment refundBookingPayment(UUID bookingId, int refundAmount, String reason) {
         Optional<Payment> original = paymentRepository.findByBookingIdAndPaymentTypeAndStatus(
                 bookingId, Payment.PaymentType.BOOKING, Payment.Status.COMPLETED);
         if (original.isEmpty()) {
@@ -209,14 +210,14 @@ public class PaymentService {
 
     /** Refund a payment in full by its id. Called by GameService for participant refunds. */
     @Transactional
-    public Payment refundFullPayment(Long paymentId, String reason) {
+    public Payment refundFullPayment(UUID paymentId, String reason) {
         Payment original = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
         return createRefund(paymentId, Math.abs(original.getAmount()), reason);
     }
 
     @Transactional
-    public Payment recordCashPayment(Long bookingId, Long ownerUserId) {
+    public Payment recordCashPayment(UUID bookingId, UUID ownerUserId) {
         Booking booking = bookingRepository.findById(bookingId)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
         if (!booking.getStadium().getOwner().getId().equals(ownerUserId)) {
@@ -243,12 +244,12 @@ public class PaymentService {
     }
 
     @Transactional(readOnly = true)
-    public Page<PaymentResponse> getUserPayments(Long userId, Pageable pageable) {
+    public Page<PaymentResponse> getUserPayments(UUID userId, Pageable pageable) {
         return paymentRepository.findByUserId(userId, pageable).map(paymentMapper::toResponse);
     }
 
     @Transactional(readOnly = true)
-    public PaymentResponse getPayment(Long userId, Long paymentId) {
+    public PaymentResponse getPayment(UUID userId, UUID paymentId) {
         Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
         if (!payment.getUser().getId().equals(userId)) {
@@ -271,7 +272,7 @@ public class PaymentService {
         booking.setStatus("confirmed");
         booking.setExpiresAt(null);
         bookingRepository.save(booking);
-        Long bookingUserId = booking.getUser() == null ? null : booking.getUser().getId();
+        UUID bookingUserId = booking.getUser() == null ? null : booking.getUser().getId();
         auditService.log(bookingUserId, "BOOKING_CONFIRMED", "booking", booking.getId());
         if (booking.getUser() != null) {
             try {

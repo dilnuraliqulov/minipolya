@@ -10,6 +10,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -18,7 +19,7 @@ import java.time.OffsetDateTime;
 public class CreateBookingRequest {
 
     @NotNull
-    private Long stadiumId;
+    private UUID stadiumId;
 
     @NotNull
     @Future

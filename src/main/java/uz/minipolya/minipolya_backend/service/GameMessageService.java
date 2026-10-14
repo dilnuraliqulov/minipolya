@@ -18,6 +18,8 @@ import uz.minipolya.minipolya_backend.repository.GameMessageRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
 
+import java.util.UUID;
+
 /**
  * In-game chat, available only for team_vs_team games and only to participants.
  * REST/polling-based; no WebSocket, read receipts or attachments in the MVP.
@@ -35,7 +37,7 @@ public class GameMessageService {
     private final GameMessageMapper gameMessageMapper;
 
     @Transactional
-    public GameMessageResponse sendMessage(Long gameId, Long userId, String message) {
+    public GameMessageResponse sendMessage(UUID gameId, UUID userId, String message) {
         Game game = requireGame(gameId);
         GameParticipant participant = requireParticipant(gameId, userId);
 
@@ -56,19 +58,19 @@ public class GameMessageService {
     }
 
     @Transactional(readOnly = true)
-    public Page<GameMessageResponse> getMessages(Long gameId, Long userId, Pageable pageable) {
+    public Page<GameMessageResponse> getMessages(UUID gameId, UUID userId, Pageable pageable) {
         requireGame(gameId);
         requireParticipant(gameId, userId);
         return gameMessageRepository.findByGameIdOrderByCreatedAtDesc(gameId, pageable)
                 .map(gameMessageMapper::toResponse);
     }
 
-    private Game requireGame(Long gameId) {
+    private Game requireGame(UUID gameId) {
         return gameRepository.findById(gameId)
                 .orElseThrow(() -> new ResourceNotFoundException("Game not found"));
     }
 
-    private GameParticipant requireParticipant(Long gameId, Long userId) {
+    private GameParticipant requireParticipant(UUID gameId, UUID userId) {
         return participantRepository.findByGameIdAndUserId(gameId, userId)
                 .orElseThrow(() -> new ForbiddenException("You are not a participant of this game"));
     }

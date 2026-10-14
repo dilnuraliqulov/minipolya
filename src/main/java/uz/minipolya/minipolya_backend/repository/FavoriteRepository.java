@@ -7,15 +7,16 @@ import org.springframework.stereotype.Repository;
 import uz.minipolya.minipolya_backend.entity.Favorite;
 
 import java.util.Optional;
+import java.util.UUID;
 
 @Repository
-public interface FavoriteRepository extends JpaRepository<Favorite, Long> {
+public interface FavoriteRepository extends JpaRepository<Favorite, UUID> {
 
-    Page<Favorite> findByUserId(Long userId, Pageable pageable);
+    Page<Favorite> findByUserId(UUID userId, Pageable pageable);
 
-    Optional<Favorite> findByUserIdAndStadiumId(Long userId, Long stadiumId);
+    Optional<Favorite> findByUserIdAndStadiumId(UUID userId, UUID stadiumId);
 
-    boolean existsByUserIdAndStadiumId(Long userId, Long stadiumId);
+    boolean existsByUserIdAndStadiumId(UUID userId, UUID stadiumId);
 
-    void deleteByUserIdAndStadiumId(Long userId, Long stadiumId);
+    void deleteByUserIdAndStadiumId(UUID userId, UUID stadiumId);
 }

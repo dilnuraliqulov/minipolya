@@ -12,6 +12,7 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
+import java.util.UUID;
 
 /**
  * Issues and verifies HS256 JWTs. Tokens carry the user id (subject) plus
@@ -56,8 +57,8 @@ public class JwtProvider {
         }
     }
 
-    public Long getUserId(String token) {
-        return Long.valueOf(parse(token).getSubject());
+    public UUID getUserId(String token) {
+        return UUID.fromString(parse(token).getSubject());
     }
 
     public String getPhone(String token) {

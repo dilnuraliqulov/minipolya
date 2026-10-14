@@ -8,6 +8,7 @@ import lombok.NoArgsConstructor;
 import uz.minipolya.minipolya_backend.entity.Payment;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 /**
  * A payment as returned to clients. The enum fields serialize to their lowercase
@@ -20,10 +21,10 @@ import java.time.OffsetDateTime;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class PaymentResponse {
 
-    private Long id;
-    private Long bookingId;
-    private Long gameId;
-    private Long userId;
+    private UUID id;
+    private UUID bookingId;
+    private UUID gameId;
+    private UUID userId;
     private Integer amount;
     private Payment.PaymentType paymentType;
     private Payment.Provider provider;

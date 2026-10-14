@@ -15,6 +15,7 @@ import uz.minipolya.minipolya_backend.dto.response.BookingSeriesResponse;
 import uz.minipolya.minipolya_backend.service.BookingSeriesService;
 
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
@@ -23,18 +24,18 @@ public class BookingSeriesController {
     private final BookingSeriesService bookingSeriesService;
 
     @PostMapping("/api/booking-series")
-    public ApiResponse<BookingSeriesResponse> create(@AuthenticationPrincipal Long userId,
+    public ApiResponse<BookingSeriesResponse> create(@AuthenticationPrincipal UUID userId,
                                                      @Valid @RequestBody CreateBookingSeriesRequest request) {
         return ApiResponse.ok(bookingSeriesService.createSeries(request, userId), "Recurring booking created");
     }
 
     @GetMapping("/api/booking-series/my")
-    public ApiResponse<List<BookingSeriesResponse>> mySeries(@AuthenticationPrincipal Long userId) {
+    public ApiResponse<List<BookingSeriesResponse>> mySeries(@AuthenticationPrincipal UUID userId) {
         return ApiResponse.ok(bookingSeriesService.getMySeries(userId));
     }
 
     @DeleteMapping("/api/booking-series/{id}")
-    public ApiResponse<Void> cancel(@AuthenticationPrincipal Long userId, @PathVariable Long id) {
+    public ApiResponse<Void> cancel(@AuthenticationPrincipal UUID userId, @PathVariable UUID id) {
         bookingSeriesService.cancelSeries(id, userId);
         return ApiResponse.ok(null, "Recurring booking cancelled");
     }

@@ -5,13 +5,15 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.UUID;
+
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class OwnerDashboardStatsResponse {
 
-    private Long stadiumId;
+    private UUID stadiumId;
     private String stadiumName;
 
     private int todayBookings;

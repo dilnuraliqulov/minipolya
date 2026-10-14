@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 /** One chat message as returned to clients. */
 @Data
@@ -16,9 +17,9 @@ import java.time.OffsetDateTime;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class GameMessageResponse {
 
-    private Long id;
-    private Long gameId;
-    private Long userId;
+    private UUID id;
+    private UUID gameId;
+    private UUID userId;
     private String userName;
     private String message;
     private OffsetDateTime createdAt;

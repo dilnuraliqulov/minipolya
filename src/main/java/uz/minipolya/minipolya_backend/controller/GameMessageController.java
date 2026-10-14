@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.dto.response.GameMessageResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.service.GameMessageService;
 
+import java.util.UUID;
 import java.util.function.Function;
 
 @RestController
@@ -26,15 +27,15 @@ public class GameMessageController {
     private final GameMessageService gameMessageService;
 
     @PostMapping("/api/games/{gameId}/messages")
-    public ApiResponse<GameMessageResponse> send(@AuthenticationPrincipal Long userId,
-                                                 @PathVariable Long gameId,
+    public ApiResponse<GameMessageResponse> send(@AuthenticationPrincipal UUID userId,
+                                                 @PathVariable UUID gameId,
                                                  @Valid @RequestBody SendGameMessageRequest request) {
         return ApiResponse.ok(gameMessageService.sendMessage(gameId, userId, request.getMessage()), "Message sent");
     }
 
     @GetMapping("/api/games/{gameId}/messages")
-    public ApiResponse<PageResponse<GameMessageResponse>> history(@AuthenticationPrincipal Long userId,
-                                                                  @PathVariable Long gameId,
+    public ApiResponse<PageResponse<GameMessageResponse>> history(@AuthenticationPrincipal UUID userId,
+                                                                  @PathVariable UUID gameId,
                                                                   @RequestParam(defaultValue = "0") int page,
                                                                   @RequestParam(defaultValue = "20") int size) {
         PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));

@@ -18,6 +18,7 @@ import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 
 import java.time.LocalTime;
 import java.util.List;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -33,13 +34,13 @@ public class PricingService {
     // ---- Owner operations ----
 
     @Transactional(readOnly = true)
-    public List<PricingRuleResponse> listForOwner(Long ownerId, Long stadiumId) {
+    public List<PricingRuleResponse> listForOwner(UUID ownerId, UUID stadiumId) {
         requireOwnedStadium(ownerId, stadiumId);
         return mapActive(stadiumId);
     }
 
     @Transactional
-    public PricingRuleResponse create(Long ownerId, Long stadiumId, CreatePricingRuleRequest request) {
+    public PricingRuleResponse create(UUID ownerId, UUID stadiumId, CreatePricingRuleRequest request) {
         Stadium stadium = requireOwnedStadium(ownerId, stadiumId);
 
         validateTimeOrder(request.getStartTime(), request.getEndTime());
@@ -54,7 +55,7 @@ public class PricingService {
     }
 
     @Transactional
-    public PricingRuleResponse update(Long ownerId, Long stadiumId, Long ruleId, UpdatePricingRuleRequest request) {
+    public PricingRuleResponse update(UUID ownerId, UUID stadiumId, UUID ruleId, UpdatePricingRuleRequest request) {
         requireOwnedStadium(ownerId, stadiumId);
         PricingRule rule = requireRuleInStadium(ruleId, stadiumId);
 
@@ -69,7 +70,7 @@ public class PricingService {
     }
 
     @Transactional
-    public void softDelete(Long ownerId, Long stadiumId, Long ruleId) {
+    public void softDelete(UUID ownerId, UUID stadiumId, UUID ruleId) {
         requireOwnedStadium(ownerId, stadiumId);
         PricingRule rule = requireRuleInStadium(ruleId, stadiumId);
         rule.setActive(false);
@@ -80,7 +81,7 @@ public class PricingService {
     // ---- Public operations ----
 
     @Transactional(readOnly = true)
-    public List<PricingRuleResponse> listPublic(Long stadiumId) {
+    public List<PricingRuleResponse> listPublic(UUID stadiumId) {
         stadiumRepository.findByIdAndStatus(stadiumId, STATUS_APPROVED)
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
@@ -89,13 +90,13 @@ public class PricingService {
 
     // ---- Helpers ----
 
-    private List<PricingRuleResponse> mapActive(Long stadiumId) {
+    private List<PricingRuleResponse> mapActive(UUID stadiumId) {
         return pricingRuleRepository.findByStadiumIdAndIsActiveTrue(stadiumId).stream()
                 .map(pricingRuleMapper::toResponse)
                 .toList();
     }
 
-    private Stadium requireOwnedStadium(Long ownerId, Long stadiumId) {
+    private Stadium requireOwnedStadium(UUID ownerId, UUID stadiumId) {
         Stadium stadium = stadiumRepository.findById(stadiumId)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
         if (!stadium.getOwner().getId().equals(ownerId)) {
@@ -104,7 +105,7 @@ public class PricingService {
         return stadium;
     }
 
-    private PricingRule requireRuleInStadium(Long ruleId, Long stadiumId) {
+    private PricingRule requireRuleInStadium(UUID ruleId, UUID stadiumId) {
         PricingRule rule = pricingRuleRepository.findById(ruleId)
                 .orElseThrow(() -> new ResourceNotFoundException("Pricing rule not found"));
         if (!rule.getStadium().getId().equals(stadiumId)) {
@@ -119,7 +120,7 @@ public class PricingService {
         }
     }
 
-    private void validateNoOverlap(Long stadiumId, Integer dayOfWeek, LocalTime start, LocalTime end, Long excludeRuleId) {
+    private void validateNoOverlap(UUID stadiumId, Integer dayOfWeek, LocalTime start, LocalTime end, UUID excludeRuleId) {
         boolean overlaps = pricingRuleRepository.findByStadiumIdAndDayOfWeek(stadiumId, dayOfWeek).stream()
                 .filter(PricingRule::isActive)
                 .filter(r -> excludeRuleId == null || !r.getId().equals(excludeRuleId))

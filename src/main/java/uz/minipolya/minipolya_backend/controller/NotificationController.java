@@ -15,6 +15,7 @@ import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.dto.response.UnreadCountResponse;
 import uz.minipolya.minipolya_backend.service.NotificationService;
 
+import java.util.UUID;
 import java.util.function.Function;
 
 @RestController
@@ -24,7 +25,7 @@ public class NotificationController {
     private final NotificationService notificationService;
 
     @GetMapping("/api/notifications")
-    public ApiResponse<PageResponse<NotificationResponse>> myNotifications(@AuthenticationPrincipal Long userId,
+    public ApiResponse<PageResponse<NotificationResponse>> myNotifications(@AuthenticationPrincipal UUID userId,
                                                                            @RequestParam(defaultValue = "0") int page,
                                                                            @RequestParam(defaultValue = "20") int size) {
         PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
@@ -33,19 +34,19 @@ public class NotificationController {
     }
 
     @GetMapping("/api/notifications/unread-count")
-    public ApiResponse<UnreadCountResponse> unreadCount(@AuthenticationPrincipal Long userId) {
+    public ApiResponse<UnreadCountResponse> unreadCount(@AuthenticationPrincipal UUID userId) {
         return ApiResponse.ok(UnreadCountResponse.builder()
                 .count(notificationService.getUnreadCount(userId)).build());
     }
 
     @PutMapping("/api/notifications/{id}/read")
-    public ApiResponse<Void> markRead(@AuthenticationPrincipal Long userId, @PathVariable Long id) {
+    public ApiResponse<Void> markRead(@AuthenticationPrincipal UUID userId, @PathVariable UUID id) {
         notificationService.markAsRead(id, userId);
         return ApiResponse.ok(null, "Marked as read");
     }
 
     @PutMapping("/api/notifications/read-all")
-    public ApiResponse<Void> markAllRead(@AuthenticationPrincipal Long userId) {
+    public ApiResponse<Void> markAllRead(@AuthenticationPrincipal UUID userId) {
         notificationService.markAllAsRead(userId);
         return ApiResponse.ok(null, "All marked as read");
     }

@@ -8,6 +8,7 @@ import lombok.NoArgsConstructor;
 import uz.minipolya.minipolya_backend.entity.OwnerApplication;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -16,8 +17,8 @@ import java.time.OffsetDateTime;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class OwnerApplicationResponse {
 
-    private Long id;
-    private Long userId;
+    private UUID id;
+    private UUID userId;
     private String userName;
     private String userPhone;
     private String businessName;
@@ -26,7 +27,7 @@ public class OwnerApplicationResponse {
     private String description;
     private Integer stadiumCount;
     private OwnerApplication.Status status;
-    private Long reviewedBy;
+    private UUID reviewedBy;
     private String reviewerName;
     private String reviewNote;
     private OffsetDateTime reviewedAt;

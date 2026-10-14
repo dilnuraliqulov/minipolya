@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Full stadium view: owner info, photos, amenities and the cancellation policy.
@@ -22,8 +23,8 @@ import java.util.List;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class StadiumDetailResponse {
 
-    private Long id;
-    private Long ownerId;
+    private UUID id;
+    private UUID ownerId;
     private String ownerName;
     private String ownerPhone;
 

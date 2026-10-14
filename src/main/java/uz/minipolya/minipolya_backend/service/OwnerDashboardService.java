@@ -34,6 +34,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Read-only aggregation layer for the stadium owner's dashboard. Every method
@@ -57,12 +58,12 @@ public class OwnerDashboardService {
     private final ReviewService reviewService;
 
     @Transactional(readOnly = true)
-    public List<StadiumResponse> getMyStadiums(Long ownerUserId) {
+    public List<StadiumResponse> getMyStadiums(UUID ownerUserId) {
         return stadiumService.listOwnerStadiums(ownerUserId);
     }
 
     @Transactional(readOnly = true)
-    public OwnerDashboardStatsResponse getStats(Long stadiumId, Long ownerUserId) {
+    public OwnerDashboardStatsResponse getStats(UUID stadiumId, UUID ownerUserId) {
         Stadium stadium = requireOwnedStadium(stadiumId, ownerUserId);
         LocalDate today = LocalDate.now(TASHKENT);
 
@@ -103,7 +104,7 @@ public class OwnerDashboardService {
     }
 
     @Transactional(readOnly = true)
-    public OwnerRevenueResponse getRevenue(Long stadiumId, Long ownerUserId) {
+    public OwnerRevenueResponse getRevenue(UUID stadiumId, UUID ownerUserId) {
         requireOwnedStadium(stadiumId, ownerUserId);
         LocalDate today = LocalDate.now(TASHKENT);
         OffsetDateTime from = startOfDay(today.minusDays(29));
@@ -128,7 +129,7 @@ public class OwnerDashboardService {
     }
 
     @Transactional(readOnly = true)
-    public List<OwnerScheduleResponse> getSchedule(Long stadiumId, LocalDate from, LocalDate to, Long ownerUserId) {
+    public List<OwnerScheduleResponse> getSchedule(UUID stadiumId, LocalDate from, LocalDate to, UUID ownerUserId) {
         Stadium stadium = requireOwnedStadium(stadiumId, ownerUserId);
         LocalDate today = LocalDate.now(TASHKENT);
         LocalDate rangeFrom = from != null ? from : today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
@@ -169,14 +170,14 @@ public class OwnerDashboardService {
     }
 
     @Transactional(readOnly = true)
-    public Page<ReviewResponse> getStadiumReviews(Long stadiumId, Long ownerUserId, Pageable pageable) {
+    public Page<ReviewResponse> getStadiumReviews(UUID stadiumId, UUID ownerUserId, Pageable pageable) {
         requireOwnedStadium(stadiumId, ownerUserId);
         return reviewService.getStadiumReviews(stadiumId, pageable);
     }
 
     // ---- Helpers ----
 
-    private long revenue(Long stadiumId, OffsetDateTime from, OffsetDateTime to) {
+    private long revenue(UUID stadiumId, OffsetDateTime from, OffsetDateTime to) {
         return paymentRepository.sumRevenueByStadiumAndDateRange(
                 stadiumId, Payment.Status.COMPLETED, Payment.PaymentType.BOOKING, from, to);
     }
@@ -185,7 +186,7 @@ public class OwnerDashboardService {
         return date.atStartOfDay(TASHKENT).toOffsetDateTime();
     }
 
-    private Stadium requireOwnedStadium(Long stadiumId, Long ownerUserId) {
+    private Stadium requireOwnedStadium(UUID stadiumId, UUID ownerUserId) {
         Stadium stadium = stadiumRepository.findById(stadiumId)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
         if (!stadium.getOwner().getId().equals(ownerUserId)) {

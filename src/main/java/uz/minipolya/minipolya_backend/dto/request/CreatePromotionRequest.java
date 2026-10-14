@@ -11,6 +11,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -19,7 +20,7 @@ import java.time.OffsetDateTime;
 public class CreatePromotionRequest {
 
     @NotNull
-    private Long stadiumId;
+    private UUID stadiumId;
 
     @NotBlank
     private String name;

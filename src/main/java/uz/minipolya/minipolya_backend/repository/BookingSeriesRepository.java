@@ -5,13 +5,14 @@ import org.springframework.stereotype.Repository;
 import uz.minipolya.minipolya_backend.entity.BookingSeries;
 
 import java.util.List;
+import java.util.UUID;
 
 @Repository
-public interface BookingSeriesRepository extends JpaRepository<BookingSeries, Long> {
+public interface BookingSeriesRepository extends JpaRepository<BookingSeries, UUID> {
 
-    List<BookingSeries> findByUserIdAndIsActiveTrue(Long userId);
+    List<BookingSeries> findByUserIdAndIsActiveTrue(UUID userId);
 
-    List<BookingSeries> findByStadiumIdAndIsActiveTrue(Long stadiumId);
+    List<BookingSeries> findByStadiumIdAndIsActiveTrue(UUID stadiumId);
 
     /** All active series — used by BookingSeriesJob. */
     List<BookingSeries> findByIsActiveTrue();

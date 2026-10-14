@@ -41,6 +41,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Games across the three flows (casual, open, team_vs_team). A game holds no
@@ -79,7 +80,7 @@ public class GameService {
     private final AuditService auditService;
 
     @Transactional
-    public GameDetailResponse createGame(CreateGameRequest request, Long creatorUserId) {
+    public GameDetailResponse createGame(CreateGameRequest request, UUID creatorUserId) {
         Stadium stadium = stadiumRepository.findByIdAndStatus(request.getStadiumId(), STATUS_APPROVED)
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not available"));
@@ -135,7 +136,7 @@ public class GameService {
     }
 
     @Transactional
-    public GameParticipantResponse joinGame(Long gameId, Long userId, String side) {
+    public GameParticipantResponse joinGame(UUID gameId, UUID userId, String side) {
         Game game = requireGame(gameId);
         if (!STATUS_OPEN.equals(game.getStatus())) {
             throw new BadRequestException("Game is not open for joining");
@@ -168,12 +169,12 @@ public class GameService {
     }
 
     @Transactional
-    public PaymentInitResponse payForGame(Long gameId, Long userId, String provider) {
+    public PaymentInitResponse payForGame(UUID gameId, UUID userId, String provider) {
         return paymentService.initiateGamePayment(gameId, provider, userId);
     }
 
     @Transactional
-    public void leaveGame(Long gameId, Long userId) {
+    public void leaveGame(UUID gameId, UUID userId) {
         Game game = requireGame(gameId);
         if (!STATUS_OPEN.equals(game.getStatus())) {
             throw new BadRequestException("You can only leave a game that is still open");
@@ -195,12 +196,12 @@ public class GameService {
     }
 
     @Transactional(readOnly = true)
-    public GameDetailResponse getGameDetail(Long gameId, Long userId) {
+    public GameDetailResponse getGameDetail(UUID gameId, UUID userId) {
         return toDetail(requireGame(gameId));
     }
 
     @Transactional(readOnly = true)
-    public Page<GameResponse> getOpenGames(Long stadiumId, Pageable pageable) {
+    public Page<GameResponse> getOpenGames(UUID stadiumId, Pageable pageable) {
         Page<Game> games = stadiumId == null
                 ? gameRepository.findByIsPublicTrueAndStatus(STATUS_OPEN, pageable)
                 : gameRepository.findByStadiumIdAndIsPublicTrueAndStatus(stadiumId, STATUS_OPEN, pageable);
@@ -208,12 +209,12 @@ public class GameService {
     }
 
     @Transactional(readOnly = true)
-    public Page<GameResponse> getMyGames(Long userId, Pageable pageable) {
+    public Page<GameResponse> getMyGames(UUID userId, Pageable pageable) {
         return gameRepository.findMyGames(userId, pageable).map(gameMapper::toResponse);
     }
 
     @Transactional
-    public void cancelGame(Long gameId, Long userId) {
+    public void cancelGame(UUID gameId, UUID userId) {
         Game game = requireGame(gameId);
         if (!game.getCreator().getId().equals(userId)) {
             throw new ForbiddenException("Only the creator can cancel this game");
@@ -232,7 +233,7 @@ public class GameService {
 
     /** Called by PaymentService when a game share payment completes. */
     @Transactional
-    public void handleGamePaymentConfirmed(Long gameId, Long userId) {
+    public void handleGamePaymentConfirmed(UUID gameId, UUID userId) {
         Game game = requireGame(gameId);
         GameParticipant participant = participantRepository.findByGameIdAndUserId(gameId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Participant not found"));
@@ -246,7 +247,7 @@ public class GameService {
 
     /** Called by BookingService when a regular booking takes a slot. */
     @Transactional
-    public void cancelGamesOnSlot(Long stadiumId, OffsetDateTime startsAt, OffsetDateTime endsAt) {
+    public void cancelGamesOnSlot(UUID stadiumId, OffsetDateTime startsAt, OffsetDateTime endsAt) {
         for (Game game : gameRepository.findByStadiumIdAndStatus(stadiumId, STATUS_OPEN)) {
             if (overlaps(game.getStartsAt(), game.getEndsAt(), startsAt, endsAt)) {
                 game.setStatus("cancelled_slot_taken");
@@ -320,7 +321,7 @@ public class GameService {
                 >= game.getMaxPlayers();
     }
 
-    private boolean sideHasPaid(Long gameId, GameParticipant.Side side) {
+    private boolean sideHasPaid(UUID gameId, GameParticipant.Side side) {
         return participantRepository.findByGameIdAndSide(gameId, side).stream()
                 .anyMatch(p -> p.getStatus() == GameParticipant.Status.PAID);
     }
@@ -357,7 +358,7 @@ public class GameService {
         return dto;
     }
 
-    private String inviteLink(Long gameId) {
+    private String inviteLink(UUID gameId) {
         return "t.me/" + appProperties.getBot().getUsername() + "?start=game_" + gameId;
     }
 
@@ -387,7 +388,7 @@ public class GameService {
         return aStart.isBefore(bEnd) && bStart.isBefore(aEnd);
     }
 
-    private Game requireGame(Long gameId) {
+    private Game requireGame(UUID gameId) {
         return gameRepository.findById(gameId)
                 .orElseThrow(() -> new ResourceNotFoundException("Game not found"));
     }
@@ -395,7 +396,7 @@ public class GameService {
     private void notifyParticipants(Game game, Notification.Type type, String title, String message) {
         for (GameParticipant participant : participantRepository.findByGameId(game.getId())) {
             if (participant.getUser() != null) {
-                Long uid = participant.getUser().getId();
+                UUID uid = participant.getUser().getId();
                 safeNotify(() -> notificationService.notify(uid, type, title, message,
                         Notification.ReferenceType.GAME, game.getId()));
             }

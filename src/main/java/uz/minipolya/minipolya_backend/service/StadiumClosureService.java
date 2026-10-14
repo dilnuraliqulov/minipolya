@@ -18,6 +18,7 @@ import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Owner-managed stadium closures. Existing confirmed bookings in a closure
@@ -33,7 +34,7 @@ public class StadiumClosureService {
     private final StadiumClosureMapper closureMapper;
 
     @Transactional
-    public StadiumClosureResponse createClosure(CreateStadiumClosureRequest request, Long ownerUserId) {
+    public StadiumClosureResponse createClosure(CreateStadiumClosureRequest request, UUID ownerUserId) {
         Stadium stadium = requireOwnedStadium(request.getStadiumId(), ownerUserId);
 
         if (request.getEndDate().isBefore(request.getStartDate())) {
@@ -55,7 +56,7 @@ public class StadiumClosureService {
     }
 
     @Transactional(readOnly = true)
-    public List<StadiumClosureResponse> getClosures(Long stadiumId, Long ownerUserId) {
+    public List<StadiumClosureResponse> getClosures(UUID stadiumId, UUID ownerUserId) {
         requireOwnedStadium(stadiumId, ownerUserId);
         return closureRepository.findByStadiumId(stadiumId).stream()
                 .map(closureMapper::toResponse)
@@ -63,7 +64,7 @@ public class StadiumClosureService {
     }
 
     @Transactional
-    public void deleteClosure(Long closureId, Long ownerUserId) {
+    public void deleteClosure(UUID closureId, UUID ownerUserId) {
         StadiumClosure closure = closureRepository.findById(closureId)
                 .orElseThrow(() -> new ResourceNotFoundException("Closure not found"));
         if (!closure.getStadium().getOwner().getId().equals(ownerUserId)) {
@@ -75,7 +76,7 @@ public class StadiumClosureService {
 
     /** True if the given date/time falls within any closure of the stadium. */
     @Transactional(readOnly = true)
-    public boolean isClosedAt(Long stadiumId, LocalDate date, LocalTime time) {
+    public boolean isClosedAt(UUID stadiumId, LocalDate date, LocalTime time) {
         return closureRepository.findByStadiumIdAndEndDateGreaterThanEqual(stadiumId, date).stream()
                 .anyMatch(closure -> covers(closure, date, time));
     }
@@ -90,7 +91,7 @@ public class StadiumClosureService {
         return !time.isBefore(closure.getStartTime()) && time.isBefore(closure.getEndTime());
     }
 
-    private Stadium requireOwnedStadium(Long stadiumId, Long ownerUserId) {
+    private Stadium requireOwnedStadium(UUID stadiumId, UUID ownerUserId) {
         Stadium stadium = stadiumRepository.findById(stadiumId)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
         if (!stadium.getOwner().getId().equals(ownerUserId)) {

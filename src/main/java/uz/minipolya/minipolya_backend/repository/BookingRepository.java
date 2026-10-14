@@ -11,15 +11,16 @@ import uz.minipolya.minipolya_backend.entity.Booking;
 import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.UUID;
 
 @Repository
-public interface BookingRepository extends JpaRepository<Booking, Long> {
+public interface BookingRepository extends JpaRepository<Booking, UUID> {
 
-    List<Booking> findByUserIdAndStatusIn(Long userId, Collection<String> statuses);
+    List<Booking> findByUserIdAndStatusIn(UUID userId, Collection<String> statuses);
 
-    List<Booking> findByStadiumIdAndStartsAtBetween(Long stadiumId, OffsetDateTime from, OffsetDateTime to);
+    List<Booking> findByStadiumIdAndStartsAtBetween(UUID stadiumId, OffsetDateTime from, OffsetDateTime to);
 
-    Page<Booking> findByStadiumIdAndStartsAtBetween(Long stadiumId, OffsetDateTime from, OffsetDateTime to,
+    Page<Booking> findByStadiumIdAndStartsAtBetween(UUID stadiumId, OffsetDateTime from, OffsetDateTime to,
                                                     Pageable pageable);
 
     /** Used by BookingExpiryJob to find pending bookings past their hold deadline. */
@@ -28,16 +29,16 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     /** Used by ReminderJob to find bookings starting within a window. */
     List<Booking> findByStatusAndStartsAtBetween(String status, OffsetDateTime from, OffsetDateTime to);
 
-    Page<Booking> findByUserId(Long userId, Pageable pageable);
+    Page<Booking> findByUserId(UUID userId, Pageable pageable);
 
-    Page<Booking> findByStadiumId(Long stadiumId, Pageable pageable);
+    Page<Booking> findByStadiumId(UUID stadiumId, Pageable pageable);
 
     /** Bookings generated from a recurring series. */
-    List<Booking> findByBookingSeriesId(Long bookingSeriesId);
+    List<Booking> findByBookingSeriesId(UUID bookingSeriesId);
 
-    long countByStadiumIdAndStatusIn(Long stadiumId, Collection<String> statuses);
+    long countByStadiumIdAndStatusIn(UUID stadiumId, Collection<String> statuses);
 
-    long countByUserId(Long userId);
+    long countByUserId(UUID userId);
 
     long countByStatusIn(Collection<String> statuses);
 
@@ -49,7 +50,7 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
               AND b.startsAt >= :from AND b.startsAt < :to
               AND b.status IN :statuses
             """)
-    long countByStadiumAndDateRange(@Param("stadiumId") Long stadiumId,
+    long countByStadiumAndDateRange(@Param("stadiumId") UUID stadiumId,
                                     @Param("from") OffsetDateTime from,
                                     @Param("to") OffsetDateTime to,
                                     @Param("statuses") Collection<String> statuses);
@@ -62,7 +63,7 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
               AND b.startsAt < :endsAt
               AND :startsAt < b.endsAt
             """)
-    boolean existsActiveOverlap(@Param("stadiumId") Long stadiumId,
+    boolean existsActiveOverlap(@Param("stadiumId") UUID stadiumId,
                                 @Param("startsAt") OffsetDateTime startsAt,
                                 @Param("endsAt") OffsetDateTime endsAt);
 
@@ -74,7 +75,7 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
               AND b.startsAt >= :from
               AND b.startsAt < :to
             """)
-    List<Booking> findActiveForStadiumBetween(@Param("stadiumId") Long stadiumId,
+    List<Booking> findActiveForStadiumBetween(@Param("stadiumId") UUID stadiumId,
                                               @Param("from") OffsetDateTime from,
                                               @Param("to") OffsetDateTime to);
 }

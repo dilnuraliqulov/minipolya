@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -14,7 +15,7 @@ import java.util.List;
 @AllArgsConstructor
 public class OwnerRevenueResponse {
 
-    private Long stadiumId;
+    private UUID stadiumId;
     private List<DailyRevenue> dailyRevenue;
 
     @Data

@@ -13,6 +13,7 @@ import uz.minipolya.minipolya_backend.repository.AuditLogRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -21,6 +22,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class AuditServiceTest {
+
+    private static final UUID USER_ID = UUID.randomUUID();
+    private static final UUID BOOKING_ID = UUID.randomUUID();
+    private static final UUID PAYMENT_ID = UUID.randomUUID();
 
     private AuditLogRepository auditLogRepository;
     private UserRepository userRepository;
@@ -37,28 +42,28 @@ class AuditServiceTest {
 
     @Test
     void logCreatesRowWithCorrectFields() {
-        User user = User.builder().id(7L).name("Player").build();
-        when(userRepository.getReferenceById(7L)).thenReturn(user);
+        User user = User.builder().id(USER_ID).name("Player").build();
+        when(userRepository.getReferenceById(USER_ID)).thenReturn(user);
         when(auditLogRepository.save(any(AuditLog.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        service.log(7L, "BOOKING_CREATED", "booking", 55L);
+        service.log(USER_ID, "BOOKING_CREATED", "booking", BOOKING_ID);
 
         ArgumentCaptor<AuditLog> captor = ArgumentCaptor.forClass(AuditLog.class);
         org.mockito.Mockito.verify(auditLogRepository).save(captor.capture());
         AuditLog saved = captor.getValue();
         assertThat(saved.getAction()).isEqualTo("BOOKING_CREATED");
         assertThat(saved.getEntityType()).isEqualTo("booking");
-        assertThat(saved.getEntityId()).isEqualTo(55L);
+        assertThat(saved.getEntityId()).isEqualTo(BOOKING_ID);
         assertThat(saved.getUser()).isSameAs(user);
         assertThat(saved.getDetails()).isNull();
     }
 
     @Test
     void logWithDetailsStoresDetails() {
-        when(userRepository.getReferenceById(7L)).thenReturn(User.builder().id(7L).build());
+        when(userRepository.getReferenceById(USER_ID)).thenReturn(User.builder().id(USER_ID).build());
         when(auditLogRepository.save(any(AuditLog.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        service.log(7L, "PAYMENT_COMPLETED", "payment", 3L, "{\"amount\":150000}");
+        service.log(USER_ID, "PAYMENT_COMPLETED", "payment", PAYMENT_ID, "{\"amount\":150000}");
 
         ArgumentCaptor<AuditLog> captor = ArgumentCaptor.forClass(AuditLog.class);
         org.mockito.Mockito.verify(auditLogRepository).save(captor.capture());
@@ -67,10 +72,10 @@ class AuditServiceTest {
 
     @Test
     void logSwallowsExceptionsAndNeverThrows() {
-        when(userRepository.getReferenceById(any())).thenReturn(User.builder().id(7L).build());
+        when(userRepository.getReferenceById(any())).thenReturn(User.builder().id(USER_ID).build());
         when(auditLogRepository.save(any(AuditLog.class))).thenThrow(new RuntimeException("db down"));
 
-        assertThatCode(() -> service.log(7L, "BOOKING_CREATED", "booking", 1L))
+        assertThatCode(() -> service.log(USER_ID, "BOOKING_CREATED", "booking", UUID.randomUUID()))
                 .doesNotThrowAnyException();
     }
 
@@ -85,10 +90,10 @@ class AuditServiceTest {
 
     @Test
     void getByEntityReturnsMatchingLogs() {
-        when(auditLogRepository.findByEntityTypeAndEntityId("booking", 55L))
+        when(auditLogRepository.findByEntityTypeAndEntityId("booking", BOOKING_ID))
                 .thenReturn(List.of(new AuditLog()));
         when(auditLogMapper.toResponse(any())).thenReturn(new AuditLogResponse());
 
-        assertThat(service.getByEntity("booking", 55L)).hasSize(1);
+        assertThat(service.getByEntity("booking", BOOKING_ID)).hasSize(1);
     }
 }

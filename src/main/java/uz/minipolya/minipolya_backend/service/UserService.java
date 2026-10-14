@@ -10,6 +10,8 @@ import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.UserMapper;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
+import java.util.UUID;
+
 /**
  * Profile read/update for the authenticated user.
  */
@@ -21,18 +23,18 @@ public class UserService {
     private final UserMapper userMapper;
 
     @Transactional(readOnly = true)
-    public UserResponse getCurrentUser(Long userId) {
+    public UserResponse getCurrentUser(UUID userId) {
         return userMapper.toResponse(findOrThrow(userId));
     }
 
     @Transactional
-    public UserResponse updateProfile(Long userId, UpdateUserRequest request) {
+    public UserResponse updateProfile(UUID userId, UpdateUserRequest request) {
         User user = findOrThrow(userId);
         userMapper.updateUserFromRequest(request, user);
         return userMapper.toResponse(userRepository.save(user));
     }
 
-    private User findOrThrow(Long userId) {
+    private User findOrThrow(UUID userId) {
         return userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
     }

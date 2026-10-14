@@ -22,6 +22,7 @@ import uz.minipolya.minipolya_backend.service.OwnerDashboardService;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Function;
 
 @RestController
@@ -32,34 +33,34 @@ public class OwnerDashboardController {
     private final BookingService bookingService;
 
     @GetMapping("/api/owner/dashboard/stadiums")
-    public ApiResponse<List<StadiumResponse>> myStadiums(@AuthenticationPrincipal Long ownerId) {
+    public ApiResponse<List<StadiumResponse>> myStadiums(@AuthenticationPrincipal UUID ownerId) {
         return ApiResponse.ok(dashboardService.getMyStadiums(ownerId));
     }
 
     @GetMapping("/api/owner/dashboard/stadiums/{stadiumId}/stats")
-    public ApiResponse<OwnerDashboardStatsResponse> stats(@AuthenticationPrincipal Long ownerId,
-                                                          @PathVariable Long stadiumId) {
+    public ApiResponse<OwnerDashboardStatsResponse> stats(@AuthenticationPrincipal UUID ownerId,
+                                                          @PathVariable UUID stadiumId) {
         return ApiResponse.ok(dashboardService.getStats(stadiumId, ownerId));
     }
 
     @GetMapping("/api/owner/dashboard/stadiums/{stadiumId}/revenue")
-    public ApiResponse<OwnerRevenueResponse> revenue(@AuthenticationPrincipal Long ownerId,
-                                                     @PathVariable Long stadiumId) {
+    public ApiResponse<OwnerRevenueResponse> revenue(@AuthenticationPrincipal UUID ownerId,
+                                                     @PathVariable UUID stadiumId) {
         return ApiResponse.ok(dashboardService.getRevenue(stadiumId, ownerId));
     }
 
     @GetMapping("/api/owner/dashboard/stadiums/{stadiumId}/schedule")
     public ApiResponse<List<OwnerScheduleResponse>> schedule(
-            @AuthenticationPrincipal Long ownerId,
-            @PathVariable Long stadiumId,
+            @AuthenticationPrincipal UUID ownerId,
+            @PathVariable UUID stadiumId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         return ApiResponse.ok(dashboardService.getSchedule(stadiumId, from, to, ownerId));
     }
 
     @GetMapping("/api/owner/dashboard/stadiums/{stadiumId}/reviews")
-    public ApiResponse<PageResponse<ReviewResponse>> reviews(@AuthenticationPrincipal Long ownerId,
-                                                             @PathVariable Long stadiumId,
+    public ApiResponse<PageResponse<ReviewResponse>> reviews(@AuthenticationPrincipal UUID ownerId,
+                                                             @PathVariable UUID stadiumId,
                                                              @RequestParam(defaultValue = "0") int page,
                                                              @RequestParam(defaultValue = "20") int size) {
         PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
@@ -69,8 +70,8 @@ public class OwnerDashboardController {
 
     @GetMapping("/api/owner/dashboard/stadiums/{stadiumId}/bookings")
     public ApiResponse<PageResponse<BookingResponse>> bookings(
-            @AuthenticationPrincipal Long ownerId,
-            @PathVariable Long stadiumId,
+            @AuthenticationPrincipal UUID ownerId,
+            @PathVariable UUID stadiumId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(defaultValue = "0") int page,

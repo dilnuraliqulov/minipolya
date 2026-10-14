@@ -22,6 +22,7 @@ import uz.minipolya.minipolya_backend.repository.UserRepository;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -32,6 +33,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ReviewServiceTest {
+
+    private static final UUID PLAYER_ID = UUID.randomUUID();
+    private static final UUID OWNER_ID = UUID.randomUUID();
+    private static final UUID STADIUM_ID = UUID.randomUUID();
+    private static final UUID BOOKING_ID = UUID.randomUUID();
 
     private ReviewRepository reviewRepository;
     private StadiumRepository stadiumRepository;
@@ -65,29 +71,29 @@ class ReviewServiceTest {
         favoriteService = new FavoriteService(favoriteRepository, stadiumRepository, userRepository,
                 reviewRepository, stadiumMapper);
 
-        player = User.builder().id(7L).name("Player").build();
-        owner = User.builder().id(2L).name("Owner").build();
-        stadium = Stadium.builder().id(1L).name("Arena").owner(owner).build();
+        player = User.builder().id(PLAYER_ID).name("Player").build();
+        owner = User.builder().id(OWNER_ID).name("Owner").build();
+        stadium = Stadium.builder().id(STADIUM_ID).name("Arena").owner(owner).build();
     }
 
     private Booking completedBookingAtStadium() {
-        return Booking.builder().id(5L).status("completed").user(player).stadium(stadium).build();
+        return Booking.builder().id(BOOKING_ID).status("completed").user(player).stadium(stadium).build();
     }
 
     // ---- ReviewService ----
 
     @Test
     void createReviewWithCompletedBookingSucceeds() {
-        CreateReviewRequest req = CreateReviewRequest.builder().stadiumId(1L).rating(5).comment("Great").build();
-        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
-        when(reviewRepository.findByStadiumIdAndUserId(1L, 7L)).thenReturn(Optional.empty());
-        when(bookingRepository.findByUserIdAndStatusIn(7L, List.of("completed")))
+        CreateReviewRequest req = CreateReviewRequest.builder().stadiumId(STADIUM_ID).rating(5).comment("Great").build();
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(reviewRepository.findByStadiumIdAndUserId(STADIUM_ID, PLAYER_ID)).thenReturn(Optional.empty());
+        when(bookingRepository.findByUserIdAndStatusIn(PLAYER_ID, List.of("completed")))
                 .thenReturn(List.of(completedBookingAtStadium()));
-        when(userRepository.findById(7L)).thenReturn(Optional.of(player));
+        when(userRepository.findById(PLAYER_ID)).thenReturn(Optional.of(player));
         when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> inv.getArgument(0));
         when(reviewMapper.toResponse(any(Review.class))).thenReturn(new ReviewResponse());
 
-        reviewService.createReview(req, 7L);
+        reviewService.createReview(req, PLAYER_ID);
 
         ArgumentCaptor<Review> captor = ArgumentCaptor.forClass(Review.class);
         verify(reviewRepository).save(captor.capture());
@@ -99,34 +105,35 @@ class ReviewServiceTest {
 
     @Test
     void createReviewWithoutBookingIsRejected() {
-        CreateReviewRequest req = CreateReviewRequest.builder().stadiumId(1L).rating(4).build();
-        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
-        when(reviewRepository.findByStadiumIdAndUserId(1L, 7L)).thenReturn(Optional.empty());
-        when(bookingRepository.findByUserIdAndStatusIn(7L, List.of("completed"))).thenReturn(List.of());
+        CreateReviewRequest req = CreateReviewRequest.builder().stadiumId(STADIUM_ID).rating(4).build();
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(reviewRepository.findByStadiumIdAndUserId(STADIUM_ID, PLAYER_ID)).thenReturn(Optional.empty());
+        when(bookingRepository.findByUserIdAndStatusIn(PLAYER_ID, List.of("completed"))).thenReturn(List.of());
 
-        assertThatThrownBy(() -> reviewService.createReview(req, 7L)).isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> reviewService.createReview(req, PLAYER_ID)).isInstanceOf(BadRequestException.class);
         verify(reviewRepository, never()).save(any());
     }
 
     @Test
     void createDuplicateReviewIsRejected() {
-        CreateReviewRequest req = CreateReviewRequest.builder().stadiumId(1L).rating(4).build();
-        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
-        when(reviewRepository.findByStadiumIdAndUserId(1L, 7L))
-                .thenReturn(Optional.of(Review.builder().id(99L).build()));
+        CreateReviewRequest req = CreateReviewRequest.builder().stadiumId(STADIUM_ID).rating(4).build();
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(reviewRepository.findByStadiumIdAndUserId(STADIUM_ID, PLAYER_ID))
+                .thenReturn(Optional.of(Review.builder().id(UUID.randomUUID()).build()));
 
-        assertThatThrownBy(() -> reviewService.createReview(req, 7L)).isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> reviewService.createReview(req, PLAYER_ID)).isInstanceOf(BadRequestException.class);
         verify(reviewRepository, never()).save(any());
     }
 
     @Test
     void ownerRepliesToReview() {
-        Review review = Review.builder().id(10L).stadium(stadium).user(player).rating(5).build();
-        when(reviewRepository.findById(10L)).thenReturn(Optional.of(review));
+        UUID reviewId = UUID.randomUUID();
+        Review review = Review.builder().id(reviewId).stadium(stadium).user(player).rating(5).build();
+        when(reviewRepository.findById(reviewId)).thenReturn(Optional.of(review));
         when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> inv.getArgument(0));
         when(reviewMapper.toResponse(any(Review.class))).thenReturn(new ReviewResponse());
 
-        reviewService.replyToReview(10L, "Thanks for playing!", 2L);
+        reviewService.replyToReview(reviewId, "Thanks for playing!", OWNER_ID);
 
         assertThat(review.getOwnerReply()).isEqualTo("Thanks for playing!");
         assertThat(review.getOwnerReplyAt()).isNotNull();
@@ -134,10 +141,12 @@ class ReviewServiceTest {
 
     @Test
     void nonOwnerCannotReply() {
-        Review review = Review.builder().id(10L).stadium(stadium).user(player).rating(5).build();
-        when(reviewRepository.findById(10L)).thenReturn(Optional.of(review));
+        UUID reviewId = UUID.randomUUID();
+        UUID nonOwnerId = UUID.randomUUID();
+        Review review = Review.builder().id(reviewId).stadium(stadium).user(player).rating(5).build();
+        when(reviewRepository.findById(reviewId)).thenReturn(Optional.of(review));
 
-        assertThatThrownBy(() -> reviewService.replyToReview(10L, "Hi", 999L))
+        assertThatThrownBy(() -> reviewService.replyToReview(reviewId, "Hi", nonOwnerId))
                 .isInstanceOf(ForbiddenException.class);
         verify(reviewRepository, never()).save(any());
     }
@@ -146,11 +155,11 @@ class ReviewServiceTest {
 
     @Test
     void toggleFavoriteOnReturnsTrue() {
-        when(favoriteRepository.existsByUserIdAndStadiumId(7L, 1L)).thenReturn(false);
-        when(userRepository.findById(7L)).thenReturn(Optional.of(player));
-        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
+        when(favoriteRepository.existsByUserIdAndStadiumId(PLAYER_ID, STADIUM_ID)).thenReturn(false);
+        when(userRepository.findById(PLAYER_ID)).thenReturn(Optional.of(player));
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
 
-        boolean result = favoriteService.toggleFavorite(1L, 7L);
+        boolean result = favoriteService.toggleFavorite(STADIUM_ID, PLAYER_ID);
 
         assertThat(result).isTrue();
         verify(favoriteRepository).save(any(Favorite.class));
@@ -158,12 +167,12 @@ class ReviewServiceTest {
 
     @Test
     void toggleFavoriteOffReturnsFalse() {
-        when(favoriteRepository.existsByUserIdAndStadiumId(7L, 1L)).thenReturn(true);
+        when(favoriteRepository.existsByUserIdAndStadiumId(PLAYER_ID, STADIUM_ID)).thenReturn(true);
 
-        boolean result = favoriteService.toggleFavorite(1L, 7L);
+        boolean result = favoriteService.toggleFavorite(STADIUM_ID, PLAYER_ID);
 
         assertThat(result).isFalse();
-        verify(favoriteRepository).deleteByUserIdAndStadiumId(7L, 1L);
+        verify(favoriteRepository).deleteByUserIdAndStadiumId(PLAYER_ID, STADIUM_ID);
         verify(favoriteRepository, never()).save(any());
     }
 }

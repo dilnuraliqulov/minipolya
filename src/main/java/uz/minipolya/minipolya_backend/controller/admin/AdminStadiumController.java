@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.service.AdminService;
 
+import java.util.UUID;
 import java.util.function.Function;
 
 @RestController
@@ -35,13 +36,13 @@ public class AdminStadiumController {
     }
 
     @GetMapping("/api/admin/stadiums/{id}")
-    public ApiResponse<AdminStadiumResponse> detail(@PathVariable Long id) {
+    public ApiResponse<AdminStadiumResponse> detail(@PathVariable UUID id) {
         return ApiResponse.ok(adminService.getStadium(id));
     }
 
     @PutMapping("/api/admin/stadiums/{id}/status")
-    public ApiResponse<AdminStadiumResponse> updateStatus(@AuthenticationPrincipal Long adminUserId,
-                                                          @PathVariable Long id,
+    public ApiResponse<AdminStadiumResponse> updateStatus(@AuthenticationPrincipal UUID adminUserId,
+                                                          @PathVariable UUID id,
                                                           @Valid @RequestBody AdminUpdateStadiumStatusRequest request) {
         return ApiResponse.ok(adminService.updateStadiumStatus(id, request, adminUserId), "Stadium status updated");
     }

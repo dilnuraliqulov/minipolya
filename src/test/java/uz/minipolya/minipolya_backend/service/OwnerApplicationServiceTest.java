@@ -18,6 +18,7 @@ import uz.minipolya.minipolya_backend.repository.UserRepository;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -29,6 +30,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class OwnerApplicationServiceTest {
+
+    private static final UUID APPLICANT_ID = UUID.randomUUID();
+    private static final UUID APPLICATION_ID = UUID.randomUUID();
+    private static final UUID ADMIN_ID = UUID.randomUUID();
 
     private OwnerApplicationRepository applicationRepository;
     private UserRepository userRepository;
@@ -49,7 +54,7 @@ class OwnerApplicationServiceTest {
         service = new OwnerApplicationService(applicationRepository, userRepository,
                 applicationMapper, notificationService, auditService);
 
-        applicant = User.builder().id(7L).name("Player").isOwner(false).build();
+        applicant = User.builder().id(APPLICANT_ID).name("Player").isOwner(false).build();
     }
 
     private CreateOwnerApplicationRequest request() {
@@ -62,12 +67,12 @@ class OwnerApplicationServiceTest {
 
     @Test
     void applyCreatesPendingApplication() {
-        when(userRepository.findById(7L)).thenReturn(Optional.of(applicant));
+        when(userRepository.findById(APPLICANT_ID)).thenReturn(Optional.of(applicant));
         when(applicationRepository.findByUserIdAndStatusIn(any(), any())).thenReturn(List.of());
         when(applicationRepository.save(any(OwnerApplication.class))).thenAnswer(inv -> inv.getArgument(0));
         when(applicationMapper.toResponse(any())).thenReturn(new OwnerApplicationResponse());
 
-        service.apply(request(), 7L);
+        service.apply(request(), APPLICANT_ID);
 
         ArgumentCaptor<OwnerApplication> captor = ArgumentCaptor.forClass(OwnerApplication.class);
         verify(applicationRepository).save(captor.capture());
@@ -79,42 +84,42 @@ class OwnerApplicationServiceTest {
 
     @Test
     void applyRejectedWhenOpenApplicationExists() {
-        when(userRepository.findById(7L)).thenReturn(Optional.of(applicant));
+        when(userRepository.findById(APPLICANT_ID)).thenReturn(Optional.of(applicant));
         when(applicationRepository.findByUserIdAndStatusIn(any(), any()))
-                .thenReturn(List.of(OwnerApplication.builder().id(1L).build()));
+                .thenReturn(List.of(OwnerApplication.builder().id(APPLICATION_ID).build()));
 
-        assertThatThrownBy(() -> service.apply(request(), 7L)).isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> service.apply(request(), APPLICANT_ID)).isInstanceOf(BadRequestException.class);
         verify(applicationRepository, never()).save(any());
     }
 
     @Test
     void applyRejectedWhenAlreadyOwner() {
         applicant.setOwner(true);
-        when(userRepository.findById(7L)).thenReturn(Optional.of(applicant));
+        when(userRepository.findById(APPLICANT_ID)).thenReturn(Optional.of(applicant));
 
-        assertThatThrownBy(() -> service.apply(request(), 7L)).isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> service.apply(request(), APPLICANT_ID)).isInstanceOf(BadRequestException.class);
         verify(applicationRepository, never()).save(any());
     }
 
     // ---- reviewApplication ----
 
     private OwnerApplication pendingApplication() {
-        return OwnerApplication.builder().id(1L).user(applicant).status(OwnerApplication.Status.PENDING).build();
+        return OwnerApplication.builder().id(APPLICATION_ID).user(applicant).status(OwnerApplication.Status.PENDING).build();
     }
 
     private User admin() {
-        return User.builder().id(99L).name("Admin").isAdmin(true).build();
+        return User.builder().id(ADMIN_ID).name("Admin").isAdmin(true).build();
     }
 
     @Test
     void approveMarksApprovedAndPromotesUser() {
         OwnerApplication application = pendingApplication();
-        when(applicationRepository.findById(1L)).thenReturn(Optional.of(application));
-        when(userRepository.findById(99L)).thenReturn(Optional.of(admin()));
+        when(applicationRepository.findById(APPLICATION_ID)).thenReturn(Optional.of(application));
+        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin()));
         when(applicationRepository.save(any(OwnerApplication.class))).thenAnswer(inv -> inv.getArgument(0));
         when(applicationMapper.toResponse(any())).thenReturn(new OwnerApplicationResponse());
 
-        service.reviewApplication(1L, ReviewApplicationRequest.builder().status("approved").build(), 99L);
+        service.reviewApplication(APPLICATION_ID, ReviewApplicationRequest.builder().status("approved").build(), ADMIN_ID);
 
         assertThat(application.getStatus()).isEqualTo(OwnerApplication.Status.APPROVED);
         assertThat(applicant.isOwner()).isTrue();
@@ -124,12 +129,12 @@ class OwnerApplicationServiceTest {
     @Test
     void rejectMarksRejectedAndLeavesUserUnchanged() {
         OwnerApplication application = pendingApplication();
-        when(applicationRepository.findById(1L)).thenReturn(Optional.of(application));
-        when(userRepository.findById(99L)).thenReturn(Optional.of(admin()));
+        when(applicationRepository.findById(APPLICATION_ID)).thenReturn(Optional.of(application));
+        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin()));
         when(applicationRepository.save(any(OwnerApplication.class))).thenAnswer(inv -> inv.getArgument(0));
         when(applicationMapper.toResponse(any())).thenReturn(new OwnerApplicationResponse());
 
-        service.reviewApplication(1L, ReviewApplicationRequest.builder().status("rejected").reviewNote("Incomplete").build(), 99L);
+        service.reviewApplication(APPLICATION_ID, ReviewApplicationRequest.builder().status("rejected").reviewNote("Incomplete").build(), ADMIN_ID);
 
         assertThat(application.getStatus()).isEqualTo(OwnerApplication.Status.REJECTED);
         assertThat(applicant.isOwner()).isFalse();
@@ -138,24 +143,25 @@ class OwnerApplicationServiceTest {
 
     @Test
     void reviewAlreadyReviewedApplicationIsRejected() {
-        OwnerApplication application = OwnerApplication.builder().id(1L).user(applicant)
+        OwnerApplication application = OwnerApplication.builder().id(APPLICATION_ID).user(applicant)
                 .status(OwnerApplication.Status.APPROVED).build();
-        when(applicationRepository.findById(1L)).thenReturn(Optional.of(application));
-        when(userRepository.findById(99L)).thenReturn(Optional.of(admin()));
+        when(applicationRepository.findById(APPLICATION_ID)).thenReturn(Optional.of(application));
+        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin()));
 
-        assertThatThrownBy(() -> service.reviewApplication(1L,
-                ReviewApplicationRequest.builder().status("approved").build(), 99L))
+        assertThatThrownBy(() -> service.reviewApplication(APPLICATION_ID,
+                ReviewApplicationRequest.builder().status("approved").build(), ADMIN_ID))
                 .isInstanceOf(BadRequestException.class);
     }
 
     @Test
     void nonAdminCannotReview() {
+        UUID nonAdminId = UUID.randomUUID();
         OwnerApplication application = pendingApplication();
-        when(applicationRepository.findById(1L)).thenReturn(Optional.of(application));
-        when(userRepository.findById(50L)).thenReturn(Optional.of(User.builder().id(50L).isAdmin(false).build()));
+        when(applicationRepository.findById(APPLICATION_ID)).thenReturn(Optional.of(application));
+        when(userRepository.findById(nonAdminId)).thenReturn(Optional.of(User.builder().id(nonAdminId).isAdmin(false).build()));
 
-        assertThatThrownBy(() -> service.reviewApplication(1L,
-                ReviewApplicationRequest.builder().status("approved").build(), 50L))
+        assertThatThrownBy(() -> service.reviewApplication(APPLICATION_ID,
+                ReviewApplicationRequest.builder().status("approved").build(), nonAdminId))
                 .isInstanceOf(ForbiddenException.class);
         verify(applicationRepository, never()).save(any());
     }
@@ -173,9 +179,9 @@ class OwnerApplicationServiceTest {
 
     @Test
     void getMyApplicationsReturnsUserApplications() {
-        when(applicationRepository.findByUserId(7L)).thenReturn(List.of(pendingApplication()));
+        when(applicationRepository.findByUserId(APPLICANT_ID)).thenReturn(List.of(pendingApplication()));
         when(applicationMapper.toResponse(any())).thenReturn(new OwnerApplicationResponse());
 
-        assertThat(service.getMyApplications(7L)).hasSize(1);
+        assertThat(service.getMyApplications(APPLICANT_ID)).hasSize(1);
     }
 }

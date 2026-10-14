@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -15,11 +16,11 @@ import java.time.OffsetDateTime;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class AdminStadiumResponse {
 
-    private Long id;
+    private UUID id;
     private String name;
     private String address;
     private String ownerName;
-    private Long ownerId;
+    private UUID ownerId;
     private String status;
     private String format;
     private String surfaceType;

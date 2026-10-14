@@ -38,6 +38,7 @@ import java.time.temporal.TemporalAdjusters;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Platform admin aggregation and management. Admin HTTP access is gated to
@@ -131,13 +132,13 @@ public class AdminService {
     }
 
     @Transactional(readOnly = true)
-    public AdminUserResponse getUser(Long userId) {
+    public AdminUserResponse getUser(UUID userId) {
         return buildUser(userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found")));
     }
 
     @Transactional
-    public AdminUserResponse updateUser(Long userId, AdminUpdateUserRequest request, Long adminUserId) {
+    public AdminUserResponse updateUser(UUID userId, AdminUpdateUserRequest request, UUID adminUserId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
@@ -186,21 +187,21 @@ public class AdminService {
     }
 
     @Transactional(readOnly = true)
-    public AdminStadiumResponse getStadium(Long stadiumId) {
+    public AdminStadiumResponse getStadium(UUID stadiumId) {
         return buildStadium(stadiumRepository.findById(stadiumId)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found")));
     }
 
     @Transactional
-    public AdminStadiumResponse updateStadiumStatus(Long stadiumId, AdminUpdateStadiumStatusRequest request,
-                                                    Long adminUserId) {
+    public AdminStadiumResponse updateStadiumStatus(UUID stadiumId, AdminUpdateStadiumStatusRequest request,
+                                                    UUID adminUserId) {
         Stadium stadium = stadiumRepository.findById(stadiumId)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
         String status = request.getStatus().trim();
         String reason = request.getReason();
         stadium.setStatus(status);
         stadiumRepository.save(stadium);
-        Long ownerId = stadium.getOwner().getId();
+        UUID ownerId = stadium.getOwner().getId();
 
         switch (status) {
             case "approved" -> {
@@ -288,8 +289,8 @@ public class AdminService {
                 .build();
     }
 
-    private void notify(Long userId, Notification.Type type, String title, String message,
-                        Notification.ReferenceType referenceType, Long referenceId) {
+    private void notify(UUID userId, Notification.Type type, String title, String message,
+                        Notification.ReferenceType referenceType, UUID referenceId) {
         try {
             notificationService.notify(userId, type, title, message, referenceType, referenceId);
         } catch (Exception ex) {

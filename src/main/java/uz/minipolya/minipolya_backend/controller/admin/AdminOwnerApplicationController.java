@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.dto.response.OwnerApplicationResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.service.OwnerApplicationService;
 
+import java.util.UUID;
 import java.util.function.Function;
 
 /**
@@ -47,13 +48,13 @@ public class AdminOwnerApplicationController {
     }
 
     @GetMapping("/api/admin/owner-applications/{id}")
-    public ApiResponse<OwnerApplicationResponse> detail(@PathVariable Long id) {
+    public ApiResponse<OwnerApplicationResponse> detail(@PathVariable UUID id) {
         return ApiResponse.ok(applicationService.getApplication(id));
     }
 
     @PutMapping("/api/admin/owner-applications/{id}/review")
-    public ApiResponse<OwnerApplicationResponse> review(@AuthenticationPrincipal Long adminUserId,
-                                                        @PathVariable Long id,
+    public ApiResponse<OwnerApplicationResponse> review(@AuthenticationPrincipal UUID adminUserId,
+                                                        @PathVariable UUID id,
                                                         @Valid @RequestBody ReviewApplicationRequest request) {
         return ApiResponse.ok(applicationService.reviewApplication(id, request, adminUserId), "Application reviewed");
     }

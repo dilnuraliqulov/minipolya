@@ -13,6 +13,7 @@ import uz.minipolya.minipolya_backend.dto.response.OwnerApplicationResponse;
 import uz.minipolya.minipolya_backend.service.OwnerApplicationService;
 
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
@@ -21,13 +22,13 @@ public class OwnerApplicationController {
     private final OwnerApplicationService applicationService;
 
     @PostMapping("/api/owner-applications")
-    public ApiResponse<OwnerApplicationResponse> apply(@AuthenticationPrincipal Long userId,
+    public ApiResponse<OwnerApplicationResponse> apply(@AuthenticationPrincipal UUID userId,
                                                        @Valid @RequestBody CreateOwnerApplicationRequest request) {
         return ApiResponse.ok(applicationService.apply(request, userId), "Application submitted");
     }
 
     @GetMapping("/api/owner-applications/my")
-    public ApiResponse<List<OwnerApplicationResponse>> myApplications(@AuthenticationPrincipal Long userId) {
+    public ApiResponse<List<OwnerApplicationResponse>> myApplications(@AuthenticationPrincipal UUID userId) {
         return ApiResponse.ok(applicationService.getMyApplications(userId));
     }
 }

@@ -9,6 +9,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalTime;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -17,7 +18,7 @@ import java.time.LocalTime;
 public class CreateBookingSeriesRequest {
 
     @NotNull
-    private Long stadiumId;
+    private UUID stadiumId;
 
     @NotNull
     @Min(value = 0, message = "dayOfWeek must be 0 (Monday) to 6 (Sunday)")

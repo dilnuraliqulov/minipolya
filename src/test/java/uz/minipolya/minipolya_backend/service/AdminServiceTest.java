@@ -28,6 +28,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -41,6 +42,14 @@ import static org.mockito.Mockito.when;
 class AdminServiceTest {
 
     private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
+
+    private static final UUID STADIUM_ID = UUID.randomUUID();
+    private static final UUID OWNER_ID = UUID.randomUUID();
+    private static final UUID ADMIN_ID = UUID.randomUUID();
+    private static final UUID USER_ID = UUID.randomUUID();
+    private static final UUID TARGET_USER_ID = UUID.randomUUID();
+    private static final UUID BOOKING_ID = UUID.randomUUID();
+    private static final UUID BOOKING_USER_ID = UUID.randomUUID();
 
     private UserRepository userRepository;
     private StadiumRepository stadiumRepository;
@@ -73,9 +82,9 @@ class AdminServiceTest {
     }
 
     private Stadium stadium(String status) {
-        return Stadium.builder().id(1L).name("Arena").address("Tashkent").status(status)
+        return Stadium.builder().id(STADIUM_ID).name("Arena").address("Tashkent").status(status)
                 .format("5x5").surfaceType("artificial")
-                .owner(User.builder().id(2L).name("Owner").isOwner(true).build()).build();
+                .owner(User.builder().id(OWNER_ID).name("Owner").isOwner(true).build()).build();
     }
 
     @Test
@@ -110,7 +119,7 @@ class AdminServiceTest {
     @Test
     void searchUsersByNameDelegatesToSearch() {
         when(userRepository.searchUsers(eq("john"), any()))
-                .thenReturn(new PageImpl<>(List.of(User.builder().id(1L).name("John").build())));
+                .thenReturn(new PageImpl<>(List.of(User.builder().id(USER_ID).name("John").build())));
 
         assertThat(service.getUsers("john", Pageable.ofSize(20)).getContent()).hasSize(1);
         verify(userRepository).searchUsers(eq("john"), any());
@@ -119,7 +128,7 @@ class AdminServiceTest {
     @Test
     void searchUsersByPhoneDelegatesToSearch() {
         when(userRepository.searchUsers(eq("+99890"), any()))
-                .thenReturn(new PageImpl<>(List.of(User.builder().id(1L).phone("+998901112233").build())));
+                .thenReturn(new PageImpl<>(List.of(User.builder().id(USER_ID).phone("+998901112233").build())));
 
         assertThat(service.getUsers("+99890", Pageable.ofSize(20)).getContent()).hasSize(1);
         verify(userRepository).searchUsers(eq("+99890"), any());
@@ -127,22 +136,22 @@ class AdminServiceTest {
 
     @Test
     void updateUserChangesOwnerFlagAndAudits() {
-        User user = User.builder().id(5L).name("U").isOwner(false).isAdmin(false).build();
-        when(userRepository.findById(5L)).thenReturn(Optional.of(user));
+        User user = User.builder().id(TARGET_USER_ID).name("U").isOwner(false).isAdmin(false).build();
+        when(userRepository.findById(TARGET_USER_ID)).thenReturn(Optional.of(user));
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        service.updateUser(5L, AdminUpdateUserRequest.builder().isOwner(true).build(), 1L);
+        service.updateUser(TARGET_USER_ID, AdminUpdateUserRequest.builder().isOwner(true).build(), ADMIN_ID);
 
         assertThat(user.isOwner()).isTrue();
-        verify(auditService).log(eq(1L), eq("USER_ROLE_CHANGED"), eq("user"), eq(5L), anyString());
+        verify(auditService).log(eq(ADMIN_ID), eq("USER_ROLE_CHANGED"), eq("user"), eq(TARGET_USER_ID), anyString());
     }
 
     @Test
     void adminCannotRemoveOwnAdminFlag() {
-        User admin = User.builder().id(1L).isAdmin(true).build();
-        when(userRepository.findById(1L)).thenReturn(Optional.of(admin));
+        User admin = User.builder().id(ADMIN_ID).isAdmin(true).build();
+        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
 
-        assertThatThrownBy(() -> service.updateUser(1L, AdminUpdateUserRequest.builder().isAdmin(false).build(), 1L))
+        assertThatThrownBy(() -> service.updateUser(ADMIN_ID, AdminUpdateUserRequest.builder().isAdmin(false).build(), ADMIN_ID))
                 .isInstanceOf(BadRequestException.class);
     }
 
@@ -168,35 +177,35 @@ class AdminServiceTest {
     void approveStadiumSetsStatusAndNotifiesOwner() {
         Stadium stadium = stadium("pending");
         stadium.getOwner().setOwner(false);
-        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
         when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        service.updateStadiumStatus(1L, AdminUpdateStadiumStatusRequest.builder().status("approved").build(), 1L);
+        service.updateStadiumStatus(STADIUM_ID, AdminUpdateStadiumStatusRequest.builder().status("approved").build(), ADMIN_ID);
 
         assertThat(stadium.getStatus()).isEqualTo("approved");
         assertThat(stadium.getOwner().isOwner()).isTrue();
-        verify(notificationService).notify(eq(2L), eq(Notification.Type.STADIUM_APPROVED),
-                anyString(), anyString(), eq(Notification.ReferenceType.STADIUM), eq(1L));
-        verify(auditService).log(1L, "STADIUM_APPROVED", "stadium", 1L);
+        verify(notificationService).notify(eq(OWNER_ID), eq(Notification.Type.STADIUM_APPROVED),
+                anyString(), anyString(), eq(Notification.ReferenceType.STADIUM), eq(STADIUM_ID));
+        verify(auditService).log(ADMIN_ID, "STADIUM_APPROVED", "stadium", STADIUM_ID);
     }
 
     @Test
     void blockStadiumCancelsFutureBookingsAndRefunds() {
         Stadium stadium = stadium("approved");
-        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
         when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
-        Booking future = Booking.builder().id(9L).status("confirmed").price(100_000)
-                .user(User.builder().id(7L).build()).startsAt(OffsetDateTime.now().plusDays(3)).build();
-        when(bookingRepository.findByStadiumIdAndStartsAtBetween(eq(1L), any(), any())).thenReturn(List.of(future));
+        Booking future = Booking.builder().id(BOOKING_ID).status("confirmed").price(100_000)
+                .user(User.builder().id(BOOKING_USER_ID).build()).startsAt(OffsetDateTime.now().plusDays(3)).build();
+        when(bookingRepository.findByStadiumIdAndStartsAtBetween(eq(STADIUM_ID), any(), any())).thenReturn(List.of(future));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        service.updateStadiumStatus(1L,
-                AdminUpdateStadiumStatusRequest.builder().status("blocked").reason("fraud").build(), 1L);
+        service.updateStadiumStatus(STADIUM_ID,
+                AdminUpdateStadiumStatusRequest.builder().status("blocked").reason("fraud").build(), ADMIN_ID);
 
         assertThat(stadium.getStatus()).isEqualTo("blocked");
         assertThat(future.getStatus()).isEqualTo("cancelled_by_owner");
-        verify(paymentService).refundBookingPayment(9L, 100_000, "fraud");
+        verify(paymentService).refundBookingPayment(BOOKING_ID, 100_000, "fraud");
     }
 
     @Test

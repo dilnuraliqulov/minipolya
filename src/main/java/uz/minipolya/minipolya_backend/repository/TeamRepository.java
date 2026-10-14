@@ -5,9 +5,10 @@ import org.springframework.stereotype.Repository;
 import uz.minipolya.minipolya_backend.entity.Team;
 
 import java.util.List;
+import java.util.UUID;
 
 @Repository
-public interface TeamRepository extends JpaRepository<Team, Long> {
+public interface TeamRepository extends JpaRepository<Team, UUID> {
 
-    List<Team> findByLeaderId(Long leaderId);
+    List<Team> findByLeaderId(UUID leaderId);
 }

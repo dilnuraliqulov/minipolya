@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 /** A stadium review as returned to clients. */
 @Data
@@ -16,12 +17,12 @@ import java.time.OffsetDateTime;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class ReviewResponse {
 
-    private Long id;
-    private Long stadiumId;
+    private UUID id;
+    private UUID stadiumId;
     private String stadiumName;
-    private Long userId;
+    private UUID userId;
     private String userName;
-    private Long bookingId;
+    private UUID bookingId;
     private Integer rating;
     private String comment;
     private String ownerReply;

@@ -25,11 +25,11 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -42,6 +42,13 @@ class BookingSeriesServiceTest {
     private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
     private static final int DAY = 2;              // Wednesday (0=Mon)
     private static final LocalTime START = LocalTime.of(20, 0);
+
+    private static final UUID USER_ID = UUID.randomUUID();
+    private static final UUID STADIUM_ID = UUID.randomUUID();
+    private static final UUID SERIES_ID = UUID.randomUUID();
+    private static final UUID BOOKING_FUTURE_ID = UUID.randomUUID();
+    private static final UUID BOOKING_CONFIRMED_ID = UUID.randomUUID();
+    private static final UUID BOOKING_EXISTING_ID = UUID.randomUUID();
 
     private BookingSeriesRepository seriesRepository;
     private StadiumRepository stadiumRepository;
@@ -75,18 +82,18 @@ class BookingSeriesServiceTest {
                 pricingRuleRepository, priceCalculator, seriesMapper, bookingService, notificationService,
                 auditService, new AppProperties());
 
-        user = User.builder().id(7L).name("Player").build();
-        stadium = Stadium.builder().id(1L).name("Arena").status("approved").isActive(true)
+        user = User.builder().id(USER_ID).name("Player").build();
+        stadium = Stadium.builder().id(STADIUM_ID).name("Arena").status("approved").isActive(true)
                 .pricePerHour(50_000).openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).build();
     }
 
     private CreateBookingSeriesRequest request() {
         return CreateBookingSeriesRequest.builder()
-                .stadiumId(1L).dayOfWeek(DAY).startTime(START).duration(1).build();
+                .stadiumId(STADIUM_ID).dayOfWeek(DAY).startTime(START).duration(1).build();
     }
 
     private BookingSeries series() {
-        return BookingSeries.builder().id(10L).user(user).stadium(stadium)
+        return BookingSeries.builder().id(SERIES_ID).user(user).stadium(stadium)
                 .dayOfWeek(DAY).startTime(START).durationHours(1).isActive(true).build();
     }
 
@@ -108,59 +115,59 @@ class BookingSeriesServiceTest {
 
     @Test
     void createSeriesGeneratesTwoBookings() {
-        when(stadiumRepository.findByIdAndStatus(1L, "approved")).thenReturn(java.util.Optional.of(stadium));
-        when(userRepository.findById(7L)).thenReturn(java.util.Optional.of(user));
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(java.util.Optional.of(stadium));
+        when(userRepository.findById(USER_ID)).thenReturn(java.util.Optional.of(user));
         when(seriesRepository.save(any(BookingSeries.class))).thenAnswer(inv -> {
             BookingSeries s = inv.getArgument(0);
-            s.setId(10L);
+            s.setId(SERIES_ID);
             return s;
         });
         when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
-        when(bookingRepository.existsActiveOverlap(eq(1L), any(), any())).thenReturn(false);
+        when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(false);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(seriesMapper.toResponse(any())).thenReturn(new BookingSeriesResponse());
 
-        service.createSeries(request(), 7L);
+        service.createSeries(request(), USER_ID);
 
         ArgumentCaptor<Booking> captor = ArgumentCaptor.forClass(Booking.class);
         verify(bookingRepository, times(2)).saveAndFlush(captor.capture());
         Booking first = captor.getAllValues().get(0);
         assertThat(first.getStatus()).isEqualTo("pending");
         assertThat(first.getSource()).isEqualTo("app");
-        assertThat(first.getBookingSeriesId()).isEqualTo(10L);
+        assertThat(first.getBookingSeriesId()).isEqualTo(SERIES_ID);
         assertThat(first.getExpiresAt()).isNotNull();
     }
 
     @Test
     void createSeriesSkipsTakenSlot() {
-        when(stadiumRepository.findByIdAndStatus(1L, "approved")).thenReturn(java.util.Optional.of(stadium));
-        when(userRepository.findById(7L)).thenReturn(java.util.Optional.of(user));
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(java.util.Optional.of(stadium));
+        when(userRepository.findById(USER_ID)).thenReturn(java.util.Optional.of(user));
         when(seriesRepository.save(any(BookingSeries.class))).thenAnswer(inv -> {
             BookingSeries s = inv.getArgument(0);
-            s.setId(10L);
+            s.setId(SERIES_ID);
             return s;
         });
         when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
-        when(bookingRepository.existsActiveOverlap(eq(1L), any(), any())).thenReturn(true, false); // 1st taken, 2nd free
+        when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(true, false); // 1st taken, 2nd free
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(seriesMapper.toResponse(any())).thenReturn(new BookingSeriesResponse());
 
-        service.createSeries(request(), 7L);
+        service.createSeries(request(), USER_ID);
 
         verify(bookingRepository, times(1)).saveAndFlush(any(Booking.class));
     }
 
     @Test
     void createSeriesUsesFreshPricing() {
-        when(stadiumRepository.findByIdAndStatus(1L, "approved")).thenReturn(java.util.Optional.of(stadium));
-        when(userRepository.findById(7L)).thenReturn(java.util.Optional.of(user));
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(java.util.Optional.of(stadium));
+        when(userRepository.findById(USER_ID)).thenReturn(java.util.Optional.of(user));
         when(seriesRepository.save(any(BookingSeries.class))).thenAnswer(inv -> inv.getArgument(0));
         when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(123_456);
-        when(bookingRepository.existsActiveOverlap(eq(1L), any(), any())).thenReturn(false);
+        when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(false);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(seriesMapper.toResponse(any())).thenReturn(new BookingSeriesResponse());
 
-        service.createSeries(request(), 7L);
+        service.createSeries(request(), USER_ID);
 
         ArgumentCaptor<Booking> captor = ArgumentCaptor.forClass(Booking.class);
         verify(bookingRepository, times(2)).saveAndFlush(captor.capture());
@@ -170,38 +177,38 @@ class BookingSeriesServiceTest {
     @Test
     void cancelSeriesDeactivatesAndCancelsFutureBookings() {
         BookingSeries series = series();
-        Booking future = Booking.builder().id(5L).status("pending").user(user)
+        Booking future = Booking.builder().id(BOOKING_FUTURE_ID).status("pending").user(user)
                 .startsAt(OffsetDateTime.now().plusDays(3)).build();
-        when(seriesRepository.findById(10L)).thenReturn(java.util.Optional.of(series));
-        when(bookingRepository.findByBookingSeriesId(10L)).thenReturn(List.of(future));
+        when(seriesRepository.findById(SERIES_ID)).thenReturn(java.util.Optional.of(series));
+        when(bookingRepository.findByBookingSeriesId(SERIES_ID)).thenReturn(List.of(future));
 
-        service.cancelSeries(10L, 7L);
+        service.cancelSeries(SERIES_ID, USER_ID);
 
         assertThat(series.isActive()).isFalse();
         verify(seriesRepository).save(series);
-        verify(bookingService).cancelByUser(eq(7L), eq(5L), any());
+        verify(bookingService).cancelByUser(eq(USER_ID), eq(BOOKING_FUTURE_ID), any());
     }
 
     @Test
     void cancelSeriesRefundsConfirmedFutureBookings() {
         BookingSeries series = series();
-        Booking confirmed = Booking.builder().id(6L).status("confirmed").user(user)
+        Booking confirmed = Booking.builder().id(BOOKING_CONFIRMED_ID).status("confirmed").user(user)
                 .startsAt(OffsetDateTime.now().plusDays(3)).build();
-        when(seriesRepository.findById(10L)).thenReturn(java.util.Optional.of(series));
-        when(bookingRepository.findByBookingSeriesId(10L)).thenReturn(List.of(confirmed));
+        when(seriesRepository.findById(SERIES_ID)).thenReturn(java.util.Optional.of(series));
+        when(bookingRepository.findByBookingSeriesId(SERIES_ID)).thenReturn(List.of(confirmed));
 
-        service.cancelSeries(10L, 7L);
+        service.cancelSeries(SERIES_ID, USER_ID);
 
         // cancelByUser applies the refund policy for confirmed bookings
-        verify(bookingService).cancelByUser(eq(7L), eq(6L), any());
+        verify(bookingService).cancelByUser(eq(USER_ID), eq(BOOKING_CONFIRMED_ID), any());
     }
 
     @Test
     void generateUpcomingCreatesBookingForMissingWeek() {
         when(seriesRepository.findByIsActiveTrue()).thenReturn(List.of(series()));
-        when(bookingRepository.findByBookingSeriesId(10L)).thenReturn(List.of()); // nothing generated yet
+        when(bookingRepository.findByBookingSeriesId(SERIES_ID)).thenReturn(List.of()); // nothing generated yet
         when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
-        when(bookingRepository.existsActiveOverlap(eq(1L), any(), any())).thenReturn(false);
+        when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(false);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service.generateUpcomingBookings();
@@ -213,11 +220,11 @@ class BookingSeriesServiceTest {
     void generateUpcomingIsIdempotent() {
         List<LocalDate> dates = occurrences(2);
         List<Booking> existing = dates.stream()
-                .map(d -> Booking.builder().id(1L).bookingSeriesId(10L)
+                .map(d -> Booking.builder().id(BOOKING_EXISTING_ID).bookingSeriesId(SERIES_ID)
                         .startsAt(d.atTime(START).atZone(TASHKENT).toOffsetDateTime()).build())
                 .toList();
         when(seriesRepository.findByIsActiveTrue()).thenReturn(List.of(series()));
-        when(bookingRepository.findByBookingSeriesId(10L)).thenReturn(existing);
+        when(bookingRepository.findByBookingSeriesId(SERIES_ID)).thenReturn(existing);
 
         service.generateUpcomingBookings();
 

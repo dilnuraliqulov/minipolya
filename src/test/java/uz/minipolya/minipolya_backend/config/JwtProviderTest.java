@@ -4,12 +4,16 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import uz.minipolya.minipolya_backend.entity.User;
 
+import java.util.UUID;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class JwtProviderTest {
 
     // HS256 needs >= 32 bytes.
     private static final String SECRET = "0123456789abcdef0123456789abcdef";
+    private static final UUID USER_ID = UUID.fromString("00000000-0000-0000-0000-000000000042");
+    private static final UUID OTHER_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
     private JwtProvider jwtProvider;
 
@@ -24,7 +28,7 @@ class JwtProviderTest {
     @Test
     void generatesTokenCarryingUserClaims() {
         User user = User.builder()
-                .id(42L)
+                .id(USER_ID)
                 .phone("+998901234567")
                 .isOwner(true)
                 .isAdmin(false)
@@ -33,7 +37,7 @@ class JwtProviderTest {
         String token = jwtProvider.generateToken(user);
 
         assertThat(jwtProvider.isValid(token)).isTrue();
-        assertThat(jwtProvider.getUserId(token)).isEqualTo(42L);
+        assertThat(jwtProvider.getUserId(token)).isEqualTo(USER_ID);
         assertThat(jwtProvider.getPhone(token)).isEqualTo("+998901234567");
         assertThat(jwtProvider.isOwner(token)).isTrue();
         assertThat(jwtProvider.isAdmin(token)).isFalse();
@@ -41,7 +45,7 @@ class JwtProviderTest {
 
     @Test
     void rejectsTamperedToken() {
-        User user = User.builder().id(1L).build();
+        User user = User.builder().id(OTHER_ID).build();
         String token = jwtProvider.generateToken(user);
 
         assertThat(jwtProvider.isValid(token + "tampered")).isFalse();
@@ -51,7 +55,7 @@ class JwtProviderTest {
     void rejectsTokenSignedWithDifferentSecret() {
         AppProperties other = new AppProperties();
         other.getJwt().setSecret("ffffffffffffffffffffffffffffffff");
-        String foreignToken = new JwtProvider(other).generateToken(User.builder().id(1L).build());
+        String foreignToken = new JwtProvider(other).generateToken(User.builder().id(OTHER_ID).build());
 
         assertThat(jwtProvider.isValid(foreignToken)).isFalse();
     }

@@ -26,6 +26,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -37,6 +38,7 @@ import static org.mockito.Mockito.when;
 class AvailabilityServiceTest {
 
     private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
+    private static final UUID STADIUM_ID = UUID.randomUUID();
 
     private StadiumRepository stadiumRepository;
     private BookingRepository bookingRepository;
@@ -64,13 +66,13 @@ class AvailabilityServiceTest {
                 gameRepository, participantRepository, new PriceCalculator(), promotionService,
                 closureService, new AppProperties());
 
-        stadium = Stadium.builder().id(1L).name("Arena").status("approved").isActive(true)
+        stadium = Stadium.builder().id(STADIUM_ID).name("Arena").status("approved").isActive(true)
                 .pricePerHour(50_000).openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).build();
         date = LocalDate.now(TASHKENT).plusDays(1);
     }
 
     private void stubStadium() {
-        when(stadiumRepository.findByIdAndStatus(1L, "approved")).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
     }
 
     private OffsetDateTime at(LocalTime time) {
@@ -87,7 +89,7 @@ class AvailabilityServiceTest {
     void generatesOneHourSlotsAcrossOpeningHours() {
         stubStadium();
 
-        AvailabilityResponse response = service.getAvailability(1L, date);
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
         assertThat(response.getSlots()).hasSize(15); // 08:00-23:00
         assertThat(response.getSlots().get(0).getStartTime()).isEqualTo(LocalTime.of(8, 0));
@@ -98,11 +100,11 @@ class AvailabilityServiceTest {
     @Test
     void confirmedBookingMakesSlotUnavailable() {
         stubStadium();
-        Booking booking = Booking.builder().id(1L).status("confirmed")
+        Booking booking = Booking.builder().id(UUID.randomUUID()).status("confirmed")
                 .startsAt(at(LocalTime.of(10, 0))).endsAt(at(LocalTime.of(11, 0))).build();
-        when(bookingRepository.findActiveForStadiumBetween(eq(1L), any(), any())).thenReturn(List.of(booking));
+        when(bookingRepository.findActiveForStadiumBetween(eq(STADIUM_ID), any(), any())).thenReturn(List.of(booking));
 
-        AvailabilityResponse response = service.getAvailability(1L, date);
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
         assertThat(slotAt(response, LocalTime.of(10, 0)).isAvailable()).isFalse();
         assertThat(slotAt(response, LocalTime.of(9, 0)).isAvailable()).isTrue();
@@ -111,11 +113,11 @@ class AvailabilityServiceTest {
     @Test
     void pendingBookingAlsoHoldsSlot() {
         stubStadium();
-        Booking booking = Booking.builder().id(1L).status("pending")
+        Booking booking = Booking.builder().id(UUID.randomUUID()).status("pending")
                 .startsAt(at(LocalTime.of(15, 0))).endsAt(at(LocalTime.of(16, 0))).build();
-        when(bookingRepository.findActiveForStadiumBetween(eq(1L), any(), any())).thenReturn(List.of(booking));
+        when(bookingRepository.findActiveForStadiumBetween(eq(STADIUM_ID), any(), any())).thenReturn(List.of(booking));
 
-        AvailabilityResponse response = service.getAvailability(1L, date);
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
         assertThat(slotAt(response, LocalTime.of(15, 0)).isAvailable()).isFalse();
     }
@@ -123,10 +125,10 @@ class AvailabilityServiceTest {
     @Test
     void closureMakesSlotUnavailable() {
         stubStadium();
-        when(closureService.isClosedAt(eq(1L), eq(date), any()))
+        when(closureService.isClosedAt(eq(STADIUM_ID), eq(date), any()))
                 .thenAnswer(inv -> inv.getArgument(2).equals(LocalTime.of(12, 0)));
 
-        AvailabilityResponse response = service.getAvailability(1L, date);
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
         assertThat(slotAt(response, LocalTime.of(12, 0)).isAvailable()).isFalse();
         assertThat(slotAt(response, LocalTime.of(8, 0)).isAvailable()).isTrue();
@@ -138,9 +140,9 @@ class AvailabilityServiceTest {
         int dow = date.getDayOfWeek().getValue() - 1;
         PricingRule rule = PricingRule.builder().dayOfWeek(dow)
                 .startTime(LocalTime.of(18, 0)).endTime(LocalTime.of(22, 0)).pricePerHour(80_000).isActive(true).build();
-        when(pricingRuleRepository.findByStadiumIdAndIsActiveTrue(1L)).thenReturn(List.of(rule));
+        when(pricingRuleRepository.findByStadiumIdAndIsActiveTrue(STADIUM_ID)).thenReturn(List.of(rule));
 
-        AvailabilityResponse response = service.getAvailability(1L, date);
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
         assertThat(slotAt(response, LocalTime.of(18, 0)).getPricePerHour()).isEqualTo(80_000);
         assertThat(slotAt(response, LocalTime.of(8, 0)).getPricePerHour()).isEqualTo(50_000);
@@ -150,7 +152,7 @@ class AvailabilityServiceTest {
     void noPricingRuleUsesStadiumDefaultPrice() {
         stubStadium();
 
-        AvailabilityResponse response = service.getAvailability(1L, date);
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
         assertThat(slotAt(response, LocalTime.of(8, 0)).getPricePerHour()).isEqualTo(50_000);
     }
@@ -158,10 +160,10 @@ class AvailabilityServiceTest {
     @Test
     void activePromotionAppliesDiscount() {
         stubStadium();
-        when(promotionService.getBestPromotion(eq(1L), any())).thenReturn(Optional.of(
+        when(promotionService.getBestPromotion(eq(STADIUM_ID), any())).thenReturn(Optional.of(
                 Promotion.builder().discountPercent(20).name("Happy Hour").build()));
 
-        AvailabilityResponse response = service.getAvailability(1L, date);
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
         TimeSlot slot = slotAt(response, LocalTime.of(8, 0));
         assertThat(slot.getDiscountPercent()).isEqualTo(20);
@@ -173,17 +175,18 @@ class AvailabilityServiceTest {
     @Test
     void waitingOpenGameIsSurfacedOnSlot() {
         stubStadium();
-        Game game = Game.builder().id(9L).type("open").status("open").maxPlayers(10)
+        UUID gameId = UUID.randomUUID();
+        Game game = Game.builder().id(gameId).type("open").status("open").maxPlayers(10)
                 .startsAt(at(LocalTime.of(14, 0))).endsAt(at(LocalTime.of(15, 0))).build();
-        when(gameRepository.findByStadiumIdAndStatus(1L, "open")).thenReturn(List.of(game));
-        when(participantRepository.findByGameId(9L)).thenReturn(List.of(
+        when(gameRepository.findByStadiumIdAndStatus(STADIUM_ID, "open")).thenReturn(List.of(game));
+        when(participantRepository.findByGameId(gameId)).thenReturn(List.of(
                 new GameParticipant(), new GameParticipant(), new GameParticipant()));
 
-        AvailabilityResponse response = service.getAvailability(1L, date);
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
         TimeSlot slot = slotAt(response, LocalTime.of(14, 0));
         assertThat(slot.isHasWaitingGame()).isTrue();
-        assertThat(slot.getWaitingGameId()).isEqualTo(9L);
+        assertThat(slot.getWaitingGameId()).isEqualTo(gameId);
         assertThat(slot.getWaitingGameType()).isEqualTo("open");
         assertThat(slot.getPlayersJoined()).isEqualTo(3);
         assertThat(slot.getPlayersNeeded()).isEqualTo(10);
@@ -194,7 +197,7 @@ class AvailabilityServiceTest {
     void dateInThePastIsRejected() {
         stubStadium();
 
-        assertThatThrownBy(() -> service.getAvailability(1L, LocalDate.now(TASHKENT).minusDays(1)))
+        assertThatThrownBy(() -> service.getAvailability(STADIUM_ID, LocalDate.now(TASHKENT).minusDays(1)))
                 .isInstanceOf(BadRequestException.class);
     }
 
@@ -202,15 +205,15 @@ class AvailabilityServiceTest {
     void dateBeyondBookingWindowIsRejected() {
         stubStadium();
 
-        assertThatThrownBy(() -> service.getAvailability(1L, LocalDate.now(TASHKENT).plusWeeks(5)))
+        assertThatThrownBy(() -> service.getAvailability(STADIUM_ID, LocalDate.now(TASHKENT).plusWeeks(5)))
                 .isInstanceOf(BadRequestException.class);
     }
 
     @Test
     void missingStadiumIsNotFound() {
-        when(stadiumRepository.findByIdAndStatus(1L, "approved")).thenReturn(Optional.empty());
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.getAvailability(1L, date))
+        assertThatThrownBy(() -> service.getAvailability(STADIUM_ID, date))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 }

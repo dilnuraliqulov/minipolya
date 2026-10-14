@@ -5,13 +5,14 @@ import org.springframework.stereotype.Repository;
 import uz.minipolya.minipolya_backend.entity.TeamMember;
 
 import java.util.List;
+import java.util.UUID;
 
 @Repository
-public interface TeamMemberRepository extends JpaRepository<TeamMember, Long> {
+public interface TeamMemberRepository extends JpaRepository<TeamMember, UUID> {
 
-    List<TeamMember> findByUserId(Long userId);
+    List<TeamMember> findByUserId(UUID userId);
 
-    List<TeamMember> findByTeamId(Long teamId);
+    List<TeamMember> findByTeamId(UUID teamId);
 
-    boolean existsByTeamIdAndUserId(Long teamId, Long userId);
+    boolean existsByTeamIdAndUserId(UUID teamId, UUID userId);
 }

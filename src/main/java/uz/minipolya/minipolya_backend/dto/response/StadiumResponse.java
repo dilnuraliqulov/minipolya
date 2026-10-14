@@ -8,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 
 /**
  * Lean summary used in listings. Deliberately omits photos and amenities to
@@ -20,7 +21,7 @@ import java.math.BigDecimal;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class StadiumResponse {
 
-    private Long id;
+    private UUID id;
     private String name;
     private String address;
     private BigDecimal latitude;

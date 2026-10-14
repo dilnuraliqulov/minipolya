@@ -14,6 +14,7 @@ import uz.minipolya.minipolya_backend.repository.AuditLogRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Append-only audit trail. {@link #log} is fire-and-forget: it never throws, so
@@ -28,7 +29,7 @@ public class AuditService {
     private final UserRepository userRepository;
     private final AuditLogMapper auditLogMapper;
 
-    public void log(Long userId, String action, String entityType, Long entityId, String details) {
+    public void log(UUID userId, String action, String entityType, UUID entityId, String details) {
         try {
             User user = userId == null ? null : userRepository.getReferenceById(userId);
             auditLogRepository.save(AuditLog.builder()
@@ -43,7 +44,7 @@ public class AuditService {
         }
     }
 
-    public void log(Long userId, String action, String entityType, Long entityId) {
+    public void log(UUID userId, String action, String entityType, UUID entityId) {
         log(userId, action, entityType, entityId, null);
     }
 
@@ -53,12 +54,12 @@ public class AuditService {
     }
 
     @Transactional(readOnly = true)
-    public Page<AuditLogResponse> getByUser(Long userId, Pageable pageable) {
+    public Page<AuditLogResponse> getByUser(UUID userId, Pageable pageable) {
         return auditLogRepository.findByUserId(userId, pageable).map(auditLogMapper::toResponse);
     }
 
     @Transactional(readOnly = true)
-    public List<AuditLogResponse> getByEntity(String entityType, Long entityId) {
+    public List<AuditLogResponse> getByEntity(String entityType, UUID entityId) {
         return auditLogRepository.findByEntityTypeAndEntityId(entityType, entityId).stream()
                 .map(auditLogMapper::toResponse)
                 .toList();

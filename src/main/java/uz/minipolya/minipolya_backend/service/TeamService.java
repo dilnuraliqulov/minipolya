@@ -20,6 +20,7 @@ import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
 import java.util.List;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -36,7 +37,7 @@ public class TeamService {
 
     /** Creates a team; the caller becomes the leader and its first member. */
     @Transactional
-    public TeamDetailResponse create(Long userId, CreateTeamRequest request) {
+    public TeamDetailResponse create(UUID userId, CreateTeamRequest request) {
         User leader = requireUser(userId);
 
         Team team = Team.builder()
@@ -52,7 +53,7 @@ public class TeamService {
 
     /** All teams the user belongs to, whether as leader or member. */
     @Transactional(readOnly = true)
-    public List<TeamResponse> listMine(Long userId) {
+    public List<TeamResponse> listMine(UUID userId) {
         return teamMemberRepository.findByUserId(userId).stream()
                 .map(TeamMember::getTeam)
                 .map(teamMapper::toResponse)
@@ -60,16 +61,16 @@ public class TeamService {
     }
 
     @Transactional(readOnly = true)
-    public TeamDetailResponse getDetail(Long teamId) {
+    public TeamDetailResponse getDetail(UUID teamId) {
         return teamMapper.toDetailResponse(requireTeam(teamId));
     }
 
     @Transactional
-    public TeamDetailResponse addMember(Long requesterId, Long teamId, AddTeamMemberRequest request) {
+    public TeamDetailResponse addMember(UUID requesterId, UUID teamId, AddTeamMemberRequest request) {
         Team team = requireTeam(teamId);
         requireLeader(team, requesterId);
 
-        Long newMemberId = request.getUserId();
+        UUID newMemberId = request.getUserId();
         if (teamMemberRepository.existsByTeamIdAndUserId(teamId, newMemberId)) {
             throw new BadRequestException("User is already a member of this team");
         }
@@ -82,7 +83,7 @@ public class TeamService {
     }
 
     @Transactional
-    public void removeMember(Long requesterId, Long teamId, Long memberUserId) {
+    public void removeMember(UUID requesterId, UUID teamId, UUID memberUserId) {
         Team team = requireTeam(teamId);
         requireLeader(team, requesterId);
 
@@ -101,7 +102,7 @@ public class TeamService {
     }
 
     @Transactional
-    public void delete(Long requesterId, Long teamId) {
+    public void delete(UUID requesterId, UUID teamId) {
         Team team = requireTeam(teamId);
         requireLeader(team, requesterId);
         teamRepository.delete(team);
@@ -110,17 +111,17 @@ public class TeamService {
 
     // ---- Helpers ----
 
-    private User requireUser(Long userId) {
+    private User requireUser(UUID userId) {
         return userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
     }
 
-    private Team requireTeam(Long teamId) {
+    private Team requireTeam(UUID teamId) {
         return teamRepository.findById(teamId)
                 .orElseThrow(() -> new ResourceNotFoundException("Team not found"));
     }
 
-    private void requireLeader(Team team, Long requesterId) {
+    private void requireLeader(Team team, UUID requesterId) {
         if (!team.getLeader().getId().equals(requesterId)) {
             throw new ForbiddenException("Only the team leader can perform this action");
         }

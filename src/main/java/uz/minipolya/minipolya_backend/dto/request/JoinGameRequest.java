@@ -7,6 +7,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.UUID;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -14,7 +16,7 @@ import lombok.NoArgsConstructor;
 public class JoinGameRequest {
 
     @NotNull
-    private Long gameId;
+    private UUID gameId;
 
     /** Only for team_vs_team when Team B's leader joins: "a" or "b". */
     @Pattern(regexp = "a|b", message = "side must be 'a' or 'b'")

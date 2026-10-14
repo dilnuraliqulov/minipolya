@@ -17,6 +17,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Sends a reminder ~2 hours before each confirmed booking. Runs every 30
@@ -62,7 +63,7 @@ public class ReminderJob {
         }
     }
 
-    private void safeNotify(Long userId, Long bookingId, String message) {
+    private void safeNotify(UUID userId, UUID bookingId, String message) {
         try {
             notificationService.notify(userId, Notification.Type.BOOKING_REMINDER, "Напоминание о брони",
                     message, Notification.ReferenceType.BOOKING, bookingId);

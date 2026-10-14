@@ -36,6 +36,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.UUID;
 
 /**
  * Booking lifecycle and the double-booking safety net. The {@code
@@ -69,7 +70,7 @@ public class BookingService {
     private final AuditService auditService;
 
     @Transactional
-    public BookingResponse createBooking(Long userId, CreateBookingRequest request) {
+    public BookingResponse createBooking(UUID userId, CreateBookingRequest request) {
         Stadium stadium = stadiumRepository.findByIdAndStatus(request.getStadiumId(), STATUS_APPROVED)
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not available"));
@@ -122,7 +123,7 @@ public class BookingService {
 
     /** Owner adds a walk-in/phone booking: confirmed immediately, no hold. */
     @Transactional
-    public BookingResponse createManualBooking(CreateManualBookingRequest request, Long ownerUserId) {
+    public BookingResponse createManualBooking(CreateManualBookingRequest request, UUID ownerUserId) {
         Stadium stadium = stadiumRepository.findById(request.getStadiumId())
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
         if (!stadium.getOwner().getId().equals(ownerUserId)) {
@@ -172,7 +173,7 @@ public class BookingService {
 
     /** Pending → confirmed, called after a successful payment. Idempotent. */
     @Transactional
-    public BookingResponse confirmBooking(Long bookingId) {
+    public BookingResponse confirmBooking(UUID bookingId) {
         Booking booking = requireBooking(bookingId);
         if ("confirmed".equals(booking.getStatus())) {
             return bookingMapper.toResponse(booking);
@@ -191,7 +192,7 @@ public class BookingService {
     }
 
     @Transactional
-    public BookingResponse cancelByUser(Long userId, Long bookingId, String reason) {
+    public BookingResponse cancelByUser(UUID userId, UUID bookingId, String reason) {
         Booking booking = requireBooking(bookingId);
         if (booking.getUser() == null || !booking.getUser().getId().equals(userId)) {
             throw new ForbiddenException("This booking does not belong to you");
@@ -219,7 +220,7 @@ public class BookingService {
 
     /** Owner cancellation always refunds 100%, regardless of time left. */
     @Transactional
-    public BookingResponse cancelByOwner(Long ownerId, Long bookingId, String reason) {
+    public BookingResponse cancelByOwner(UUID ownerId, UUID bookingId, String reason) {
         Booking booking = requireBooking(bookingId);
         if (!booking.getStadium().getOwner().getId().equals(ownerId)) {
             throw new ForbiddenException("You do not own this stadium");
@@ -232,7 +233,7 @@ public class BookingService {
             paymentService.refundBookingPayment(booking.getId(), refundAmount, reason);
         }
         if (booking.getUser() != null) {
-            Long uid = booking.getUser().getId();
+            UUID uid = booking.getUser().getId();
             safeNotify(() -> notificationService.notify(uid, Notification.Type.BOOKING_CANCELLED,
                     "Бронь отменена владельцем",
                     "Владелец отменил вашу бронь в «" + booking.getStadium().getName()
@@ -245,13 +246,13 @@ public class BookingService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<BookingResponse> getMyBookings(Long userId, int page, int size) {
+    public PageResponse<BookingResponse> getMyBookings(UUID userId, int page, int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"));
         return PageResponse.from(bookingRepository.findByUserId(userId, pageable), bookingMapper::toResponse);
     }
 
     @Transactional(readOnly = true)
-    public BookingResponse getBookingForUser(Long userId, Long bookingId) {
+    public BookingResponse getBookingForUser(UUID userId, UUID bookingId) {
         Booking booking = requireBooking(bookingId);
         if (booking.getUser() == null || !booking.getUser().getId().equals(userId)) {
             throw new ForbiddenException("This booking does not belong to you");
@@ -261,7 +262,7 @@ public class BookingService {
 
     /** Owner's unified schedule (app + manual bookings), optionally within a date range. */
     @Transactional(readOnly = true)
-    public PageResponse<BookingResponse> getStadiumBookings(Long ownerId, Long stadiumId,
+    public PageResponse<BookingResponse> getStadiumBookings(UUID ownerId, UUID stadiumId,
                                                             LocalDate from, LocalDate to, int page, int size) {
         Stadium stadium = stadiumRepository.findById(stadiumId)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
@@ -321,7 +322,7 @@ public class BookingService {
         }
     }
 
-    private Booking requireBooking(Long bookingId) {
+    private Booking requireBooking(UUID bookingId) {
         return bookingRepository.findById(bookingId)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
     }

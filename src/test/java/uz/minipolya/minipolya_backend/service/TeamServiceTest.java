@@ -22,6 +22,7 @@ import uz.minipolya.minipolya_backend.repository.UserRepository;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -45,19 +46,27 @@ class TeamServiceTest {
     @InjectMocks
     private TeamService teamService;
 
-    private User user(long id, String name) {
+    private static final UUID LEADER_ID = UUID.randomUUID();
+    private static final UUID MEMBER_ID = UUID.randomUUID();
+    private static final UUID TEAM_ID = UUID.randomUUID();
+    private static final UUID OWNER_ID = UUID.randomUUID();
+    private static final UUID OTHER_ID = UUID.randomUUID();
+    private static final UUID STRANGER_ID = UUID.randomUUID();
+    private static final UUID TEAM_B_ID = UUID.randomUUID();
+
+    private User user(UUID id, String name) {
         return User.builder().id(id).name(name).build();
     }
 
     @Test
     void createMakesCallerLeaderAndFirstMember() {
-        User leader = user(10L, "Dilnur");
-        when(userRepository.findById(10L)).thenReturn(Optional.of(leader));
+        User leader = user(LEADER_ID, "Dilnur");
+        when(userRepository.findById(LEADER_ID)).thenReturn(Optional.of(leader));
         when(teamRepository.save(any(Team.class))).thenAnswer(inv -> inv.getArgument(0));
         TeamDetailResponse dto = new TeamDetailResponse();
         when(teamMapper.toDetailResponse(any(Team.class))).thenReturn(dto);
 
-        TeamDetailResponse result = teamService.create(10L, CreateTeamRequest.builder().name("  Dragons  ").build());
+        TeamDetailResponse result = teamService.create(LEADER_ID, CreateTeamRequest.builder().name("  Dragons  ").build());
 
         assertThat(result).isSameAs(dto);
         ArgumentCaptor<Team> captor = ArgumentCaptor.forClass(Team.class);
@@ -74,9 +83,9 @@ class TeamServiceTest {
 
     @Test
     void createThrowsWhenUserMissing() {
-        when(userRepository.findById(10L)).thenReturn(Optional.empty());
+        when(userRepository.findById(LEADER_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> teamService.create(10L, CreateTeamRequest.builder().name("Dragons").build()))
+        assertThatThrownBy(() -> teamService.create(LEADER_ID, CreateTeamRequest.builder().name("Dragons").build()))
                 .isInstanceOf(ResourceNotFoundException.class);
 
         verify(teamRepository, never()).save(any());
@@ -84,18 +93,18 @@ class TeamServiceTest {
 
     @Test
     void getDetailThrowsWhenTeamMissing() {
-        when(teamRepository.findById(1L)).thenReturn(Optional.empty());
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> teamService.getDetail(1L))
+        assertThatThrownBy(() -> teamService.getDetail(TEAM_ID))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test
     void addMemberRejectsNonLeader() {
-        Team team = Team.builder().id(1L).leader(user(99L, "Owner")).build();
-        when(teamRepository.findById(1L)).thenReturn(Optional.of(team));
+        Team team = Team.builder().id(TEAM_ID).leader(user(OWNER_ID, "Owner")).build();
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
 
-        assertThatThrownBy(() -> teamService.addMember(10L, 1L, AddTeamMemberRequest.builder().userId(5L).build()))
+        assertThatThrownBy(() -> teamService.addMember(LEADER_ID, TEAM_ID, AddTeamMemberRequest.builder().userId(MEMBER_ID).build()))
                 .isInstanceOf(ForbiddenException.class);
 
         verify(teamRepository, never()).save(any());
@@ -103,11 +112,11 @@ class TeamServiceTest {
 
     @Test
     void addMemberRejectsDuplicate() {
-        Team team = Team.builder().id(1L).leader(user(10L, "Leader")).build();
-        when(teamRepository.findById(1L)).thenReturn(Optional.of(team));
-        when(teamMemberRepository.existsByTeamIdAndUserId(1L, 5L)).thenReturn(true);
+        Team team = Team.builder().id(TEAM_ID).leader(user(LEADER_ID, "Leader")).build();
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
+        when(teamMemberRepository.existsByTeamIdAndUserId(TEAM_ID, MEMBER_ID)).thenReturn(true);
 
-        assertThatThrownBy(() -> teamService.addMember(10L, 1L, AddTeamMemberRequest.builder().userId(5L).build()))
+        assertThatThrownBy(() -> teamService.addMember(LEADER_ID, TEAM_ID, AddTeamMemberRequest.builder().userId(MEMBER_ID).build()))
                 .isInstanceOf(BadRequestException.class);
 
         verify(teamRepository, never()).save(any());
@@ -115,48 +124,48 @@ class TeamServiceTest {
 
     @Test
     void addMemberAppendsMemberWhenLeaderRequests() {
-        User leader = user(10L, "Leader");
-        Team team = Team.builder().id(1L).leader(leader).build();
+        User leader = user(LEADER_ID, "Leader");
+        Team team = Team.builder().id(TEAM_ID).leader(leader).build();
         team.addMember(TeamMember.builder().user(leader).role("leader").build());
-        when(teamRepository.findById(1L)).thenReturn(Optional.of(team));
-        when(teamMemberRepository.existsByTeamIdAndUserId(1L, 5L)).thenReturn(false);
-        when(userRepository.findById(5L)).thenReturn(Optional.of(user(5L, "Newbie")));
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
+        when(teamMemberRepository.existsByTeamIdAndUserId(TEAM_ID, MEMBER_ID)).thenReturn(false);
+        when(userRepository.findById(MEMBER_ID)).thenReturn(Optional.of(user(MEMBER_ID, "Newbie")));
         when(teamRepository.save(any(Team.class))).thenAnswer(inv -> inv.getArgument(0));
         when(teamMapper.toDetailResponse(any(Team.class))).thenReturn(new TeamDetailResponse());
 
-        teamService.addMember(10L, 1L, AddTeamMemberRequest.builder().userId(5L).build());
+        teamService.addMember(LEADER_ID, TEAM_ID, AddTeamMemberRequest.builder().userId(MEMBER_ID).build());
 
         assertThat(team.getMembers()).hasSize(2);
         TeamMember added = team.getMembers().get(1);
-        assertThat(added.getUser().getId()).isEqualTo(5L);
+        assertThat(added.getUser().getId()).isEqualTo(MEMBER_ID);
         assertThat(added.getRole()).isEqualTo("member");
     }
 
     @Test
     void removeMemberDeletesTheMemberRow() {
-        User leader = user(10L, "Leader");
-        User member = user(5L, "Member");
-        Team team = Team.builder().id(1L).leader(leader).build();
+        User leader = user(LEADER_ID, "Leader");
+        User member = user(MEMBER_ID, "Member");
+        Team team = Team.builder().id(TEAM_ID).leader(leader).build();
         team.addMember(TeamMember.builder().user(leader).role("leader").build());
         team.addMember(TeamMember.builder().user(member).role("member").build());
-        when(teamRepository.findById(1L)).thenReturn(Optional.of(team));
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
         when(teamRepository.save(any(Team.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        teamService.removeMember(10L, 1L, 5L);
+        teamService.removeMember(LEADER_ID, TEAM_ID, MEMBER_ID);
 
         assertThat(team.getMembers()).hasSize(1);
-        assertThat(team.getMembers().get(0).getUser().getId()).isEqualTo(10L);
+        assertThat(team.getMembers().get(0).getUser().getId()).isEqualTo(LEADER_ID);
         verify(teamRepository).save(team);
     }
 
     @Test
     void removeMemberRejectsRemovingTheLeader() {
-        User leader = user(10L, "Leader");
-        Team team = Team.builder().id(1L).leader(leader).build();
+        User leader = user(LEADER_ID, "Leader");
+        Team team = Team.builder().id(TEAM_ID).leader(leader).build();
         team.addMember(TeamMember.builder().user(leader).role("leader").build());
-        when(teamRepository.findById(1L)).thenReturn(Optional.of(team));
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
 
-        assertThatThrownBy(() -> teamService.removeMember(10L, 1L, 10L))
+        assertThatThrownBy(() -> teamService.removeMember(LEADER_ID, TEAM_ID, LEADER_ID))
                 .isInstanceOf(BadRequestException.class);
 
         verify(teamRepository, never()).save(any());
@@ -164,21 +173,21 @@ class TeamServiceTest {
 
     @Test
     void removeMemberThrowsWhenUserNotInTeam() {
-        User leader = user(10L, "Leader");
-        Team team = Team.builder().id(1L).leader(leader).build();
+        User leader = user(LEADER_ID, "Leader");
+        Team team = Team.builder().id(TEAM_ID).leader(leader).build();
         team.addMember(TeamMember.builder().user(leader).role("leader").build());
-        when(teamRepository.findById(1L)).thenReturn(Optional.of(team));
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
 
-        assertThatThrownBy(() -> teamService.removeMember(10L, 1L, 77L))
+        assertThatThrownBy(() -> teamService.removeMember(LEADER_ID, TEAM_ID, STRANGER_ID))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test
     void deleteRejectsNonLeader() {
-        Team team = Team.builder().id(1L).leader(user(99L, "Owner")).build();
-        when(teamRepository.findById(1L)).thenReturn(Optional.of(team));
+        Team team = Team.builder().id(TEAM_ID).leader(user(OWNER_ID, "Owner")).build();
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
 
-        assertThatThrownBy(() -> teamService.delete(10L, 1L))
+        assertThatThrownBy(() -> teamService.delete(LEADER_ID, TEAM_ID))
                 .isInstanceOf(ForbiddenException.class);
 
         verify(teamRepository, never()).delete(any());
@@ -186,24 +195,24 @@ class TeamServiceTest {
 
     @Test
     void deleteRemovesTeamWhenLeaderRequests() {
-        Team team = Team.builder().id(1L).leader(user(10L, "Leader")).build();
-        when(teamRepository.findById(1L)).thenReturn(Optional.of(team));
+        Team team = Team.builder().id(TEAM_ID).leader(user(LEADER_ID, "Leader")).build();
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
 
-        teamService.delete(10L, 1L);
+        teamService.delete(LEADER_ID, TEAM_ID);
 
         verify(teamRepository).delete(team);
     }
 
     @Test
     void listMineReturnsEveryTeamTheUserBelongsTo() {
-        User me = user(10L, "Me");
-        Team a = Team.builder().id(1L).leader(me).name("A").build();
-        Team b = Team.builder().id(2L).leader(user(20L, "Other")).name("B").build();
-        when(teamMemberRepository.findByUserId(10L)).thenReturn(List.of(
+        User me = user(LEADER_ID, "Me");
+        Team a = Team.builder().id(TEAM_ID).leader(me).name("A").build();
+        Team b = Team.builder().id(TEAM_B_ID).leader(user(OTHER_ID, "Other")).name("B").build();
+        when(teamMemberRepository.findByUserId(LEADER_ID)).thenReturn(List.of(
                 TeamMember.builder().team(a).user(me).role("leader").build(),
                 TeamMember.builder().team(b).user(me).role("member").build()));
 
-        teamService.listMine(10L);
+        teamService.listMine(LEADER_ID);
 
         verify(teamMapper).toResponse(a);
         verify(teamMapper).toResponse(b);
