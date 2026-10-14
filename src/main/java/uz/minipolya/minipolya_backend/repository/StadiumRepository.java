@@ -45,15 +45,15 @@ public interface StadiumRepository extends JpaRepository<Stadium, Long> {
      * a null argument disables that clause.
      */
     @Query("""
-            SELECT s FROM Stadium s
-            WHERE s.status = 'approved'
-              AND s.isActive = true
-              AND (:q IS NULL
-                   OR LOWER(s.name) LIKE LOWER(CONCAT('%', :q, '%'))
-                   OR LOWER(s.address) LIKE LOWER(CONCAT('%', :q, '%')))
-              AND (:format IS NULL OR s.format = :format)
-              AND (:maxPrice IS NULL OR s.pricePerHour <= :maxPrice)
-            """)
+        SELECT s FROM Stadium s
+        WHERE s.status = 'approved'
+          AND s.isActive = true
+          AND (CAST(:q AS string) IS NULL
+               OR LOWER(s.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+               OR LOWER(s.address) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
+          AND (CAST(:format AS string) IS NULL OR s.format = :format)
+          AND (:maxPrice IS NULL OR s.pricePerHour <= :maxPrice)
+        """)
     Page<Stadium> search(@Param("q") String q,
                          @Param("format") String format,
                          @Param("maxPrice") Integer maxPrice,
