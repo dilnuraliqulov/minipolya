@@ -52,7 +52,7 @@ public interface StadiumRepository extends JpaRepository<Stadium, UUID> {
           AND (CAST(:q AS string) IS NULL
                OR LOWER(s.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                OR LOWER(s.address) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
-          AND (CAST(:format AS string) IS NULL OR s.format = :format)
+          AND (CAST(:format AS string) IS NULL OR s.format = CAST(:format AS string))
           AND (:maxPrice IS NULL OR s.pricePerHour <= :maxPrice)
         """)
     Page<Stadium> search(@Param("q") String q,
