@@ -141,7 +141,7 @@ public class GameService {
     }
 
     @Transactional
-    public GameParticipantResponse joinGame(UUID gameId, UUID userId, String side) {
+    public GameParticipantResponse joinGame(UUID gameId, UUID userId, String side, UUID teamId) {
         Game game = requireGame(gameId);
         if (!STATUS_OPEN.equals(game.getStatus())) {
             throw new BadRequestException("Game is not open for joining");
@@ -154,6 +154,9 @@ public class GameService {
         if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
             // A leader joins with an explicit side; invited members join without one (no payment).
             assignedSide = parseSide(side);
+            if (assignedSide == GameParticipant.Side.B) {
+                acceptAsTeamB(game, userId, teamId);
+            }
         } else {
             long current = participantRepository.findByGameId(gameId).size();
             if (current >= game.getMaxPlayers()) {
@@ -385,6 +388,31 @@ public class GameService {
                 local.toLocalTime(),
                 duration,
                 stadium.getPricePerHour());
+    }
+
+    /**
+     * Records the accepting team on a team_vs_team game. Team A is set by the
+     * creator; team B is only known once its leader accepts, so the side-"b" join
+     * is what writes {@code games.team_b_id} and makes teamBId/teamBName visible.
+     */
+    private void acceptAsTeamB(Game game, UUID userId, UUID teamId) {
+        if (teamId == null) {
+            throw new BadRequestException("teamId is required to join as team B");
+        }
+        Team teamB = teamRepository.findById(teamId)
+                .orElseThrow(() -> new ResourceNotFoundException("Team not found"));
+        if (!teamB.getLeader().getId().equals(userId)) {
+            throw new ForbiddenException("Only the team leader can accept");
+        }
+        if (game.getTeamA() != null && game.getTeamA().getId().equals(teamId)) {
+            throw new BadRequestException("A team cannot play against itself");
+        }
+        if (game.getTeamB() != null && !game.getTeamB().getId().equals(teamId)) {
+            throw new BadRequestException("This game already has a team B");
+        }
+        game.setTeamB(teamB);
+        gameRepository.save(game);
+        log.info("Team B accepted: gameId={} teamId={} leaderId={}", game.getId(), teamId, userId);
     }
 
     private GameParticipant.Side parseSide(String side) {

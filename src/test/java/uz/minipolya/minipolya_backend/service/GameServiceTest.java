@@ -15,6 +15,8 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
+import uz.minipolya.minipolya_backend.exception.ForbiddenException;
+import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.GameMapper;
 import uz.minipolya.minipolya_backend.mapper.GameParticipantMapper;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
@@ -69,6 +71,7 @@ class GameServiceTest {
     private static final UUID STADIUM_ID = UUID.randomUUID();
     private static final UUID GAME_ID = UUID.randomUUID();
     private static final UUID TEAM_A_ID = UUID.randomUUID();
+    private static final UUID TEAM_B_ID = UUID.randomUUID();
     private static final UUID JOINER_ID = UUID.randomUUID();
     private static final UUID LEADER_B_ID = UUID.randomUUID();
     private static final UUID BOOKING_ID = UUID.randomUUID();
@@ -291,7 +294,7 @@ class GameServiceTest {
         when(participantRepository.save(any(GameParticipant.class))).thenAnswer(inv -> inv.getArgument(0));
         when(participantMapper.toResponse(any())).thenReturn(new GameParticipantResponse());
 
-        service.joinGame(GAME_ID, JOINER_ID, null);
+        service.joinGame(GAME_ID, JOINER_ID, null, null);
 
         verify(participantRepository).save(any(GameParticipant.class));
     }
@@ -304,7 +307,7 @@ class GameServiceTest {
         when(participantRepository.findByGameId(GAME_ID)).thenReturn(List.of(
                 GameParticipant.builder().id(UUID.randomUUID()).build()));
 
-        assertThatThrownBy(() -> service.joinGame(GAME_ID, JOINER_ID, null)).isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> service.joinGame(GAME_ID, JOINER_ID, null, null)).isInstanceOf(BadRequestException.class);
         verify(participantRepository, never()).save(any());
     }
 
@@ -315,8 +318,150 @@ class GameServiceTest {
         when(participantRepository.findByGameIdAndUserId(GAME_ID, JOINER_ID))
                 .thenReturn(Optional.of(GameParticipant.builder().id(UUID.randomUUID()).build()));
 
-        assertThatThrownBy(() -> service.joinGame(GAME_ID, JOINER_ID, null)).isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> service.joinGame(GAME_ID, JOINER_ID, null, null)).isInstanceOf(BadRequestException.class);
         verify(participantRepository, never()).save(any());
+    }
+
+    // ---- joining a team_vs_team game as team B ----
+
+    /** An open team_vs_team game whose team A is already set by the creator. */
+    private Game tvtGameWithTeamA() {
+        Team teamA = Team.builder().id(TEAM_A_ID).name("Team Alpha")
+                .leader(User.builder().id(CREATOR_ID).build()).build();
+        Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("open").maxPlayers(10)
+                .creator(creator).stadium(stadium).teamA(teamA).build();
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game));
+        when(participantRepository.findByGameIdAndUserId(GAME_ID, LEADER_B_ID)).thenReturn(Optional.empty());
+        return game;
+    }
+
+    @Test
+    void joiningAsTeamBSavesTheAcceptingTeamOnTheGame() {
+        Game game = tvtGameWithTeamA();
+        Team teamB = Team.builder().id(TEAM_B_ID).name("Team Beta")
+                .leader(User.builder().id(LEADER_B_ID).build()).build();
+        when(teamRepository.findById(TEAM_B_ID)).thenReturn(Optional.of(teamB));
+        when(gameRepository.save(any(Game.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(userRepository.findById(LEADER_B_ID))
+                .thenReturn(Optional.of(User.builder().id(LEADER_B_ID).name("Leader B").build()));
+        when(participantRepository.save(any(GameParticipant.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(participantMapper.toResponse(any())).thenReturn(new GameParticipantResponse());
+
+        service.joinGame(GAME_ID, LEADER_B_ID, "b", TEAM_B_ID);
+
+        assertThat(game.getTeamB()).isSameAs(teamB);
+        verify(gameRepository).save(game);
+        ArgumentCaptor<GameParticipant> captor = ArgumentCaptor.forClass(GameParticipant.class);
+        verify(participantRepository).save(captor.capture());
+        assertThat(captor.getValue().getSide()).isEqualTo(GameParticipant.Side.B);
+    }
+
+    @Test
+    void joiningAsTeamBWithoutATeamIdIsRejected() {
+        Game game = tvtGameWithTeamA();
+
+        assertThatThrownBy(() -> service.joinGame(GAME_ID, LEADER_B_ID, "b", null))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("teamId is required to join as team B");
+
+        assertThat(game.getTeamB()).isNull();
+        verify(participantRepository, never()).save(any());
+    }
+
+    @Test
+    void joiningAsTeamBWithAnUnknownTeamIsRejected() {
+        Game game = tvtGameWithTeamA();
+        when(teamRepository.findById(TEAM_B_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.joinGame(GAME_ID, LEADER_B_ID, "b", TEAM_B_ID))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage("Team not found");
+
+        assertThat(game.getTeamB()).isNull();
+        verify(participantRepository, never()).save(any());
+    }
+
+    @Test
+    void joiningAsTeamBWhenNotThatTeamsLeaderIsRejected() {
+        Game game = tvtGameWithTeamA();
+        Team teamB = Team.builder().id(TEAM_B_ID).name("Team Beta")
+                .leader(User.builder().id(UUID.randomUUID()).build()).build();
+        when(teamRepository.findById(TEAM_B_ID)).thenReturn(Optional.of(teamB));
+
+        assertThatThrownBy(() -> service.joinGame(GAME_ID, LEADER_B_ID, "b", TEAM_B_ID))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessage("Only the team leader can accept");
+
+        assertThat(game.getTeamB()).isNull();
+        verify(participantRepository, never()).save(any());
+    }
+
+    @Test
+    void aTeamCannotPlayAgainstItself() {
+        Game game = tvtGameWithTeamA();
+        Team teamA = Team.builder().id(TEAM_A_ID).name("Team Alpha")
+                .leader(User.builder().id(LEADER_B_ID).build()).build();
+        when(teamRepository.findById(TEAM_A_ID)).thenReturn(Optional.of(teamA));
+
+        assertThatThrownBy(() -> service.joinGame(GAME_ID, LEADER_B_ID, "b", TEAM_A_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("A team cannot play against itself");
+
+        assertThat(game.getTeamB()).isNull();
+        verify(participantRepository, never()).save(any());
+    }
+
+    @Test
+    void aSecondDifferentTeamCannotTakeTeamBOnce() {
+        Game game = tvtGameWithTeamA();
+        Team alreadyB = Team.builder().id(TEAM_B_ID).name("Team Beta").build();
+        game.setTeamB(alreadyB);
+        UUID thirdTeamId = UUID.randomUUID();
+        Team third = Team.builder().id(thirdTeamId).name("Team Gamma")
+                .leader(User.builder().id(LEADER_B_ID).build()).build();
+        when(teamRepository.findById(thirdTeamId)).thenReturn(Optional.of(third));
+
+        assertThatThrownBy(() -> service.joinGame(GAME_ID, LEADER_B_ID, "b", thirdTeamId))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("This game already has a team B");
+
+        assertThat(game.getTeamB()).isSameAs(alreadyB);
+        verify(participantRepository, never()).save(any());
+    }
+
+    @Test
+    void anInvitedMemberJoinsWithoutASideAndWithoutATeamId() {
+        Game game = tvtGameWithTeamA();
+        when(participantRepository.findByGameIdAndUserId(GAME_ID, JOINER_ID)).thenReturn(Optional.empty());
+        when(userRepository.findById(JOINER_ID))
+                .thenReturn(Optional.of(User.builder().id(JOINER_ID).name("Member").build()));
+        when(participantRepository.save(any(GameParticipant.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(participantMapper.toResponse(any())).thenReturn(new GameParticipantResponse());
+
+        service.joinGame(GAME_ID, JOINER_ID, null, null);
+
+        assertThat(game.getTeamB()).isNull();
+        ArgumentCaptor<GameParticipant> captor = ArgumentCaptor.forClass(GameParticipant.class);
+        verify(participantRepository).save(captor.capture());
+        assertThat(captor.getValue().getSide()).isNull();
+    }
+
+    @Test
+    void aTeamIdIsIgnoredWhenJoiningACasualGame() {
+        Game game = Game.builder().id(GAME_ID).type("casual").status("open").maxPlayers(10)
+                .creator(creator).stadium(stadium).build();
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game));
+        when(participantRepository.findByGameIdAndUserId(GAME_ID, JOINER_ID)).thenReturn(Optional.empty());
+        when(participantRepository.findByGameId(GAME_ID)).thenReturn(List.of());
+        when(userRepository.findById(JOINER_ID))
+                .thenReturn(Optional.of(User.builder().id(JOINER_ID).name("Joiner").build()));
+        when(participantRepository.save(any(GameParticipant.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(participantMapper.toResponse(any())).thenReturn(new GameParticipantResponse());
+
+        service.joinGame(GAME_ID, JOINER_ID, null, TEAM_B_ID);
+
+        assertThat(game.getTeamB()).isNull();
+        verify(teamRepository, never()).findById(TEAM_B_ID);
     }
 
     // ---- handleGamePaymentConfirmed ----
