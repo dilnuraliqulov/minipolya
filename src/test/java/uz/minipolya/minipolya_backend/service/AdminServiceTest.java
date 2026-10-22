@@ -6,6 +6,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateStadiumStatusRequest;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateUserRequest;
+import uz.minipolya.minipolya_backend.dto.response.AdminUserResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminPlatformStatsResponse;
 import uz.minipolya.minipolya_backend.dto.response.OwnerRevenueResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
@@ -36,6 +37,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -153,6 +155,71 @@ class AdminServiceTest {
 
         assertThatThrownBy(() -> service.updateUser(ADMIN_ID, AdminUpdateUserRequest.builder().isAdmin(false).build(), ADMIN_ID))
                 .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void blockingAUserPersistsTheFlagAndAudits() {
+        User user = User.builder().id(TARGET_USER_ID).name("U").isBlocked(false).build();
+        when(userRepository.findById(TARGET_USER_ID)).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AdminUserResponse response = service.updateUser(
+                TARGET_USER_ID, AdminUpdateUserRequest.builder().isBlocked(true).build(), ADMIN_ID);
+
+        assertThat(user.isBlocked()).isTrue();
+        assertThat(response.isBlocked()).isTrue();
+        verify(userRepository).save(user);
+        verify(auditService).log(ADMIN_ID, "USER_BLOCKED", "user", TARGET_USER_ID, "{\"isBlocked\":true}");
+    }
+
+    @Test
+    void unblockingAUserPersistsTheFlagAndAudits() {
+        User user = User.builder().id(TARGET_USER_ID).name("U").isBlocked(true).build();
+        when(userRepository.findById(TARGET_USER_ID)).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AdminUserResponse response = service.updateUser(
+                TARGET_USER_ID, AdminUpdateUserRequest.builder().isBlocked(false).build(), ADMIN_ID);
+
+        assertThat(user.isBlocked()).isFalse();
+        assertThat(response.isBlocked()).isFalse();
+        verify(auditService).log(ADMIN_ID, "USER_UNBLOCKED", "user", TARGET_USER_ID, "{\"isBlocked\":false}");
+    }
+
+    @Test
+    void anUnchangedBlockedFlagIsNotAudited() {
+        User user = User.builder().id(TARGET_USER_ID).name("U").isBlocked(true).build();
+        when(userRepository.findById(TARGET_USER_ID)).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateUser(TARGET_USER_ID, AdminUpdateUserRequest.builder().isBlocked(true).build(), ADMIN_ID);
+
+        verify(auditService, never()).log(any(), eq("USER_BLOCKED"), any(), any(), anyString());
+    }
+
+    @Test
+    void adminCannotBlockThemselves() {
+        User admin = User.builder().id(ADMIN_ID).isAdmin(true).isBlocked(false).build();
+        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
+
+        assertThatThrownBy(() -> service.updateUser(
+                ADMIN_ID, AdminUpdateUserRequest.builder().isBlocked(true).build(), ADMIN_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("You cannot block yourself");
+
+        assertThat(admin.isBlocked()).isFalse();
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void adminCanUnblockThemselvesIfSomehowBlocked() {
+        User admin = User.builder().id(ADMIN_ID).isAdmin(true).isBlocked(true).build();
+        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateUser(ADMIN_ID, AdminUpdateUserRequest.builder().isBlocked(false).build(), ADMIN_ID);
+
+        assertThat(admin.isBlocked()).isFalse();
     }
 
     @Test

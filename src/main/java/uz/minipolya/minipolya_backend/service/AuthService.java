@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.config.JwtProvider;
 import uz.minipolya.minipolya_backend.dto.response.AuthResponse;
 import uz.minipolya.minipolya_backend.entity.User;
+import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.mapper.UserMapper;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.TelegramAuthValidator;
@@ -36,6 +37,11 @@ public class AuthService {
 
         User user = userRepository.findByTelegramId(data.telegramId())
                 .orElseGet(() -> createFromTelegram(data));
+
+        if (user.isBlocked()) {
+            log.warn("Blocked user attempted to sign in: userId={} telegramId={}", user.getId(), user.getTelegramId());
+            throw new ForbiddenException("Account is blocked");
+        }
 
         String token = jwtProvider.generateToken(user);
         log.info("Telegram auth succeeded for userId={} telegramId={}", user.getId(), user.getTelegramId());

@@ -145,16 +145,22 @@ public class AdminService {
         if (Boolean.FALSE.equals(request.getIsAdmin()) && userId.equals(adminUserId)) {
             throw new BadRequestException("You cannot remove your own admin access");
         }
+        if (Boolean.TRUE.equals(request.getIsBlocked()) && userId.equals(adminUserId)) {
+            throw new BadRequestException("You cannot block yourself");
+        }
 
         boolean ownerChanged = request.getIsOwner() != null && request.getIsOwner() != user.isOwner();
         boolean adminChanged = request.getIsAdmin() != null && request.getIsAdmin() != user.isAdmin();
+        boolean blockedChanged = request.getIsBlocked() != null && request.getIsBlocked() != user.isBlocked();
         if (request.getIsOwner() != null) {
             user.setOwner(request.getIsOwner());
         }
         if (request.getIsAdmin() != null) {
             user.setAdmin(request.getIsAdmin());
         }
-        // isBlocked is accepted but not persisted — the users table has no blocked flag.
+        if (request.getIsBlocked() != null) {
+            user.setBlocked(request.getIsBlocked());
+        }
         userRepository.save(user);
 
         if (ownerChanged) {
@@ -163,7 +169,12 @@ public class AdminService {
         if (adminChanged) {
             auditService.log(adminUserId, "USER_ROLE_CHANGED", "user", userId, "{\"isAdmin\":" + user.isAdmin() + "}");
         }
-        log.info("Admin {} updated user {}: owner={} admin={}", adminUserId, userId, user.isOwner(), user.isAdmin());
+        if (blockedChanged) {
+            auditService.log(adminUserId, user.isBlocked() ? "USER_BLOCKED" : "USER_UNBLOCKED", "user", userId,
+                    "{\"isBlocked\":" + user.isBlocked() + "}");
+        }
+        log.info("Admin {} updated user {}: owner={} admin={} blocked={}",
+                adminUserId, userId, user.isOwner(), user.isAdmin(), user.isBlocked());
         return buildUser(user);
     }
 
@@ -262,7 +273,7 @@ public class AdminService {
                 .language(user.getLanguage())
                 .isOwner(user.isOwner())
                 .isAdmin(user.isAdmin())
-                .isBlocked(false)
+                .isBlocked(user.isBlocked())
                 .bookingCount((int) bookingRepository.countByUserId(user.getId()))
                 .stadiumCount(user.isOwner() ? (int) stadiumRepository.countByOwnerId(user.getId()) : 0)
                 .createdAt(user.getCreatedAt())
