@@ -22,11 +22,9 @@ import uz.minipolya.minipolya_backend.mapper.GameParticipantMapper;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
-import uz.minipolya.minipolya_backend.repository.PricingRuleRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
-import uz.minipolya.minipolya_backend.util.PriceCalculator;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -54,8 +52,7 @@ class GameServiceTest {
     private StadiumRepository stadiumRepository;
     private UserRepository userRepository;
     private TeamRepository teamRepository;
-    private PricingRuleRepository pricingRuleRepository;
-    private PriceCalculator priceCalculator;
+    private BookingPriceCalculator bookingPriceCalculator;
     private BookingRepository bookingRepository;
     private GameMapper gameMapper;
     private GameParticipantMapper participantMapper;
@@ -87,8 +84,7 @@ class GameServiceTest {
         stadiumRepository = mock(StadiumRepository.class);
         userRepository = mock(UserRepository.class);
         teamRepository = mock(TeamRepository.class);
-        pricingRuleRepository = mock(PricingRuleRepository.class);
-        priceCalculator = mock(PriceCalculator.class);
+        bookingPriceCalculator = mock(BookingPriceCalculator.class);
         bookingRepository = mock(BookingRepository.class);
         gameMapper = mock(GameMapper.class);
         participantMapper = mock(GameParticipantMapper.class);
@@ -98,7 +94,7 @@ class GameServiceTest {
         closureService = mock(StadiumClosureService.class);
 
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
-                teamRepository, pricingRuleRepository, priceCalculator, bookingRepository,
+                teamRepository, bookingPriceCalculator, bookingRepository,
                 gameMapper, participantMapper, new AppProperties(), paymentService, notificationService,
                 auditService, new BookingWindowValidator(closureService));
 
@@ -120,7 +116,7 @@ class GameServiceTest {
     private void stubCreate() {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(CREATOR_ID)).thenReturn(Optional.of(creator));
-        when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
+        when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt())).thenReturn(100_000);
         when(gameRepository.save(any(Game.class))).thenAnswer(inv -> {
             Game g = inv.getArgument(0);
             if (g.getId() == null) {
@@ -212,7 +208,7 @@ class GameServiceTest {
         AppProperties props = new AppProperties();
         props.getBot().setUsername("minipolya_bot");
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
-                teamRepository, pricingRuleRepository, priceCalculator, bookingRepository,
+                teamRepository, bookingPriceCalculator, bookingRepository,
                 gameMapper, participantMapper, props, paymentService, notificationService,
                 auditService, new BookingWindowValidator(closureService));
         stubCreate();

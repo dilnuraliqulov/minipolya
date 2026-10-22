@@ -29,17 +29,13 @@ import uz.minipolya.minipolya_backend.mapper.GameParticipantMapper;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
-import uz.minipolya.minipolya_backend.repository.PricingRuleRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
-import uz.minipolya.minipolya_backend.util.PriceCalculator;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -58,7 +54,6 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class GameService {
 
-    private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
     private static final String STATUS_APPROVED = "approved";
     private static final String STATUS_OPEN = "open";
     private static final String TYPE_TEAM_VS_TEAM = "team_vs_team";
@@ -69,8 +64,7 @@ public class GameService {
     private final StadiumRepository stadiumRepository;
     private final UserRepository userRepository;
     private final TeamRepository teamRepository;
-    private final PricingRuleRepository pricingRuleRepository;
-    private final PriceCalculator priceCalculator;
+    private final BookingPriceCalculator bookingPriceCalculator;
     private final BookingRepository bookingRepository;
     private final GameMapper gameMapper;
     private final GameParticipantMapper participantMapper;
@@ -110,7 +104,9 @@ public class GameService {
                 .maxPlayers(request.getMaxPlayers())
                 .startsAt(startsAt)
                 .endsAt(endsAt)
-                .totalPrice(calculatePrice(stadium, startsAt, duration))
+                // Same calculation as a direct booking, promotions included, so a game
+                // costs exactly what booking the same slot costs.
+                .totalPrice(bookingPriceCalculator.totalPrice(stadium, startsAt, duration))
                 .serviceFeePerPerson(appProperties.getGame().getDefaultServiceFeePerPerson())
                 .creatorSharePct(appProperties.getGame().getDefaultCreatorSharePct())
                 .isPublic(TYPE_OPEN.equals(type))
@@ -378,16 +374,6 @@ public class GameService {
             return null;
         }
         return "t.me/" + username + "?start=game_" + gameId;
-    }
-
-    private int calculatePrice(Stadium stadium, OffsetDateTime startsAt, int duration) {
-        ZonedDateTime local = startsAt.atZoneSameInstant(TASHKENT);
-        return priceCalculator.calculateTotalPrice(
-                pricingRuleRepository.findByStadiumIdAndIsActiveTrue(stadium.getId()),
-                local.toLocalDate(),
-                local.toLocalTime(),
-                duration,
-                stadium.getPricePerHour());
     }
 
     /**
