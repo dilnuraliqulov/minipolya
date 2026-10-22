@@ -28,6 +28,7 @@ app:
     expiration-ms: 86400000
   bot:
     token: ${BOT_TOKEN}
+    username: ${BOT_USERNAME:}
   cancellation:
     default-full-refund-hours: 24
     default-partial-refund-hours: 12

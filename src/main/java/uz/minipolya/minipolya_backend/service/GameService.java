@@ -358,8 +358,18 @@ public class GameService {
         return dto;
     }
 
+    /**
+     * Telegram deep link for inviting friends, or null when {@code app.bot.username}
+     * is not configured — a link to "t.me/null" is worse than no link at all, and
+     * GameDetailResponse omits null fields.
+     */
     private String inviteLink(UUID gameId) {
-        return "t.me/" + appProperties.getBot().getUsername() + "?start=game_" + gameId;
+        String username = appProperties.getBot().getUsername();
+        if (username == null || username.isBlank()) {
+            log.warn("app.bot.username (BOT_USERNAME) is not configured; game invite link omitted");
+            return null;
+        }
+        return "t.me/" + username + "?start=game_" + gameId;
     }
 
     private int calculatePrice(Stadium stadium, OffsetDateTime startsAt, int duration) {

@@ -115,6 +115,35 @@ class GameServiceTest {
         when(participantRepository.findByGameId(GAME_ID)).thenReturn(List.of());
     }
 
+    // ---- invite link ----
+
+    @Test
+    void inviteLinkIsOmittedWhenBotUsernameIsNotConfigured() {
+        stubCreate(); // AppProperties default: app.bot.username is null
+        CreateGameRequest req = CreateGameRequest.builder()
+                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(inHours(24)).duration(1).build();
+
+        GameDetailResponse detail = service.createGame(req, CREATOR_ID);
+
+        assertThat(detail.getInviteLink()).isNull();
+    }
+
+    @Test
+    void inviteLinkUsesTheConfiguredBotUsername() {
+        AppProperties props = new AppProperties();
+        props.getBot().setUsername("minipolya_bot");
+        service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
+                teamRepository, pricingRuleRepository, priceCalculator, bookingRepository,
+                gameMapper, participantMapper, props, paymentService, notificationService, auditService);
+        stubCreate();
+        CreateGameRequest req = CreateGameRequest.builder()
+                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(inHours(24)).duration(1).build();
+
+        GameDetailResponse detail = service.createGame(req, CREATOR_ID);
+
+        assertThat(detail.getInviteLink()).isEqualTo("t.me/minipolya_bot?start=game_" + GAME_ID);
+    }
+
     // ---- createGame ----
 
     @Test
