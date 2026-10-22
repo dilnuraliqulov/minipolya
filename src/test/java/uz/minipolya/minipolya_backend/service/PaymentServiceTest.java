@@ -2,6 +2,8 @@ package uz.minipolya.minipolya_backend.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import tools.jackson.databind.ObjectMapper;
 import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Payment;
@@ -23,8 +25,10 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -167,6 +171,26 @@ class PaymentServiceTest {
         assertThat(refund.getRefundOfPayment()).isSameAs(original);
         assertThat(refund.getRefundReason()).isEqualTo("user cancelled");
         assertThat(original.getStatus()).isEqualTo(Payment.Status.REFUNDED);
+    }
+
+    @Test
+    void createRefundWritesParseableJsonAuditDetails() {
+        Booking booking = pendingBooking();
+        Payment original = Payment.builder().id(PAYMENT_ID).booking(booking).user(player).amount(100_000)
+                .paymentType(Payment.PaymentType.BOOKING).provider(Payment.Provider.PAYME)
+                .status(Payment.Status.COMPLETED).build();
+        when(paymentRepository.findById(PAYMENT_ID)).thenReturn(Optional.of(original));
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.createRefund(PAYMENT_ID, 50_000, "user cancelled");
+
+        ArgumentCaptor<String> details = ArgumentCaptor.forClass(String.class);
+        verify(auditService).log(eq(PLAYER_ID), eq("REFUND_CREATED"), eq("payment"), any(), details.capture());
+
+        // The UUID must be quoted, otherwise the details column holds unparseable JSON.
+        assertThat(details.getValue())
+                .isEqualTo("{\"originalPaymentId\":\"" + PAYMENT_ID + "\",\"amount\":-50000}");
+        assertThatCode(() -> new ObjectMapper().readTree(details.getValue())).doesNotThrowAnyException();
     }
 
     // ---- recordCashPayment ----

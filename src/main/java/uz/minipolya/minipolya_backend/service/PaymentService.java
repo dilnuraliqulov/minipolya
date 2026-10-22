@@ -190,7 +190,7 @@ public class PaymentService {
         paymentRepository.save(original);
 
         auditService.log(original.getUser().getId(), "REFUND_CREATED", "payment", savedRefund.getId(),
-                "{\"originalPaymentId\":" + originalPaymentId + ",\"amount\":" + savedRefund.getAmount() + "}");
+                "{\"originalPaymentId\":\"" + originalPaymentId + "\",\"amount\":" + savedRefund.getAmount() + "}");
         log.info("Refund created: id={} originalId={} amount={}",
                 savedRefund.getId(), originalPaymentId, savedRefund.getAmount());
         return savedRefund;
