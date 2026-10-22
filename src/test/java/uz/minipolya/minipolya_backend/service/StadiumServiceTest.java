@@ -1,8 +1,10 @@
 package uz.minipolya.minipolya_backend.service;
 
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -25,6 +27,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -44,6 +47,8 @@ class StadiumServiceTest {
     private FavoriteRepository favoriteRepository;
     @Mock
     private AuditService auditService;
+    @Mock
+    private EntityManager entityManager;
 
     @InjectMocks
     private StadiumService stadiumService;
@@ -77,6 +82,26 @@ class StadiumServiceTest {
     }
 
     @Test
+    void updateFlushesAndRefreshesSoTheResponseCarriesTheStoredUpdatedAt() {
+        User owner = User.builder().id(OWNER_ID).name("Owner").build();
+        Stadium stadium = Stadium.builder().id(STADIUM_ID).owner(owner).build();
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.saveAndFlush(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+        StadiumDetailResponse dto = new StadiumDetailResponse();
+        when(stadiumMapper.toDetailResponse(any(Stadium.class))).thenReturn(dto);
+
+        StadiumDetailResponse result = stadiumService.update(OWNER_ID, STADIUM_ID, new UpdateStadiumRequest());
+
+        assertThat(result).isSameAs(dto);
+        // The updated_at trigger runs in the database, so the entity must be reloaded
+        // before it is mapped, otherwise the response reports the old timestamp.
+        InOrder inOrder = inOrder(stadiumRepository, entityManager, stadiumMapper);
+        inOrder.verify(stadiumRepository).saveAndFlush(stadium);
+        inOrder.verify(entityManager).refresh(stadium);
+        inOrder.verify(stadiumMapper).toDetailResponse(stadium);
+    }
+
+    @Test
     void updateRejectsForeignOwner() {
         User otherOwner = User.builder().id(UUID.randomUUID()).build();
         Stadium stadium = Stadium.builder().id(STADIUM_ID).owner(otherOwner).build();
@@ -85,7 +110,7 @@ class StadiumServiceTest {
         assertThatThrownBy(() -> stadiumService.update(OWNER_ID, STADIUM_ID, new UpdateStadiumRequest()))
                 .isInstanceOf(ForbiddenException.class);
 
-        verify(stadiumRepository, never()).save(any());
+        verify(stadiumRepository, never()).saveAndFlush(any());
     }
 
     @Test

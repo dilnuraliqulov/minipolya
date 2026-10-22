@@ -1,5 +1,6 @@
 package uz.minipolya.minipolya_backend.service;
 
+import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Pageable;
@@ -41,6 +42,7 @@ public class StadiumService {
     private final ReviewRepository reviewRepository;
     private final FavoriteRepository favoriteRepository;
     private final AuditService auditService;
+    private final EntityManager entityManager;
 
     // ---- Owner operations ----
 
@@ -89,7 +91,11 @@ public class StadiumService {
             replacePhotos(stadium, request.getPhotos());
         }
 
-        Stadium saved = stadiumRepository.save(stadium);
+        // The stadiums updated_at trigger sets the new timestamp in the database, so
+        // flush and refresh to report what was actually stored rather than the value
+        // the entity was loaded with.
+        Stadium saved = stadiumRepository.saveAndFlush(stadium);
+        entityManager.refresh(saved);
         auditService.log(ownerId, "STADIUM_UPDATED", "stadium", saved.getId());
         log.info("Stadium updated: id={} ownerId={}", saved.getId(), ownerId);
         return stadiumMapper.toDetailResponse(saved);
