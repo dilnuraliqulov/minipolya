@@ -29,7 +29,6 @@ public class CreateBookingSeriesRequest {
     private LocalTime startTime;
 
     @NotNull
-    @Min(value = 1, message = "duration must be 1 or 2 hours")
-    @Max(value = 2, message = "duration must be 1 or 2 hours")
+    @Min(value = 1, message = "duration must be at least 1 hour")
     private Integer duration;
 }

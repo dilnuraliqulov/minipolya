@@ -115,8 +115,7 @@ public class AvailabilityService {
             Optional<Promotion> promo = promotionService.getBestPromotion(stadium.getId(), slotStartUtc);
             if (promo.isPresent()) {
                 int percent = promo.get().getDiscountPercent();
-                int discounted = base - (int) ((long) base * percent / 100);
-                slot.pricePerHour(discounted)
+                slot.pricePerHour(BookingPriceCalculator.applyDiscount(base, percent))
                         .originalPrice(base)
                         .discountPercent(percent)
                         .promotionName(promo.get().getName());

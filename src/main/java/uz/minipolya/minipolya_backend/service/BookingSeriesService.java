@@ -19,10 +19,8 @@ import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.BookingSeriesMapper;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.BookingSeriesRepository;
-import uz.minipolya.minipolya_backend.repository.PricingRuleRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
-import uz.minipolya.minipolya_backend.util.PriceCalculator;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -55,13 +53,13 @@ public class BookingSeriesService {
     private final StadiumRepository stadiumRepository;
     private final UserRepository userRepository;
     private final BookingRepository bookingRepository;
-    private final PricingRuleRepository pricingRuleRepository;
-    private final PriceCalculator priceCalculator;
+    private final BookingPriceCalculator bookingPriceCalculator;
     private final BookingSeriesMapper seriesMapper;
     private final BookingService bookingService;
     private final NotificationService notificationService;
     private final AuditService auditService;
     private final AppProperties appProperties;
+    private final StadiumClosureService closureService;
 
     @Transactional
     public BookingSeriesResponse createSeries(CreateBookingSeriesRequest request, UUID userId) {
@@ -71,11 +69,20 @@ public class BookingSeriesService {
 
         int duration = request.getDuration();
         LocalTime startTime = request.getStartTime();
+        if (duration < 1) {
+            throw new BadRequestException("Duration must be at least 1 hour");
+        }
+        if (startTime.getMinute() != 0 || startTime.getSecond() != 0 || startTime.getNano() != 0) {
+            throw new BadRequestException("Booking must start on the hour");
+        }
+        LocalTime open = stadium.getOpenTime();
+        LocalTime close = stadium.getCloseTime();
         LocalTime endTime = startTime.plusHours(duration);
-        boolean validWindow = !startTime.isBefore(stadium.getOpenTime())
+        boolean fitsWindow = open.isBefore(close)
+                && !startTime.isBefore(open)
                 && endTime.isAfter(startTime) // no midnight wrap
-                && !endTime.isAfter(stadium.getCloseTime());
-        if (!validWindow) {
+                && !endTime.isAfter(close);
+        if (!fitsWindow) {
             throw new BadRequestException("Requested time is outside the stadium's operating hours");
         }
 
@@ -151,7 +158,7 @@ public class BookingSeriesService {
 
     // ---- Helpers ----
 
-    /** @return true if a booking was created, false if the slot was taken. */
+    /** @return true if a booking was created, false if the slot was taken or closed. */
     private boolean tryGenerateBooking(BookingSeries series, LocalDate date) {
         Stadium stadium = series.getStadium();
         int duration = series.getDurationHours();
@@ -160,6 +167,9 @@ public class BookingSeriesService {
 
         if (bookingRepository.existsActiveOverlap(stadium.getId(), startsAt, endsAt)) {
             return false;
+        }
+        if (isClosed(stadium.getId(), date, series.getStartTime(), duration)) {
+            return false; // a closure covers one of the hours — skip, same as availability
         }
 
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
@@ -171,7 +181,7 @@ public class BookingSeriesService {
                 .startsAt(startsAt)
                 .endsAt(endsAt)
                 .durationHours(duration)
-                .price(calculatePrice(stadium, startsAt, duration)) // CURRENT pricing
+                .price(bookingPriceCalculator.totalPrice(stadium, startsAt, duration)) // CURRENT pricing
                 .bookingSeriesId(series.getId())
                 .expiresAt(now.plusMinutes(appProperties.getBooking().getHoldExpiryMinutes()))
                 .build();
@@ -220,14 +230,14 @@ public class BookingSeriesService {
         }
     }
 
-    private int calculatePrice(Stadium stadium, OffsetDateTime startsAt, int duration) {
-        ZonedDateTime local = startsAt.atZoneSameInstant(TASHKENT);
-        return priceCalculator.calculateTotalPrice(
-                pricingRuleRepository.findByStadiumIdAndIsActiveTrue(stadium.getId()),
-                local.toLocalDate(),
-                local.toLocalTime(),
-                duration,
-                stadium.getPricePerHour());
+    /** True if any of the booking's 1-hour slots falls within a closure. */
+    private boolean isClosed(UUID stadiumId, LocalDate date, LocalTime startTime, int duration) {
+        for (int hour = 0; hour < duration; hour++) {
+            if (closureService.isClosedAt(stadiumId, date, startTime.plusHours(hour))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private BookingSeriesResponse toResponse(BookingSeries series, LocalDate nextBookingDate) {

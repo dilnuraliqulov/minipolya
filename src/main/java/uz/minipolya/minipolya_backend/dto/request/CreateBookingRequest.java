@@ -1,7 +1,6 @@
 package uz.minipolya.minipolya_backend.dto.request;
 
 import jakarta.validation.constraints.Future;
-import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
@@ -26,7 +25,6 @@ public class CreateBookingRequest {
     private OffsetDateTime startsAt;
 
     @NotNull
-    @Min(value = 1, message = "durationHours must be 1 or 2")
-    @Max(value = 2, message = "durationHours must be 1 or 2")
+    @Min(value = 1, message = "durationHours must be at least 1")
     private Integer durationHours;
 }

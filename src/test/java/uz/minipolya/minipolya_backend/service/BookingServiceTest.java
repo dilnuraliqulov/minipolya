@@ -21,13 +21,14 @@ import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.exception.SlotAlreadyBookedException;
 import uz.minipolya.minipolya_backend.mapper.BookingMapper;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
-import uz.minipolya.minipolya_backend.repository.PricingRuleRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
-import uz.minipolya.minipolya_backend.util.PriceCalculator;
 import uz.minipolya.minipolya_backend.util.RefundCalculator;
 
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
@@ -45,6 +46,8 @@ import static org.mockito.Mockito.when;
 
 class BookingServiceTest {
 
+    private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
+
     private static final UUID USER_ID = UUID.randomUUID();
     private static final UUID OWNER_ID = UUID.randomUUID();
     private static final UUID STADIUM_ID = UUID.randomUUID();
@@ -56,13 +59,13 @@ class BookingServiceTest {
     private BookingRepository bookingRepository;
     private StadiumRepository stadiumRepository;
     private UserRepository userRepository;
-    private PricingRuleRepository pricingRuleRepository;
-    private PriceCalculator priceCalculator;
+    private BookingPriceCalculator bookingPriceCalculator;
     private BookingMapper bookingMapper;
     private PaymentService paymentService;
     private GameService gameService;
     private NotificationService notificationService;
     private AuditService auditService;
+    private StadiumClosureService closureService;
     private BookingService service;
 
     private User player;
@@ -74,24 +77,32 @@ class BookingServiceTest {
         bookingRepository = mock(BookingRepository.class);
         stadiumRepository = mock(StadiumRepository.class);
         userRepository = mock(UserRepository.class);
-        pricingRuleRepository = mock(PricingRuleRepository.class);
-        priceCalculator = mock(PriceCalculator.class);
+        bookingPriceCalculator = mock(BookingPriceCalculator.class);
         bookingMapper = mock(BookingMapper.class);
         paymentService = mock(PaymentService.class);
         gameService = mock(GameService.class);
         notificationService = mock(NotificationService.class);
         auditService = mock(AuditService.class);
+        closureService = mock(StadiumClosureService.class);
 
         service = new BookingService(bookingRepository, stadiumRepository, userRepository,
-                pricingRuleRepository, priceCalculator, new RefundCalculator(),
-                bookingMapper, new AppProperties(), paymentService, gameService, notificationService, auditService);
+                bookingPriceCalculator, new RefundCalculator(), bookingMapper, new AppProperties(),
+                paymentService, gameService, notificationService, auditService, closureService);
 
         player = User.builder().id(USER_ID).name("Player").build();
         owner = User.builder().id(OWNER_ID).name("Owner").build();
         stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000)
+                .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0))
                 .fullRefundHours(24).partialRefundHours(12).partialRefundPercent(50).owner(owner).build();
     }
 
+    /** A future start aligned to the hour in Tashkent, within the 08:00–23:00 window. */
+    private OffsetDateTime startAt(int tashkentHour, long daysAhead) {
+        return LocalDate.now(TASHKENT).plusDays(daysAhead).atTime(tashkentHour, 0)
+                .atZone(TASHKENT).toOffsetDateTime();
+    }
+
+    /** A relative UTC instant — for cancellation-window tests that don't go through booking validation. */
     private OffsetDateTime inHours(long h) {
         return OffsetDateTime.now(ZoneOffset.UTC).plusHours(h);
     }
@@ -100,10 +111,11 @@ class BookingServiceTest {
 
     @Test
     void createBookingHoldsSlotAsPending() {
-        OffsetDateTime start = inHours(48);
+        OffsetDateTime start = startAt(18, 2);
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
-        when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
+        when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
+                .thenReturn(100_000);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
@@ -125,13 +137,104 @@ class BookingServiceTest {
     }
 
     @Test
+    void createBookingAllowsAnyNumberOfConsecutiveHours() {
+        OffsetDateTime start = startAt(18, 2); // 18:00-21:00, within 08:00-23:00
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
+        when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
+                .thenReturn(300_000);
+        when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
+
+        CreateBookingRequest req = CreateBookingRequest.builder()
+                .stadiumId(STADIUM_ID).startsAt(start).durationHours(3).build();
+        service.createBooking(USER_ID, req);
+
+        ArgumentCaptor<Booking> captor = ArgumentCaptor.forClass(Booking.class);
+        verify(bookingRepository).saveAndFlush(captor.capture());
+        Booking saved = captor.getValue();
+        assertThat(saved.getDurationHours()).isEqualTo(3);
+        assertThat(saved.getPrice()).isEqualTo(300_000);
+        assertThat(saved.getEndsAt()).isEqualTo(start.plusHours(3));
+    }
+
+    @Test
     void createBookingRejectsUnapprovedOrInactiveStadium() {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.empty());
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(inHours(48)).durationHours(1).build();
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).build();
         assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(ResourceNotFoundException.class);
+
+        verify(bookingRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void createBookingRejectsStartNotOnTheHour() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+
+        OffsetDateTime start = LocalDate.now(TASHKENT).plusDays(2).atTime(18, 30).atZone(TASHKENT).toOffsetDateTime();
+        CreateBookingRequest req = CreateBookingRequest.builder()
+                .stadiumId(STADIUM_ID).startsAt(start).durationHours(1).build();
+        assertThatThrownBy(() -> service.createBooking(USER_ID, req))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Booking must start on the hour");
+
+        verify(bookingRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void createBookingRejectsZeroDuration() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+
+        CreateBookingRequest req = CreateBookingRequest.builder()
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(0).build();
+        assertThatThrownBy(() -> service.createBooking(USER_ID, req))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Duration must be at least 1 hour");
+
+        verify(bookingRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void createBookingRejectsEndingAfterClosingTime() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+
+        // 22:00 + 2h would end at 00:00 the next day, past the 23:00 close.
+        CreateBookingRequest req = CreateBookingRequest.builder()
+                .stadiumId(STADIUM_ID).startsAt(startAt(22, 2)).durationHours(2).build();
+        assertThatThrownBy(() -> service.createBooking(USER_ID, req))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Booking must end by 23:00");
+
+        verify(bookingRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void createBookingRejectsStartBeforeOpeningTime() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+
+        CreateBookingRequest req = CreateBookingRequest.builder()
+                .stadiumId(STADIUM_ID).startsAt(startAt(7, 2)).durationHours(1).build();
+        assertThatThrownBy(() -> service.createBooking(USER_ID, req))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Booking must start at or after 08:00");
+
+        verify(bookingRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void createBookingRejectsSlotWithinClosure() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        LocalDate day = LocalDate.now(TASHKENT).plusDays(2);
+        when(closureService.isClosedAt(eq(STADIUM_ID), eq(day), eq(LocalTime.of(18, 0)))).thenReturn(true);
+
+        CreateBookingRequest req = CreateBookingRequest.builder()
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).build();
+        assertThatThrownBy(() -> service.createBooking(USER_ID, req))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Stadium is closed on " + day);
 
         verify(bookingRepository, never()).saveAndFlush(any());
     }
@@ -140,9 +243,8 @@ class BookingServiceTest {
     void createBookingRejectsTooFarAhead() {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
 
-        OffsetDateTime start = OffsetDateTime.now(ZoneOffset.UTC).plusWeeks(5); // default max is 4
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(start).durationHours(1).build();
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 35)).durationHours(1).build(); // 5 weeks, default max is 4
         assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(BadRequestException.class);
 
@@ -150,25 +252,44 @@ class BookingServiceTest {
     }
 
     @Test
-    void createBookingTranslatesOverlapConstraintToSlotAlreadyBooked() {
+    void createBookingTranslatesSingleHourOverlapToSlotAlreadyBooked() {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
-        when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
+        when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
+                .thenReturn(100_000);
         when(bookingRepository.saveAndFlush(any(Booking.class)))
                 .thenThrow(new DataIntegrityViolationException("bookings_no_overlap"));
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(inHours(48)).durationHours(1).build();
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).build();
         assertThatThrownBy(() -> service.createBooking(USER_ID, req))
-                .isInstanceOf(SlotAlreadyBookedException.class);
+                .isInstanceOf(SlotAlreadyBookedException.class)
+                .hasMessage("Slot is already booked");
+    }
+
+    @Test
+    void createBookingTranslatesMultiHourOverlapToClearerMessage() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
+        when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
+                .thenReturn(150_000);
+        when(bookingRepository.saveAndFlush(any(Booking.class)))
+                .thenThrow(new DataIntegrityViolationException("bookings_no_overlap"));
+
+        CreateBookingRequest req = CreateBookingRequest.builder()
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(3).build();
+        assertThatThrownBy(() -> service.createBooking(USER_ID, req))
+                .isInstanceOf(SlotAlreadyBookedException.class)
+                .hasMessage("One or more of the selected hours is already booked");
     }
 
     @Test
     void createBookingAsksGameServiceToClearWaitingGamesOnTheSlot() {
-        OffsetDateTime start = inHours(48);
+        OffsetDateTime start = startAt(18, 2);
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
-        when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
+        when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
+                .thenReturn(100_000);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
@@ -335,16 +456,17 @@ class BookingServiceTest {
 
     // ---- manual bookings ----
 
-    private CreateManualBookingRequest manualRequest() {
+    private CreateManualBookingRequest manualRequest(int tashkentHour, int duration) {
         return CreateManualBookingRequest.builder()
                 .stadiumId(STADIUM_ID).clientName("Walk-in").clientPhone("+998901112233")
-                .startsAt(inHours(5)).duration(1).build();
+                .startsAt(startAt(tashkentHour, 1)).duration(duration).build();
     }
 
     @Test
     void createManualBookingConfirmsImmediatelyAndRecordsCash() {
         when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
-        when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
+        when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
+                .thenReturn(100_000);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> {
             Booking b = inv.getArgument(0);
             b.setId(MANUAL_BOOKING_ID);
@@ -352,7 +474,7 @@ class BookingServiceTest {
         });
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
-        service.createManualBooking(manualRequest(), OWNER_ID);
+        service.createManualBooking(manualRequest(18, 1), OWNER_ID);
 
         ArgumentCaptor<Booking> captor = ArgumentCaptor.forClass(Booking.class);
         verify(bookingRepository).saveAndFlush(captor.capture());
@@ -370,19 +492,44 @@ class BookingServiceTest {
     void createManualBookingRejectsForeignOwner() {
         when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
 
-        assertThatThrownBy(() -> service.createManualBooking(manualRequest(), FOREIGN_USER_ID))
+        assertThatThrownBy(() -> service.createManualBooking(manualRequest(18, 1), FOREIGN_USER_ID))
                 .isInstanceOf(ForbiddenException.class);
         verify(bookingRepository, never()).saveAndFlush(any());
     }
 
     @Test
-    void createManualBookingTranslatesOverlapToSlotAlreadyBooked() {
+    void createManualBookingEnforcesOpeningHours() {
         when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
-        when(priceCalculator.calculateTotalPrice(any(), any(), any(), anyInt(), anyInt())).thenReturn(100_000);
+
+        // 22:00 + 2h ends at 00:00, past the 23:00 close.
+        assertThatThrownBy(() -> service.createManualBooking(manualRequest(22, 2), OWNER_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Booking must end by 23:00");
+        verify(bookingRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void createManualBookingEnforcesClosures() {
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        LocalDate day = LocalDate.now(TASHKENT).plusDays(1);
+        when(closureService.isClosedAt(eq(STADIUM_ID), eq(day), eq(LocalTime.of(18, 0)))).thenReturn(true);
+
+        assertThatThrownBy(() -> service.createManualBooking(manualRequest(18, 1), OWNER_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Stadium is closed on " + day);
+        verify(bookingRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void createManualBookingTranslatesMultiHourOverlapToClearerMessage() {
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
+                .thenReturn(150_000);
         when(bookingRepository.saveAndFlush(any(Booking.class)))
                 .thenThrow(new DataIntegrityViolationException("bookings_no_overlap"));
 
-        assertThatThrownBy(() -> service.createManualBooking(manualRequest(), OWNER_ID))
-                .isInstanceOf(SlotAlreadyBookedException.class);
+        assertThatThrownBy(() -> service.createManualBooking(manualRequest(18, 3), OWNER_ID))
+                .isInstanceOf(SlotAlreadyBookedException.class)
+                .hasMessage("One or more of the selected hours is already booked");
     }
 }

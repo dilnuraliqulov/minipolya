@@ -217,7 +217,12 @@ When you need to change the schema (add column, new table, alter constraint):
   - `app` → player booked via Mini App
   - `manual` → owner added walk-in/phone booking (client_name, client_phone, is_walkin=true)
   - `game` → created automatically when a game is confirmed
-- Duration: 1 or 2 hours (chosen by user)
+- Duration: any number of consecutive whole hours, minimum 1, no fixed maximum. The practical limit is the stadium's opening hours, closures, and existing bookings (a booking is a run of free consecutive 1-hour slots).
+  - `startsAt` must be on the hour in `Asia/Tashkent` (minutes/seconds/nanos = 0) so bookings line up with the hourly availability slots.
+  - The whole booking (`startsAt` → `startsAt + durationHours`) must fall within the stadium's `open_time`–`close_time` (Tashkent). `close_time` is treated as a same-day bound: a window where `close_time <= open_time` is unbookable (matches availability, which generates no slots for it), so bookings cannot cross midnight.
+  - The booking must not overlap any `stadium_closure`.
+  - Price = the sum of each 1-hour slot's price (per-hour pricing rule by local weekday/time, falling back to `stadium.price_per_hour`), with the best active promotion applied per hour — identical to what the availability endpoint shows for the same slots.
+  - Violations throw `BadRequestException` → HTTP 400. A multi-hour overlap rejected by the DB EXCLUDE constraint reports "One or more of the selected hours is already booked"; a 1-hour overlap reports "Slot is already booked".
 - Max booking: 4 weeks ahead
 - Hold: unpaid bookings set `expires_at = now + 10 minutes`, status = `pending`
 - Expiry: `BookingExpiryJob` runs every minute, marks expired pending bookings as `expired`

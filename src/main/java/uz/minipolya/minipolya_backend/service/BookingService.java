@@ -24,14 +24,13 @@ import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.exception.SlotAlreadyBookedException;
 import uz.minipolya.minipolya_backend.mapper.BookingMapper;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
-import uz.minipolya.minipolya_backend.repository.PricingRuleRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
-import uz.minipolya.minipolya_backend.util.PriceCalculator;
 import uz.minipolya.minipolya_backend.util.RefundCalculator;
 
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -59,8 +58,7 @@ public class BookingService {
     private final BookingRepository bookingRepository;
     private final StadiumRepository stadiumRepository;
     private final UserRepository userRepository;
-    private final PricingRuleRepository pricingRuleRepository;
-    private final PriceCalculator priceCalculator;
+    private final BookingPriceCalculator bookingPriceCalculator;
     private final RefundCalculator refundCalculator;
     private final BookingMapper bookingMapper;
     private final AppProperties appProperties;
@@ -68,6 +66,7 @@ public class BookingService {
     private final GameService gameService;
     private final NotificationService notificationService;
     private final AuditService auditService;
+    private final StadiumClosureService closureService;
 
     @Transactional
     public BookingResponse createBooking(UUID userId, CreateBookingRequest request) {
@@ -79,6 +78,8 @@ public class BookingService {
         OffsetDateTime startsAt = request.getStartsAt();
         OffsetDateTime endsAt = startsAt.plusHours(duration);
 
+        validateBookingWindow(stadium, startsAt, duration);
+
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         OffsetDateTime latest = now.plusWeeks(appProperties.getBooking().getMaxWeeksAhead());
         if (startsAt.isAfter(latest)) {
@@ -86,7 +87,7 @@ public class BookingService {
                     "Cannot book more than " + appProperties.getBooking().getMaxWeeksAhead() + " weeks ahead");
         }
 
-        int price = calculatePrice(stadium, startsAt, duration);
+        int price = bookingPriceCalculator.totalPrice(stadium, startsAt, duration);
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -110,7 +111,7 @@ public class BookingService {
         } catch (DataIntegrityViolationException ex) {
             log.info("Booking rejected by overlap constraint: stadiumId={} {}-{}",
                     stadium.getId(), startsAt, endsAt);
-            throw new SlotAlreadyBookedException("Slot is already booked");
+            throw new SlotAlreadyBookedException(overlapMessage(duration));
         }
 
         gameService.cancelGamesOnSlot(stadium.getId(), startsAt, endsAt);
@@ -133,7 +134,10 @@ public class BookingService {
         int duration = request.getDuration();
         OffsetDateTime startsAt = request.getStartsAt();
         OffsetDateTime endsAt = startsAt.plusHours(duration);
-        int price = calculatePrice(stadium, startsAt, duration);
+
+        validateBookingWindow(stadium, startsAt, duration);
+
+        int price = bookingPriceCalculator.totalPrice(stadium, startsAt, duration);
 
         Booking booking = Booking.builder()
                 .stadium(stadium)
@@ -155,7 +159,7 @@ public class BookingService {
         } catch (DataIntegrityViolationException ex) {
             log.info("Manual booking rejected by overlap constraint: stadiumId={} {}-{}",
                     stadium.getId(), startsAt, endsAt);
-            throw new SlotAlreadyBookedException("Slot is already booked");
+            throw new SlotAlreadyBookedException(overlapMessage(duration));
         }
 
         gameService.cancelGamesOnSlot(stadium.getId(), startsAt, endsAt);
@@ -282,14 +286,52 @@ public class BookingService {
 
     // ---- Helpers ----
 
-    private int calculatePrice(Stadium stadium, OffsetDateTime startsAt, int duration) {
-        ZonedDateTime local = startsAt.atZoneSameInstant(TASHKENT);
-        return priceCalculator.calculateTotalPrice(
-                pricingRuleRepository.findByStadiumIdAndIsActiveTrue(stadium.getId()),
-                local.toLocalDate(),
-                local.toLocalTime(),
-                duration,
-                stadium.getPricePerHour());
+    /**
+     * Shared gate for app and manual bookings. A booking is a run of consecutive
+     * whole 1-hour slots: it must start on the hour, be at least 1 hour, sit
+     * entirely within the stadium's Tashkent open–close window, and not touch any
+     * closure. Overlap with other bookings is caught separately by the DB EXCLUDE
+     * constraint. The open–close check mirrors {@link AvailabilityService}: that
+     * endpoint treats close_time as a same-day bound and produces no slots when
+     * close_time &lt;= open_time, so such a window is unbookable here too.
+     */
+    private void validateBookingWindow(Stadium stadium, OffsetDateTime startsAt, int duration) {
+        if (duration < 1) {
+            throw new BadRequestException("Duration must be at least 1 hour");
+        }
+
+        ZonedDateTime start = startsAt.atZoneSameInstant(TASHKENT);
+        LocalTime startLocal = start.toLocalTime();
+        if (startLocal.getMinute() != 0 || startLocal.getSecond() != 0 || startLocal.getNano() != 0) {
+            throw new BadRequestException("Booking must start on the hour");
+        }
+
+        LocalTime open = stadium.getOpenTime();
+        LocalTime close = stadium.getCloseTime();
+        if (!open.isBefore(close)) {
+            throw new BadRequestException("Stadium has no bookable hours");
+        }
+        if (startLocal.isBefore(open)) {
+            throw new BadRequestException("Booking must start at or after " + open);
+        }
+        ZonedDateTime end = start.plusHours(duration);
+        boolean endsSameDay = end.toLocalDate().equals(start.toLocalDate());
+        if (!endsSameDay || end.toLocalTime().isAfter(close)) {
+            throw new BadRequestException("Booking must end by " + close);
+        }
+
+        for (int hour = 0; hour < duration; hour++) {
+            ZonedDateTime slot = start.plusHours(hour);
+            if (closureService.isClosedAt(stadium.getId(), slot.toLocalDate(), slot.toLocalTime())) {
+                throw new BadRequestException("Stadium is closed on " + slot.toLocalDate());
+            }
+        }
+    }
+
+    private String overlapMessage(int duration) {
+        return duration > 1
+                ? "One or more of the selected hours is already booked"
+                : "Slot is already booked";
     }
 
     private int refundPercentFor(Booking booking) {
