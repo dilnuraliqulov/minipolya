@@ -521,3 +521,21 @@ Implement in this order. Each step should be working and tested before moving to
 - Owner's manual bookings and app bookings share the same `bookings` table and the same overlap constraint. This guarantees a unified, conflict-free schedule.
 - Liquibase runs automatically on application startup. If a migration fails, the app won't start — fix the changeset and restart.
 - Never modify an already-applied changeset. Liquibase checksums will catch it and refuse to start. Always create a new changeset file for changes.
+
+## Deferred until the payment model is final
+
+These were found during endpoint testing and left untouched on purpose — each one
+depends on how payments, payouts and the platform's cut are finally modelled.
+
+- **Owner revenue is defined two different ways.** `GET /api/owner/dashboard/stadiums/{id}/stats`
+  sums only payments with `payment_type = booking`, so a confirmed game contributes 0 even though
+  it produced a `source = game` booking on the pitch. `GET /api/owner/dashboard/stadiums/{id}/schedule`
+  sums booking prices instead and therefore does include it. The same stadium reports two different
+  revenue figures; the definition has to be decided before either is trusted.
+- **Game share rounding loses so'm.** Each participant pays `total_price / max_players` with integer
+  division, so the shares do not add up to the pitch price: 3 players on 130 000 collect 129 999.
+  `team_vs_team` splits by `creator_share_pct` and has the same rounding exposure.
+- **Payment, webhook, refund and payout endpoints were not re-tested.** `POST /api/payments/initiate`,
+  `GET /api/payments/my`, `GET /api/payments/{id}`, `POST /webhooks/payme`, `POST /webhooks/click` and
+  the refund paths are still the mock implementations (`PaymeProvider` / `ClickProvider` return a fake
+  checkout URL and the webhook trusts the body without verifying a provider signature).
