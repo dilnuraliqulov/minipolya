@@ -15,6 +15,7 @@ import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.TeamMapper;
+import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.TeamMemberRepository;
 import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
@@ -33,6 +34,7 @@ public class TeamService {
     private final TeamRepository teamRepository;
     private final TeamMemberRepository teamMemberRepository;
     private final UserRepository userRepository;
+    private final GameRepository gameRepository;
     private final TeamMapper teamMapper;
 
     /** Creates a team; the caller becomes the leader and its first member. */
@@ -105,6 +107,12 @@ public class TeamService {
     public void delete(UUID requesterId, UUID teamId) {
         Team team = requireTeam(teamId);
         requireLeader(team, requesterId);
+        // games.team_a_id / team_b_id have no ON DELETE action, so deleting a team
+        // that plays in a game would fail in the database as an opaque conflict.
+        if (gameRepository.existsByTeamAIdOrTeamBId(teamId, teamId)) {
+            throw new BadRequestException(
+                    "This team is taking part in a game and cannot be deleted");
+        }
         teamRepository.delete(team);
         log.info("Team deleted: id={} by leaderId={}", teamId, requesterId);
     }

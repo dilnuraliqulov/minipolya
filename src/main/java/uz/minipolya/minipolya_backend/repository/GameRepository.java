@@ -31,6 +31,9 @@ public interface GameRepository extends JpaRepository<Game, UUID> {
 
     Page<Game> findByStadiumIdAndIsPublicTrueAndStatus(UUID stadiumId, String status, Pageable pageable);
 
+    /** True if either side of any game still references the team (blocks team deletion). */
+    boolean existsByTeamAIdOrTeamBId(UUID teamAId, UUID teamBId);
+
     /** Games the user created or joined (for the "my games" listing). */
     @Query("""
             SELECT g FROM Game g
