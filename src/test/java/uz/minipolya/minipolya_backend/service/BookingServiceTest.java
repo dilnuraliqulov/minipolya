@@ -87,7 +87,8 @@ class BookingServiceTest {
 
         service = new BookingService(bookingRepository, stadiumRepository, userRepository,
                 bookingPriceCalculator, new RefundCalculator(), bookingMapper, new AppProperties(),
-                paymentService, gameService, notificationService, auditService, closureService);
+                paymentService, gameService, notificationService, auditService,
+                new BookingWindowValidator(closureService));
 
         player = User.builder().id(USER_ID).name("Player").build();
         owner = User.builder().id(OWNER_ID).name("Owner").build();

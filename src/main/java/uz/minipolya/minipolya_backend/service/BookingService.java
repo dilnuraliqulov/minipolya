@@ -30,11 +30,9 @@ import uz.minipolya.minipolya_backend.util.Pagination;
 
 import java.time.Duration;
 import java.time.LocalDate;
-import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
 import java.util.UUID;
 
 /**
@@ -66,7 +64,7 @@ public class BookingService {
     private final GameService gameService;
     private final NotificationService notificationService;
     private final AuditService auditService;
-    private final StadiumClosureService closureService;
+    private final BookingWindowValidator bookingWindowValidator;
 
     @Transactional
     public BookingResponse createBooking(UUID userId, CreateBookingRequest request) {
@@ -289,45 +287,11 @@ public class BookingService {
     // ---- Helpers ----
 
     /**
-     * Shared gate for app and manual bookings. A booking is a run of consecutive
-     * whole 1-hour slots: it must start on the hour, be at least 1 hour, sit
-     * entirely within the stadium's Tashkent open–close window, and not touch any
-     * closure. Overlap with other bookings is caught separately by the DB EXCLUDE
-     * constraint. The open–close check mirrors {@link AvailabilityService}: that
-     * endpoint treats close_time as a same-day bound and produces no slots when
-     * close_time &lt;= open_time, so such a window is unbookable here too.
+     * Shared gate for app and manual bookings, delegated to
+     * {@link BookingWindowValidator} so games apply the identical rule.
      */
     private void validateBookingWindow(Stadium stadium, OffsetDateTime startsAt, int duration) {
-        if (duration < 1) {
-            throw new BadRequestException("Duration must be at least 1 hour");
-        }
-
-        ZonedDateTime start = startsAt.atZoneSameInstant(TASHKENT);
-        LocalTime startLocal = start.toLocalTime();
-        if (startLocal.getMinute() != 0 || startLocal.getSecond() != 0 || startLocal.getNano() != 0) {
-            throw new BadRequestException("Booking must start on the hour");
-        }
-
-        LocalTime open = stadium.getOpenTime();
-        LocalTime close = stadium.getCloseTime();
-        if (!open.isBefore(close)) {
-            throw new BadRequestException("Stadium has no bookable hours");
-        }
-        if (startLocal.isBefore(open)) {
-            throw new BadRequestException("Booking must start at or after " + open);
-        }
-        ZonedDateTime end = start.plusHours(duration);
-        boolean endsSameDay = end.toLocalDate().equals(start.toLocalDate());
-        if (!endsSameDay || end.toLocalTime().isAfter(close)) {
-            throw new BadRequestException("Booking must end by " + close);
-        }
-
-        for (int hour = 0; hour < duration; hour++) {
-            ZonedDateTime slot = start.plusHours(hour);
-            if (closureService.isClosedAt(stadium.getId(), slot.toLocalDate(), slot.toLocalTime())) {
-                throw new BadRequestException("Stadium is closed on " + slot.toLocalDate());
-            }
-        }
+        bookingWindowValidator.validate(stadium, startsAt, duration);
     }
 
     /**

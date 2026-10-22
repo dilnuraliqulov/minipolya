@@ -26,7 +26,10 @@ import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.PriceCalculator;
 
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
@@ -57,7 +60,10 @@ class GameServiceTest {
     private PaymentService paymentService;
     private NotificationService notificationService;
     private AuditService auditService;
+    private StadiumClosureService closureService;
     private GameService service;
+
+    private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
 
     private static final UUID CREATOR_ID = UUID.randomUUID();
     private static final UUID STADIUM_ID = UUID.randomUUID();
@@ -86,17 +92,26 @@ class GameServiceTest {
         paymentService = mock(PaymentService.class);
         notificationService = mock(NotificationService.class);
         auditService = mock(AuditService.class);
+        closureService = mock(StadiumClosureService.class);
 
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, pricingRuleRepository, priceCalculator, bookingRepository,
-                gameMapper, participantMapper, new AppProperties(), paymentService, notificationService, auditService);
+                gameMapper, participantMapper, new AppProperties(), paymentService, notificationService,
+                auditService, new BookingWindowValidator(closureService));
 
         creator = User.builder().id(CREATOR_ID).name("Creator").build();
-        stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000).build();
+        stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000)
+                .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).build();
     }
 
     private OffsetDateTime inHours(long h) {
         return OffsetDateTime.now(ZoneOffset.UTC).plusHours(h);
+    }
+
+    /** A future slot on the hour, inside the stadium's 08:00-23:00 Tashkent window. */
+    private OffsetDateTime startAt(int localHour, int daysAhead) {
+        return LocalDate.now(TASHKENT).plusDays(daysAhead).atTime(localHour, 0)
+                .atZone(TASHKENT).toOffsetDateTime();
     }
 
     private void stubCreate() {
@@ -115,13 +130,74 @@ class GameServiceTest {
         when(participantRepository.findByGameId(GAME_ID)).thenReturn(List.of());
     }
 
+    // ---- booking window (a confirmed game becomes a source=game booking) ----
+
+    @Test
+    void createGameRejectsStartNotOnTheHour() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(userRepository.findById(CREATOR_ID)).thenReturn(Optional.of(creator));
+
+        OffsetDateTime halfPast = LocalDate.now(TASHKENT).plusDays(1).atTime(18, 30)
+                .atZone(TASHKENT).toOffsetDateTime();
+        CreateGameRequest req = CreateGameRequest.builder()
+                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(halfPast).duration(1).build();
+
+        assertThatThrownBy(() -> service.createGame(req, CREATOR_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Booking must start on the hour");
+        verify(gameRepository, never()).save(any());
+    }
+
+    @Test
+    void createGameRejectsStartBeforeOpeningTime() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(userRepository.findById(CREATOR_ID)).thenReturn(Optional.of(creator));
+
+        CreateGameRequest req = CreateGameRequest.builder()
+                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(3, 1)).duration(1).build();
+
+        assertThatThrownBy(() -> service.createGame(req, CREATOR_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("must start at or after 08:00");
+        verify(gameRepository, never()).save(any());
+    }
+
+    @Test
+    void createGameRejectsEndingAfterClosingTime() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(userRepository.findById(CREATOR_ID)).thenReturn(Optional.of(creator));
+
+        CreateGameRequest req = CreateGameRequest.builder()
+                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(22, 1)).duration(2).build();
+
+        assertThatThrownBy(() -> service.createGame(req, CREATOR_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("must end by 23:00");
+        verify(gameRepository, never()).save(any());
+    }
+
+    @Test
+    void createGameRejectsSlotWithinClosure() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(userRepository.findById(CREATOR_ID)).thenReturn(Optional.of(creator));
+        when(closureService.isClosedAt(eq(STADIUM_ID), any(), any())).thenReturn(true);
+
+        CreateGameRequest req = CreateGameRequest.builder()
+                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(18, 1)).duration(1).build();
+
+        assertThatThrownBy(() -> service.createGame(req, CREATOR_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("Stadium is closed");
+        verify(gameRepository, never()).save(any());
+    }
+
     // ---- invite link ----
 
     @Test
     void inviteLinkIsOmittedWhenBotUsernameIsNotConfigured() {
         stubCreate(); // AppProperties default: app.bot.username is null
         CreateGameRequest req = CreateGameRequest.builder()
-                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(inHours(24)).duration(1).build();
+                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(18, 1)).duration(1).build();
 
         GameDetailResponse detail = service.createGame(req, CREATOR_ID);
 
@@ -134,10 +210,11 @@ class GameServiceTest {
         props.getBot().setUsername("minipolya_bot");
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, pricingRuleRepository, priceCalculator, bookingRepository,
-                gameMapper, participantMapper, props, paymentService, notificationService, auditService);
+                gameMapper, participantMapper, props, paymentService, notificationService,
+                auditService, new BookingWindowValidator(closureService));
         stubCreate();
         CreateGameRequest req = CreateGameRequest.builder()
-                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(inHours(24)).duration(1).build();
+                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(18, 1)).duration(1).build();
 
         GameDetailResponse detail = service.createGame(req, CREATOR_ID);
 
@@ -150,7 +227,7 @@ class GameServiceTest {
     void createCasualGameAddsCreatorAsParticipant() {
         stubCreate();
         CreateGameRequest req = CreateGameRequest.builder()
-                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(inHours(24)).duration(1).build();
+                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(18, 1)).duration(1).build();
 
         service.createGame(req, CREATOR_ID);
 
@@ -174,7 +251,7 @@ class GameServiceTest {
     void createOpenGameIsPublic() {
         stubCreate();
         CreateGameRequest req = CreateGameRequest.builder()
-                .stadiumId(STADIUM_ID).type("open").maxPlayers(10).startsAt(inHours(24)).duration(1).build();
+                .stadiumId(STADIUM_ID).type("open").maxPlayers(10).startsAt(startAt(18, 1)).duration(1).build();
 
         service.createGame(req, CREATOR_ID);
 
@@ -189,7 +266,7 @@ class GameServiceTest {
         Team teamA = Team.builder().id(TEAM_A_ID).name("A").leader(creator).build();
         when(teamRepository.findById(TEAM_A_ID)).thenReturn(Optional.of(teamA));
         CreateGameRequest req = CreateGameRequest.builder()
-                .stadiumId(STADIUM_ID).type("team_vs_team").maxPlayers(2).startsAt(inHours(24)).duration(1).teamAId(TEAM_A_ID).build();
+                .stadiumId(STADIUM_ID).type("team_vs_team").maxPlayers(2).startsAt(startAt(18, 1)).duration(1).teamAId(TEAM_A_ID).build();
 
         service.createGame(req, CREATOR_ID);
 

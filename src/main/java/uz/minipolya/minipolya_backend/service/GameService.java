@@ -78,6 +78,7 @@ public class GameService {
     private final PaymentService paymentService;
     private final NotificationService notificationService;
     private final AuditService auditService;
+    private final BookingWindowValidator bookingWindowValidator;
 
     @Transactional
     public GameDetailResponse createGame(CreateGameRequest request, UUID creatorUserId) {
@@ -91,6 +92,10 @@ public class GameService {
         int duration = request.getDuration();
         OffsetDateTime startsAt = request.getStartsAt();
         OffsetDateTime endsAt = startsAt.plusHours(duration);
+
+        // A confirmed game becomes a source=game booking, so the slot must already
+        // satisfy the booking window rules (on the hour, inside open-close, no closure).
+        bookingWindowValidator.validate(stadium, startsAt, duration);
 
         if (bookingRepository.existsActiveOverlap(stadium.getId(), startsAt, endsAt)) {
             throw new SlotNotAvailableException("That time slot is already booked");
