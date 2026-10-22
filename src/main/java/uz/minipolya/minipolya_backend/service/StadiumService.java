@@ -2,7 +2,6 @@ package uz.minipolya.minipolya_backend.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -23,6 +22,7 @@ import uz.minipolya.minipolya_backend.repository.FavoriteRepository;
 import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
+import uz.minipolya.minipolya_backend.util.Pagination;
 
 import java.util.List;
 import java.util.UUID;
@@ -106,7 +106,7 @@ public class StadiumService {
 
     @Transactional(readOnly = true)
     public PageResponse<StadiumResponse> searchPublic(String q, String format, Integer maxPrice, int page, int size) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "createdAt"));
+        Pageable pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "createdAt"));
         return PageResponse.from(
                 stadiumRepository.search(blankToNull(q), blankToNull(format), maxPrice, pageable),
                 this::toResponseWithRatings);

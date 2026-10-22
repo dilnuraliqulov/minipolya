@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.dto.response.PaymentResponse;
 import uz.minipolya.minipolya_backend.service.PaymentService;
+import uz.minipolya.minipolya_backend.util.Pagination;
 
 import java.util.UUID;
 import java.util.function.Function;
@@ -38,7 +39,7 @@ public class PaymentController {
     public ApiResponse<PageResponse<PaymentResponse>> myPayments(@AuthenticationPrincipal UUID userId,
                                                                  @RequestParam(defaultValue = "0") int page,
                                                                  @RequestParam(defaultValue = "20") int size) {
-        PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         return ApiResponse.ok(PageResponse.from(paymentService.getUserPayments(userId, pageable), Function.identity()));
     }
 

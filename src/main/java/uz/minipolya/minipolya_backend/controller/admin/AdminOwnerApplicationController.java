@@ -16,6 +16,7 @@ import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.OwnerApplicationResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.service.OwnerApplicationService;
+import uz.minipolya.minipolya_backend.util.Pagination;
 
 import java.util.UUID;
 import java.util.function.Function;
@@ -34,7 +35,7 @@ public class AdminOwnerApplicationController {
     @GetMapping("/api/admin/owner-applications")
     public ApiResponse<PageResponse<OwnerApplicationResponse>> all(@RequestParam(defaultValue = "0") int page,
                                                                    @RequestParam(defaultValue = "20") int size) {
-        PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         return ApiResponse.ok(PageResponse.from(
                 applicationService.getAllApplications(pageable), Function.identity()));
     }
@@ -42,7 +43,7 @@ public class AdminOwnerApplicationController {
     @GetMapping("/api/admin/owner-applications/pending")
     public ApiResponse<PageResponse<OwnerApplicationResponse>> pending(@RequestParam(defaultValue = "0") int page,
                                                                        @RequestParam(defaultValue = "20") int size) {
-        PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "createdAt"));
+        PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "createdAt"));
         return ApiResponse.ok(PageResponse.from(
                 applicationService.getPendingApplications(pageable), Function.identity()));
     }

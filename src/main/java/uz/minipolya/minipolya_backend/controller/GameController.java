@@ -21,6 +21,7 @@ import uz.minipolya.minipolya_backend.dto.response.GameResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.service.GameService;
+import uz.minipolya.minipolya_backend.util.Pagination;
 
 import java.util.UUID;
 import java.util.function.Function;
@@ -47,7 +48,7 @@ public class GameController {
     public ApiResponse<PageResponse<GameResponse>> openGames(@RequestParam(required = false) UUID stadiumId,
                                                              @RequestParam(defaultValue = "0") int page,
                                                              @RequestParam(defaultValue = "20") int size) {
-        PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"));
+        PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"));
         return ApiResponse.ok(PageResponse.from(gameService.getOpenGames(stadiumId, pageable), Function.identity()));
     }
 
@@ -55,7 +56,7 @@ public class GameController {
     public ApiResponse<PageResponse<GameResponse>> myGames(@AuthenticationPrincipal UUID userId,
                                                            @RequestParam(defaultValue = "0") int page,
                                                            @RequestParam(defaultValue = "20") int size) {
-        PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"));
+        PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"));
         return ApiResponse.ok(PageResponse.from(gameService.getMyGames(userId, pageable), Function.identity()));
     }
 

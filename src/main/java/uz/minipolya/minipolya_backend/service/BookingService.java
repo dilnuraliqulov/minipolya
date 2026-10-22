@@ -3,7 +3,6 @@ package uz.minipolya.minipolya_backend.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -27,6 +26,7 @@ import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.RefundCalculator;
+import uz.minipolya.minipolya_backend.util.Pagination;
 
 import java.time.Duration;
 import java.time.LocalDate;
@@ -251,7 +251,7 @@ public class BookingService {
 
     @Transactional(readOnly = true)
     public PageResponse<BookingResponse> getMyBookings(UUID userId, int page, int size) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"));
+        Pageable pageable = Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"));
         return PageResponse.from(bookingRepository.findByUserId(userId, pageable), bookingMapper::toResponse);
     }
 
@@ -273,7 +273,7 @@ public class BookingService {
         if (!stadium.getOwner().getId().equals(ownerId)) {
             throw new ForbiddenException("You do not own this stadium");
         }
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"));
+        Pageable pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"));
         if (from != null && to != null) {
             OffsetDateTime fromUtc = from.atStartOfDay(TASHKENT).toOffsetDateTime();
             OffsetDateTime toUtc = to.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime();
