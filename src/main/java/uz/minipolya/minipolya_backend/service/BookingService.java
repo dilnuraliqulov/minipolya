@@ -74,6 +74,8 @@ public class BookingService {
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not available"));
 
+        requireNotOwnStadium(stadium, userId);
+
         int duration = request.getDurationHours();
         OffsetDateTime startsAt = request.getStartsAt();
         OffsetDateTime endsAt = startsAt.plusHours(duration);
@@ -325,6 +327,17 @@ public class BookingService {
             if (closureService.isClosedAt(stadium.getId(), slot.toLocalDate(), slot.toLocalTime())) {
                 throw new BadRequestException("Stadium is closed on " + slot.toLocalDate());
             }
+        }
+    }
+
+    /**
+     * An owner must not take their own pitch through the player flow — they add a
+     * manual booking instead, which is confirmed immediately and needs no hold.
+     */
+    private void requireNotOwnStadium(Stadium stadium, UUID userId) {
+        if (stadium.getOwner().getId().equals(userId)) {
+            throw new ForbiddenException(
+                    "You cannot book your own stadium; add a manual booking instead");
         }
     }
 

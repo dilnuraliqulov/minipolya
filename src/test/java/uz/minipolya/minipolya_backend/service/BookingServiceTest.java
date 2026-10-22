@@ -171,6 +171,35 @@ class BookingServiceTest {
     }
 
     @Test
+    void createBookingRejectsTheStadiumOwnerBookingTheirOwnPitch() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+
+        CreateBookingRequest req = CreateBookingRequest.builder()
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).build();
+        assertThatThrownBy(() -> service.createBooking(OWNER_ID, req))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("manual booking");
+
+        verify(bookingRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void createBookingStillAllowsAPlayerWhoIsNotTheOwner() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
+        when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
+                .thenReturn(100_000);
+        when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
+
+        CreateBookingRequest req = CreateBookingRequest.builder()
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).build();
+        service.createBooking(USER_ID, req);
+
+        verify(bookingRepository).saveAndFlush(any(Booking.class));
+    }
+
+    @Test
     void createBookingRejectsStartNotOnTheHour() {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
 

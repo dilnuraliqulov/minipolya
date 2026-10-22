@@ -67,6 +67,8 @@ public class BookingSeriesService {
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not available"));
 
+        requireNotOwnStadium(stadium, userId);
+
         int duration = request.getDuration();
         LocalTime startTime = request.getStartTime();
         if (duration < 1) {
@@ -157,6 +159,17 @@ public class BookingSeriesService {
     }
 
     // ---- Helpers ----
+
+    /**
+     * An owner must not take their own pitch through the player flow — they add a
+     * manual booking instead, which is confirmed immediately and needs no hold.
+     */
+    private void requireNotOwnStadium(Stadium stadium, UUID userId) {
+        if (stadium.getOwner().getId().equals(userId)) {
+            throw new ForbiddenException(
+                    "You cannot book your own stadium; add a manual booking instead");
+        }
+    }
 
     /** @return true if a booking was created, false if the slot was taken or closed. */
     private boolean tryGenerateBooking(BookingSeries series, LocalDate date) {

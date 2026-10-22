@@ -11,6 +11,7 @@ import uz.minipolya.minipolya_backend.entity.BookingSeries;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
+import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.mapper.BookingSeriesMapper;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.BookingSeriesRepository;
@@ -45,6 +46,7 @@ class BookingSeriesServiceTest {
     private static final LocalTime START = LocalTime.of(20, 0);
 
     private static final UUID USER_ID = UUID.randomUUID();
+    private static final UUID OWNER_ID = UUID.randomUUID();
     private static final UUID STADIUM_ID = UUID.randomUUID();
     private static final UUID SERIES_ID = UUID.randomUUID();
     private static final UUID BOOKING_FUTURE_ID = UUID.randomUUID();
@@ -64,6 +66,7 @@ class BookingSeriesServiceTest {
     private BookingSeriesService service;
 
     private User user;
+    private User owner;
     private Stadium stadium;
 
     @BeforeEach
@@ -84,8 +87,10 @@ class BookingSeriesServiceTest {
                 auditService, new AppProperties(), closureService);
 
         user = User.builder().id(USER_ID).name("Player").build();
+        owner = User.builder().id(OWNER_ID).name("Owner").build();
         stadium = Stadium.builder().id(STADIUM_ID).name("Arena").status("approved").isActive(true)
-                .pricePerHour(50_000).openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).build();
+                .pricePerHour(50_000).openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0))
+                .owner(owner).build();
     }
 
     private CreateBookingSeriesRequest request() {
@@ -137,6 +142,18 @@ class BookingSeriesServiceTest {
         assertThat(first.getSource()).isEqualTo("app");
         assertThat(first.getBookingSeriesId()).isEqualTo(SERIES_ID);
         assertThat(first.getExpiresAt()).isNotNull();
+    }
+
+    @Test
+    void createSeriesRejectsTheStadiumOwnerBookingTheirOwnPitch() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(java.util.Optional.of(stadium));
+
+        assertThatThrownBy(() -> service.createSeries(request(), OWNER_ID))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("manual booking");
+
+        verify(seriesRepository, never()).save(any());
+        verify(bookingRepository, never()).saveAndFlush(any());
     }
 
     @Test
