@@ -19,6 +19,7 @@ import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.dto.response.ReviewResponse;
 import uz.minipolya.minipolya_backend.service.ReviewService;
 
+import java.util.UUID;
 import java.util.function.Function;
 
 @RestController
@@ -28,13 +29,13 @@ public class ReviewController {
     private final ReviewService reviewService;
 
     @PostMapping("/api/reviews")
-    public ApiResponse<ReviewResponse> create(@AuthenticationPrincipal Long userId,
+    public ApiResponse<ReviewResponse> create(@AuthenticationPrincipal UUID userId,
                                               @Valid @RequestBody CreateReviewRequest request) {
         return ApiResponse.ok(reviewService.createReview(request, userId), "Review posted");
     }
 
     @GetMapping("/api/reviews/stadium/{stadiumId}")
-    public ApiResponse<PageResponse<ReviewResponse>> stadiumReviews(@PathVariable Long stadiumId,
+    public ApiResponse<PageResponse<ReviewResponse>> stadiumReviews(@PathVariable UUID stadiumId,
                                                                     @RequestParam(defaultValue = "0") int page,
                                                                     @RequestParam(defaultValue = "20") int size) {
         PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
@@ -43,7 +44,7 @@ public class ReviewController {
     }
 
     @GetMapping("/api/reviews/my")
-    public ApiResponse<PageResponse<ReviewResponse>> myReviews(@AuthenticationPrincipal Long userId,
+    public ApiResponse<PageResponse<ReviewResponse>> myReviews(@AuthenticationPrincipal UUID userId,
                                                                @RequestParam(defaultValue = "0") int page,
                                                                @RequestParam(defaultValue = "20") int size) {
         PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
@@ -52,15 +53,15 @@ public class ReviewController {
     }
 
     @PostMapping("/api/reviews/{id}/reply")
-    public ApiResponse<ReviewResponse> reply(@AuthenticationPrincipal Long ownerId,
-                                             @PathVariable Long id,
+    public ApiResponse<ReviewResponse> reply(@AuthenticationPrincipal UUID ownerId,
+                                             @PathVariable UUID id,
                                              @Valid @RequestBody ReplyToReviewRequest request) {
         return ApiResponse.ok(reviewService.replyToReview(id, request.getReply(), ownerId), "Reply posted");
     }
 
     @DeleteMapping("/api/reviews/{id}")
-    public ApiResponse<Void> delete(@AuthenticationPrincipal Long userId,
-                                    @PathVariable Long id) {
+    public ApiResponse<Void> delete(@AuthenticationPrincipal UUID userId,
+                                    @PathVariable UUID id) {
         reviewService.deleteReview(id, userId);
         return ApiResponse.ok(null, "Review deleted");
     }

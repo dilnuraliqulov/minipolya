@@ -37,3 +37,5 @@ app:
     hold-expiry-minutes: 10
   game:
     default-service-fee-per-person: 5000
+
+

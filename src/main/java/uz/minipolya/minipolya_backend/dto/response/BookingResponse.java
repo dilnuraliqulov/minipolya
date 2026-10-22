@@ -8,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 /**
  * A booking as returned to clients. {@code cancellationPolicy} lets players see
@@ -21,11 +22,12 @@ import java.time.OffsetDateTime;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class BookingResponse {
 
-    private Long id;
-    private Long stadiumId;
+    private UUID id;
+    private UUID stadiumId;
     private String stadiumName;
-    private Long userId;
-    private Long gameId;
+    private UUID userId;
+    private UUID gameId;
+    private UUID seriesId;
     private String source;
     private String status;
     private OffsetDateTime startsAt;

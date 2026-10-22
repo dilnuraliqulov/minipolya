@@ -18,6 +18,7 @@ import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.dto.response.PaymentResponse;
 import uz.minipolya.minipolya_backend.service.PaymentService;
 
+import java.util.UUID;
 import java.util.function.Function;
 
 @RestController
@@ -27,14 +28,14 @@ public class PaymentController {
     private final PaymentService paymentService;
 
     @PostMapping("/api/payments/initiate")
-    public ApiResponse<PaymentInitResponse> initiate(@AuthenticationPrincipal Long userId,
+    public ApiResponse<PaymentInitResponse> initiate(@AuthenticationPrincipal UUID userId,
                                                      @Valid @RequestBody InitiatePaymentRequest request) {
         return ApiResponse.ok(
                 paymentService.initiateBookingPayment(request.getBookingId(), request.getProvider(), userId));
     }
 
     @GetMapping("/api/payments/my")
-    public ApiResponse<PageResponse<PaymentResponse>> myPayments(@AuthenticationPrincipal Long userId,
+    public ApiResponse<PageResponse<PaymentResponse>> myPayments(@AuthenticationPrincipal UUID userId,
                                                                  @RequestParam(defaultValue = "0") int page,
                                                                  @RequestParam(defaultValue = "20") int size) {
         PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
@@ -42,8 +43,8 @@ public class PaymentController {
     }
 
     @GetMapping("/api/payments/{id}")
-    public ApiResponse<PaymentResponse> detail(@AuthenticationPrincipal Long userId,
-                                               @PathVariable Long id) {
+    public ApiResponse<PaymentResponse> detail(@AuthenticationPrincipal UUID userId,
+                                               @PathVariable UUID id) {
         return ApiResponse.ok(paymentService.getPayment(userId, id));
     }
 }

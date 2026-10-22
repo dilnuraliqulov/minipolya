@@ -10,30 +10,51 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Repository
-public interface StadiumRepository extends JpaRepository<Stadium, Long> {
+public interface StadiumRepository extends JpaRepository<Stadium, UUID> {
 
-    Optional<Stadium> findByIdAndStatus(Long id, String status);
+    Optional<Stadium> findByIdAndStatus(UUID id, String status);
 
-    List<Stadium> findByOwnerId(Long ownerId);
+    List<Stadium> findByOwnerId(UUID ownerId);
 
     Page<Stadium> findByStatus(String status, Pageable pageable);
+
+    long countByStatus(String status);
+
+    long countByOwnerId(UUID ownerId);
+
+    @Query("""
+            SELECT s FROM Stadium s
+            WHERE LOWER(s.name) LIKE LOWER(CONCAT('%', :search, '%'))
+               OR LOWER(s.address) LIKE LOWER(CONCAT('%', :search, '%'))
+            """)
+    Page<Stadium> searchStadiums(@Param("search") String search, Pageable pageable);
+
+    @Query("""
+            SELECT s FROM Stadium s
+            WHERE s.status = :status
+              AND (LOWER(s.name) LIKE LOWER(CONCAT('%', :search, '%'))
+                   OR LOWER(s.address) LIKE LOWER(CONCAT('%', :search, '%')))
+            """)
+    Page<Stadium> searchStadiumsByStatus(@Param("status") String status,
+                                         @Param("search") String search, Pageable pageable);
 
     /**
      * Public search over approved, active stadiums. Every filter is optional —
      * a null argument disables that clause.
      */
     @Query("""
-            SELECT s FROM Stadium s
-            WHERE s.status = 'approved'
-              AND s.isActive = true
-              AND (:q IS NULL
-                   OR LOWER(s.name) LIKE LOWER(CONCAT('%', :q, '%'))
-                   OR LOWER(s.address) LIKE LOWER(CONCAT('%', :q, '%')))
-              AND (:format IS NULL OR s.format = :format)
-              AND (:maxPrice IS NULL OR s.pricePerHour <= :maxPrice)
-            """)
+        SELECT s FROM Stadium s
+        WHERE s.status = 'approved'
+          AND s.isActive = true
+          AND (CAST(:q AS string) IS NULL
+               OR LOWER(s.name) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+               OR LOWER(s.address) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
+          AND (CAST(:format AS string) IS NULL OR s.format = CAST(:format AS string))
+          AND (:maxPrice IS NULL OR s.pricePerHour <= :maxPrice)
+        """)
     Page<Stadium> search(@Param("q") String q,
                          @Param("format") String format,
                          @Param("maxPrice") Integer maxPrice,

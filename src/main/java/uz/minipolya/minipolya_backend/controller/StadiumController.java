@@ -23,6 +23,7 @@ import uz.minipolya.minipolya_backend.service.StadiumService;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
@@ -44,14 +45,14 @@ public class StadiumController {
     }
 
     @GetMapping("/api/stadiums/{id}")
-    public ApiResponse<StadiumDetailResponse> detail(@AuthenticationPrincipal Long userId,
-                                                     @PathVariable Long id) {
+    public ApiResponse<StadiumDetailResponse> detail(@AuthenticationPrincipal UUID userId,
+                                                     @PathVariable UUID id) {
         return ApiResponse.ok(stadiumService.getPublicDetail(id, userId));
     }
 
     @GetMapping("/api/stadiums/{stadiumId}/availability")
     public ApiResponse<AvailabilityResponse> availability(
-            @PathVariable Long stadiumId,
+            @PathVariable UUID stadiumId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         return ApiResponse.ok(availabilityService.getAvailability(stadiumId, date));
     }
@@ -59,20 +60,20 @@ public class StadiumController {
     // ---- Owner ----
 
     @PostMapping("/api/owner/stadiums")
-    public ApiResponse<StadiumDetailResponse> create(@AuthenticationPrincipal Long ownerId,
+    public ApiResponse<StadiumDetailResponse> create(@AuthenticationPrincipal UUID ownerId,
                                                      @Valid @RequestBody CreateStadiumRequest request) {
         return ApiResponse.ok(stadiumService.create(ownerId, request), "Stadium submitted for review");
     }
 
     @PutMapping("/api/owner/stadiums/{id}")
-    public ApiResponse<StadiumDetailResponse> update(@AuthenticationPrincipal Long ownerId,
-                                                     @PathVariable Long id,
+    public ApiResponse<StadiumDetailResponse> update(@AuthenticationPrincipal UUID ownerId,
+                                                     @PathVariable UUID id,
                                                      @Valid @RequestBody UpdateStadiumRequest request) {
         return ApiResponse.ok(stadiumService.update(ownerId, id, request));
     }
 
     @GetMapping("/api/owner/stadiums")
-    public ApiResponse<List<StadiumResponse>> myStadiums(@AuthenticationPrincipal Long ownerId) {
+    public ApiResponse<List<StadiumResponse>> myStadiums(@AuthenticationPrincipal UUID ownerId) {
         return ApiResponse.ok(stadiumService.listOwnerStadiums(ownerId));
     }
 }

@@ -14,9 +14,9 @@ import uz.minipolya.minipolya_backend.service.NotificationService;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -25,6 +25,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ReminderJobTest {
+
+    private static final UUID BOOKING_ID = UUID.randomUUID();
+    private static final UUID USER_ID = UUID.randomUUID();
+    private static final UUID STADIUM_ID = UUID.randomUUID();
 
     private BookingRepository bookingRepository;
     private NotificationRepository notificationRepository;
@@ -42,9 +46,9 @@ class ReminderJobTest {
     }
 
     private Booking upcomingBooking() {
-        return Booking.builder().id(1L).status("confirmed")
-                .user(User.builder().id(7L).name("Player").build())
-                .stadium(Stadium.builder().id(1L).name("Arena").build())
+        return Booking.builder().id(BOOKING_ID).status("confirmed")
+                .user(User.builder().id(USER_ID).name("Player").build())
+                .stadium(Stadium.builder().id(STADIUM_ID).name("Arena").build())
                 .startsAt(OffsetDateTime.now(ZoneOffset.UTC).plusHours(2))
                 .build();
     }
@@ -58,8 +62,8 @@ class ReminderJobTest {
 
         job.sendReminders();
 
-        verify(notificationService).notify(eq(7L), eq(Notification.Type.BOOKING_REMINDER),
-                anyString(), anyString(), eq(Notification.ReferenceType.BOOKING), eq(1L));
+        verify(notificationService).notify(eq(USER_ID), eq(Notification.Type.BOOKING_REMINDER),
+                anyString(), anyString(), eq(Notification.ReferenceType.BOOKING), eq(BOOKING_ID));
     }
 
     @Test
@@ -71,6 +75,6 @@ class ReminderJobTest {
 
         job.sendReminders();
 
-        verify(notificationService, never()).notify(anyLong(), any(), anyString(), anyString(), any(), anyLong());
+        verify(notificationService, never()).notify(any(UUID.class), any(), anyString(), anyString(), any(), any(UUID.class));
     }
 }

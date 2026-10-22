@@ -9,6 +9,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Full game view. {@code currentPlayers} and {@code participants} are derived
@@ -21,15 +22,15 @@ import java.util.List;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class GameDetailResponse {
 
-    private Long id;
+    private UUID id;
     private String type;
     private String status;
     private String title;
     private String description;
 
-    private Long stadiumId;
+    private UUID stadiumId;
     private String stadiumName;
-    private Long creatorId;
+    private UUID creatorId;
     private String creatorName;
 
     private Integer maxPlayers;
@@ -43,15 +44,15 @@ public class GameDetailResponse {
     private Integer serviceFeePerPerson;
     private Integer creatorSharePct;
 
-    private Long teamAId;
+    private UUID teamAId;
     private String teamAName;
-    private Long teamBId;
+    private UUID teamBId;
     private String teamBName;
 
     @JsonProperty("isPublic")
     private boolean isPublic;
 
-    private Long bookingId;
+    private UUID bookingId;
 
     /** Telegram deep link to invite friends: t.me/{bot}?start=game_{id}. */
     private String inviteLink;

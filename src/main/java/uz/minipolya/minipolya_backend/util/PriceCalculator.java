@@ -4,6 +4,7 @@ import org.springframework.stereotype.Component;
 import uz.minipolya.minipolya_backend.entity.PricingRule;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 
@@ -12,6 +13,9 @@ import java.util.List;
  * booking that spans two different price slots sums each hour's rate. When no
  * active rule matches a given hour, that hour falls back to the stadium's
  * default {@code pricePerHour}. All money is integer so'm.
+ *
+ * <p>Each hour is priced against its own local weekday, so a span that crosses
+ * midnight correctly switches to the next day's rules.
  */
 @Component
 public class PriceCalculator {
@@ -20,7 +24,7 @@ public class PriceCalculator {
      * @param activeRules        active pricing rules for the stadium (any day)
      * @param date               the booking date (its weekday selects the rules)
      * @param startTime          booking start time
-     * @param durationHours      1 or 2
+     * @param durationHours      whole hours, at least 1
      * @param defaultPricePerHour stadium fallback price for unmatched hours
      * @return total price in so'm
      */
@@ -32,12 +36,13 @@ public class PriceCalculator {
         if (durationHours < 1) {
             throw new IllegalArgumentException("durationHours must be at least 1");
         }
-        int dayOfWeek = toDayOfWeek(date);
+        LocalDateTime cursor = LocalDateTime.of(date, startTime);
 
         int total = 0;
         for (int hour = 0; hour < durationHours; hour++) {
-            LocalTime slotStart = startTime.plusHours(hour);
-            total += priceForHour(activeRules, dayOfWeek, slotStart, defaultPricePerHour);
+            LocalDateTime slot = cursor.plusHours(hour);
+            int dayOfWeek = toDayOfWeek(slot.toLocalDate());
+            total += priceForHour(activeRules, dayOfWeek, slot.toLocalTime(), defaultPricePerHour);
         }
         return total;
     }

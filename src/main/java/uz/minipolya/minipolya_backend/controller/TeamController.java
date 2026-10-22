@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.dto.response.TeamResponse;
 import uz.minipolya.minipolya_backend.service.TeamService;
 
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
@@ -25,39 +26,39 @@ public class TeamController {
     private final TeamService teamService;
 
     @PostMapping("/api/teams")
-    public ApiResponse<TeamDetailResponse> create(@AuthenticationPrincipal Long userId,
+    public ApiResponse<TeamDetailResponse> create(@AuthenticationPrincipal UUID userId,
                                                   @Valid @RequestBody CreateTeamRequest request) {
         return ApiResponse.ok(teamService.create(userId, request), "Team created");
     }
 
     @GetMapping("/api/teams/me")
-    public ApiResponse<List<TeamResponse>> listMine(@AuthenticationPrincipal Long userId) {
+    public ApiResponse<List<TeamResponse>> listMine(@AuthenticationPrincipal UUID userId) {
         return ApiResponse.ok(teamService.listMine(userId));
     }
 
     @GetMapping("/api/teams/{id}")
-    public ApiResponse<TeamDetailResponse> getDetail(@PathVariable Long id) {
+    public ApiResponse<TeamDetailResponse> getDetail(@PathVariable UUID id) {
         return ApiResponse.ok(teamService.getDetail(id));
     }
 
     @PostMapping("/api/teams/{id}/members")
-    public ApiResponse<TeamDetailResponse> addMember(@AuthenticationPrincipal Long userId,
-                                                     @PathVariable Long id,
+    public ApiResponse<TeamDetailResponse> addMember(@AuthenticationPrincipal UUID userId,
+                                                     @PathVariable UUID id,
                                                      @Valid @RequestBody AddTeamMemberRequest request) {
         return ApiResponse.ok(teamService.addMember(userId, id, request), "Member added");
     }
 
     @DeleteMapping("/api/teams/{id}/members/{userId}")
-    public ApiResponse<Void> removeMember(@AuthenticationPrincipal Long requesterId,
-                                          @PathVariable Long id,
-                                          @PathVariable Long userId) {
+    public ApiResponse<Void> removeMember(@AuthenticationPrincipal UUID requesterId,
+                                          @PathVariable UUID id,
+                                          @PathVariable UUID userId) {
         teamService.removeMember(requesterId, id, userId);
         return ApiResponse.ok(null, "Member removed");
     }
 
     @DeleteMapping("/api/teams/{id}")
-    public ApiResponse<Void> delete(@AuthenticationPrincipal Long userId,
-                                    @PathVariable Long id) {
+    public ApiResponse<Void> delete(@AuthenticationPrincipal UUID userId,
+                                    @PathVariable UUID id) {
         teamService.delete(userId, id);
         return ApiResponse.ok(null, "Team deleted");
     }

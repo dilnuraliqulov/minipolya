@@ -8,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 /**
  * Lean game summary for listings. {@code currentPlayers} is derived from
@@ -20,7 +21,7 @@ import java.time.OffsetDateTime;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class GameResponse {
 
-    private Long id;
+    private UUID id;
     private String type;
     private String status;
     private String title;

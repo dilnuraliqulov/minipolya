@@ -9,6 +9,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.UUID;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -16,9 +18,9 @@ import lombok.NoArgsConstructor;
 public class CreateReviewRequest {
 
     @NotNull
-    private Long stadiumId;
+    private UUID stadiumId;
 
-    private Long bookingId;
+    private UUID bookingId;
 
     @NotNull
     @Min(1)

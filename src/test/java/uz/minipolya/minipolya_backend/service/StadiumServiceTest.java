@@ -20,6 +20,7 @@ import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -41,14 +42,20 @@ class StadiumServiceTest {
     private ReviewRepository reviewRepository;
     @Mock
     private FavoriteRepository favoriteRepository;
+    @Mock
+    private AuditService auditService;
 
     @InjectMocks
     private StadiumService stadiumService;
 
+    private static final UUID OWNER_ID = UUID.randomUUID();
+    private static final UUID STADIUM_ID = UUID.randomUUID();
+    private static final UUID PUBLIC_STADIUM_ID = UUID.randomUUID();
+
     @Test
     void createForcesPendingStatusAndAttachesOwnerAndAmenities() {
-        User owner = User.builder().id(10L).name("Owner").build();
-        when(userRepository.findById(10L)).thenReturn(Optional.of(owner));
+        User owner = User.builder().id(OWNER_ID).name("Owner").build();
+        when(userRepository.findById(OWNER_ID)).thenReturn(Optional.of(owner));
 
         CreateStadiumRequest request = CreateStadiumRequest.builder().name("Yunusobod Arena").build();
         Stadium entity = new Stadium();
@@ -57,7 +64,7 @@ class StadiumServiceTest {
         StadiumDetailResponse dto = new StadiumDetailResponse();
         when(stadiumMapper.toDetailResponse(any(Stadium.class))).thenReturn(dto);
 
-        StadiumDetailResponse result = stadiumService.create(10L, request);
+        StadiumDetailResponse result = stadiumService.create(OWNER_ID, request);
 
         assertThat(result).isSameAs(dto);
         ArgumentCaptor<Stadium> captor = ArgumentCaptor.forClass(Stadium.class);
@@ -71,11 +78,11 @@ class StadiumServiceTest {
 
     @Test
     void updateRejectsForeignOwner() {
-        User otherOwner = User.builder().id(99L).build();
-        Stadium stadium = Stadium.builder().id(1L).owner(otherOwner).build();
-        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
+        User otherOwner = User.builder().id(UUID.randomUUID()).build();
+        Stadium stadium = Stadium.builder().id(STADIUM_ID).owner(otherOwner).build();
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
 
-        assertThatThrownBy(() -> stadiumService.update(10L, 1L, new UpdateStadiumRequest()))
+        assertThatThrownBy(() -> stadiumService.update(OWNER_ID, STADIUM_ID, new UpdateStadiumRequest()))
                 .isInstanceOf(ForbiddenException.class);
 
         verify(stadiumRepository, never()).save(any());
@@ -83,26 +90,26 @@ class StadiumServiceTest {
 
     @Test
     void updateThrowsWhenStadiumMissing() {
-        when(stadiumRepository.findById(1L)).thenReturn(Optional.empty());
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> stadiumService.update(10L, 1L, new UpdateStadiumRequest()))
+        assertThatThrownBy(() -> stadiumService.update(OWNER_ID, STADIUM_ID, new UpdateStadiumRequest()))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test
     void publicDetailHidesUnapprovedStadium() {
-        when(stadiumRepository.findByIdAndStatus(7L, "approved")).thenReturn(Optional.empty());
+        when(stadiumRepository.findByIdAndStatus(PUBLIC_STADIUM_ID, "approved")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> stadiumService.getPublicDetail(7L, null))
+        assertThatThrownBy(() -> stadiumService.getPublicDetail(PUBLIC_STADIUM_ID, null))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test
     void publicDetailHidesInactiveStadium() {
-        Stadium inactive = Stadium.builder().id(7L).status("approved").isActive(false).build();
-        when(stadiumRepository.findByIdAndStatus(7L, "approved")).thenReturn(Optional.of(inactive));
+        Stadium inactive = Stadium.builder().id(PUBLIC_STADIUM_ID).status("approved").isActive(false).build();
+        when(stadiumRepository.findByIdAndStatus(PUBLIC_STADIUM_ID, "approved")).thenReturn(Optional.of(inactive));
 
-        assertThatThrownBy(() -> stadiumService.getPublicDetail(7L, null))
+        assertThatThrownBy(() -> stadiumService.getPublicDetail(PUBLIC_STADIUM_ID, null))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 }

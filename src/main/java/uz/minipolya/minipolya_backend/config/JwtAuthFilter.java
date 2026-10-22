@@ -17,6 +17,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Validates the {@code Authorization: Bearer <token>} header on every request.
@@ -41,7 +42,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         if (token != null
                 && SecurityContextHolder.getContext().getAuthentication() == null
                 && jwtProvider.isValid(token)) {
-            Long userId = jwtProvider.getUserId(token);
+            UUID userId = jwtProvider.getUserId(token);
 
             List<SimpleGrantedAuthority> authorities = new ArrayList<>();
             authorities.add(new SimpleGrantedAuthority("ROLE_USER"));

@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.UUID;
+
 /** What the frontend receives to redirect the player to Payme/Click checkout. */
 @Data
 @Builder
@@ -14,7 +16,7 @@ import lombok.NoArgsConstructor;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class PaymentInitResponse {
 
-    private Long paymentId;
+    private UUID paymentId;
     private String checkoutUrl;
     private String provider;
 }

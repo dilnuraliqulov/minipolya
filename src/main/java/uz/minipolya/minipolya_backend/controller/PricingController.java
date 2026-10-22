@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.dto.response.PricingRuleResponse;
 import uz.minipolya.minipolya_backend.service.PricingService;
 
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
@@ -27,30 +28,30 @@ public class PricingController {
     // ---- Owner ----
 
     @GetMapping("/api/owner/stadiums/{stadiumId}/pricing")
-    public ApiResponse<List<PricingRuleResponse>> listForOwner(@AuthenticationPrincipal Long ownerId,
-                                                               @PathVariable Long stadiumId) {
+    public ApiResponse<List<PricingRuleResponse>> listForOwner(@AuthenticationPrincipal UUID ownerId,
+                                                               @PathVariable UUID stadiumId) {
         return ApiResponse.ok(pricingService.listForOwner(ownerId, stadiumId));
     }
 
     @PostMapping("/api/owner/stadiums/{stadiumId}/pricing")
-    public ApiResponse<PricingRuleResponse> create(@AuthenticationPrincipal Long ownerId,
-                                                   @PathVariable Long stadiumId,
+    public ApiResponse<PricingRuleResponse> create(@AuthenticationPrincipal UUID ownerId,
+                                                   @PathVariable UUID stadiumId,
                                                    @Valid @RequestBody CreatePricingRuleRequest request) {
         return ApiResponse.ok(pricingService.create(ownerId, stadiumId, request), "Pricing rule created");
     }
 
     @PutMapping("/api/owner/stadiums/{stadiumId}/pricing/{id}")
-    public ApiResponse<PricingRuleResponse> update(@AuthenticationPrincipal Long ownerId,
-                                                   @PathVariable Long stadiumId,
-                                                   @PathVariable Long id,
+    public ApiResponse<PricingRuleResponse> update(@AuthenticationPrincipal UUID ownerId,
+                                                   @PathVariable UUID stadiumId,
+                                                   @PathVariable UUID id,
                                                    @Valid @RequestBody UpdatePricingRuleRequest request) {
         return ApiResponse.ok(pricingService.update(ownerId, stadiumId, id, request));
     }
 
     @DeleteMapping("/api/owner/stadiums/{stadiumId}/pricing/{id}")
-    public ApiResponse<Void> delete(@AuthenticationPrincipal Long ownerId,
-                                    @PathVariable Long stadiumId,
-                                    @PathVariable Long id) {
+    public ApiResponse<Void> delete(@AuthenticationPrincipal UUID ownerId,
+                                    @PathVariable UUID stadiumId,
+                                    @PathVariable UUID id) {
         pricingService.softDelete(ownerId, stadiumId, id);
         return ApiResponse.ok(null, "Pricing rule removed");
     }
@@ -58,7 +59,7 @@ public class PricingController {
     // ---- Public (players) ----
 
     @GetMapping("/api/stadiums/{stadiumId}/pricing")
-    public ApiResponse<List<PricingRuleResponse>> listPublic(@PathVariable Long stadiumId) {
+    public ApiResponse<List<PricingRuleResponse>> listPublic(@PathVariable UUID stadiumId) {
         return ApiResponse.ok(pricingService.listPublic(stadiumId));
     }
 }

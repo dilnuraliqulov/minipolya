@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.UUID;
+
 /**
  * Lean team summary used in listings. Omits the member list — clients fetch
  * members via the detail endpoint.
@@ -17,7 +19,7 @@ import lombok.NoArgsConstructor;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class TeamResponse {
 
-    private Long id;
+    private UUID id;
     private String name;
     private String leaderName;
     private Integer memberCount;

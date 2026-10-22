@@ -68,6 +68,21 @@ class PriceCalculatorTest {
     }
 
     @Test
+    void crossingMidnightPricesEachHourAgainstItsOwnWeekday() {
+        LocalDate sunday = DATE.minusDays(1); // 2026-10-11 is a Sunday -> dayOfWeek 6
+        int sundayDow = calculator.toDayOfWeek(sunday);
+        int mondayDow = calculator.toDayOfWeek(DATE);
+        PricingRule sundayLate = rule(sundayDow, LocalTime.of(23, 0), LocalTime.of(23, 59), 200_000, true);
+        PricingRule mondayEarly = rule(mondayDow, LocalTime.of(0, 0), LocalTime.of(6, 0), 90_000, true);
+
+        // 23:00 Sunday for 2h -> hour 23:00 (Sunday rule) + hour 00:00 (Monday rule)
+        int total = calculator.calculateTotalPrice(
+                List.of(sundayLate, mondayEarly), sunday, LocalTime.of(23, 0), 2, DEFAULT_PRICE);
+
+        assertThat(total).isEqualTo(290_000);
+    }
+
+    @Test
     void ignoresRulesForOtherDays() {
         PricingRule otherDay = rule((dayOfWeek + 1) % 7, LocalTime.of(18, 0), LocalTime.of(22, 0), 500_000, true);
 

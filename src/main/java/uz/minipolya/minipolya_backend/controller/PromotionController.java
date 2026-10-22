@@ -19,6 +19,7 @@ import uz.minipolya.minipolya_backend.dto.response.PromotionResponse;
 import uz.minipolya.minipolya_backend.service.PromotionService;
 
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Function;
 
 @RestController
@@ -30,16 +31,16 @@ public class PromotionController {
     // ---- Owner ----
 
     @PostMapping("/api/owner/stadiums/{stadiumId}/promotions")
-    public ApiResponse<PromotionResponse> create(@AuthenticationPrincipal Long ownerId,
-                                                 @PathVariable Long stadiumId,
+    public ApiResponse<PromotionResponse> create(@AuthenticationPrincipal UUID ownerId,
+                                                 @PathVariable UUID stadiumId,
                                                  @Valid @RequestBody CreatePromotionRequest request) {
         request.setStadiumId(stadiumId); // path is authoritative
         return ApiResponse.ok(promotionService.createPromotion(request, ownerId), "Promotion created");
     }
 
     @GetMapping("/api/owner/stadiums/{stadiumId}/promotions")
-    public ApiResponse<PageResponse<PromotionResponse>> list(@AuthenticationPrincipal Long ownerId,
-                                                             @PathVariable Long stadiumId,
+    public ApiResponse<PageResponse<PromotionResponse>> list(@AuthenticationPrincipal UUID ownerId,
+                                                             @PathVariable UUID stadiumId,
                                                              @RequestParam(defaultValue = "0") int page,
                                                              @RequestParam(defaultValue = "20") int size) {
         PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
@@ -48,8 +49,8 @@ public class PromotionController {
     }
 
     @PutMapping("/api/owner/promotions/{id}/deactivate")
-    public ApiResponse<Void> deactivate(@AuthenticationPrincipal Long ownerId,
-                                        @PathVariable Long id) {
+    public ApiResponse<Void> deactivate(@AuthenticationPrincipal UUID ownerId,
+                                        @PathVariable UUID id) {
         promotionService.deactivatePromotion(id, ownerId);
         return ApiResponse.ok(null, "Promotion deactivated");
     }
@@ -57,7 +58,7 @@ public class PromotionController {
     // ---- Public ----
 
     @GetMapping("/api/stadiums/{stadiumId}/promotions")
-    public ApiResponse<List<PromotionResponse>> publicList(@PathVariable Long stadiumId) {
+    public ApiResponse<List<PromotionResponse>> publicList(@PathVariable UUID stadiumId) {
         return ApiResponse.ok(promotionService.getActivePromotions(stadiumId));
     }
 }

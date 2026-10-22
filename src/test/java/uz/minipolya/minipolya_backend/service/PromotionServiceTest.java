@@ -16,6 +16,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -27,6 +28,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class PromotionServiceTest {
+
+    private static final UUID STADIUM_ID = UUID.randomUUID();
+    private static final UUID OWNER_ID = UUID.randomUUID();
 
     private PromotionRepository promotionRepository;
     private StadiumRepository stadiumRepository;
@@ -43,13 +47,13 @@ class PromotionServiceTest {
         promotionMapper = mock(PromotionMapper.class);
         service = new PromotionService(promotionRepository, stadiumRepository, promotionMapper);
 
-        owner = User.builder().id(2L).name("Owner").build();
-        stadium = Stadium.builder().id(1L).name("Arena").owner(owner).build();
+        owner = User.builder().id(OWNER_ID).name("Owner").build();
+        stadium = Stadium.builder().id(STADIUM_ID).name("Arena").owner(owner).build();
     }
 
     private CreatePromotionRequest request() {
         return CreatePromotionRequest.builder()
-                .stadiumId(1L).name("Weekend 20%").discountPercent(20)
+                .stadiumId(STADIUM_ID).name("Weekend 20%").discountPercent(20)
                 .startsAt(OffsetDateTime.now(ZoneOffset.UTC))
                 .endsAt(OffsetDateTime.now(ZoneOffset.UTC).plusDays(7))
                 .build();
@@ -57,63 +61,64 @@ class PromotionServiceTest {
 
     @Test
     void createPromotionSucceeds() {
-        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
         when(promotionMapper.toEntity(any())).thenReturn(Promotion.builder().discountPercent(20).build());
         when(promotionRepository.save(any(Promotion.class))).thenAnswer(inv -> inv.getArgument(0));
         when(promotionMapper.toResponse(any(Promotion.class))).thenReturn(new PromotionResponse());
 
-        service.createPromotion(request(), 2L);
+        service.createPromotion(request(), OWNER_ID);
 
         verify(promotionRepository).save(any(Promotion.class));
     }
 
     @Test
     void createPromotionForForeignStadiumIsForbidden() {
-        when(stadiumRepository.findById(1L)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
 
-        assertThatThrownBy(() -> service.createPromotion(request(), 999L))
+        assertThatThrownBy(() -> service.createPromotion(request(), UUID.randomUUID()))
                 .isInstanceOf(ForbiddenException.class);
     }
 
     @Test
     void getDiscountPercentReturnsMatchingPromotion() {
-        when(promotionRepository.findMatching(eq(1L), any(), anyInt(), any()))
+        when(promotionRepository.findMatching(eq(STADIUM_ID), any(), anyInt(), any()))
                 .thenReturn(List.of(Promotion.builder().discountPercent(20).build()));
 
-        assertThat(service.getDiscountPercent(1L, OffsetDateTime.now(ZoneOffset.UTC))).isEqualTo(20);
+        assertThat(service.getDiscountPercent(STADIUM_ID, OffsetDateTime.now(ZoneOffset.UTC))).isEqualTo(20);
     }
 
     @Test
     void getDiscountPercentReturnsHighestWhenMultiple() {
-        when(promotionRepository.findMatching(eq(1L), any(), anyInt(), any())).thenReturn(List.of(
+        when(promotionRepository.findMatching(eq(STADIUM_ID), any(), anyInt(), any())).thenReturn(List.of(
                 Promotion.builder().discountPercent(20).build(),
                 Promotion.builder().discountPercent(50).build()));
 
-        assertThat(service.getDiscountPercent(1L, OffsetDateTime.now(ZoneOffset.UTC))).isEqualTo(50);
+        assertThat(service.getDiscountPercent(STADIUM_ID, OffsetDateTime.now(ZoneOffset.UTC))).isEqualTo(50);
     }
 
     @Test
     void getDiscountPercentReturnsNullWhenNoMatch() {
-        when(promotionRepository.findMatching(eq(1L), any(), anyInt(), any())).thenReturn(List.of());
+        when(promotionRepository.findMatching(eq(STADIUM_ID), any(), anyInt(), any())).thenReturn(List.of());
 
-        assertThat(service.getDiscountPercent(1L, OffsetDateTime.now(ZoneOffset.UTC))).isNull();
+        assertThat(service.getDiscountPercent(STADIUM_ID, OffsetDateTime.now(ZoneOffset.UTC))).isNull();
     }
 
     @Test
     void deactivatePromotionSetsInactive() {
-        Promotion promotion = Promotion.builder().id(5L).stadium(stadium).discountPercent(20).isActive(true).build();
-        when(promotionRepository.findById(5L)).thenReturn(Optional.of(promotion));
+        UUID promotionId = UUID.randomUUID();
+        Promotion promotion = Promotion.builder().id(promotionId).stadium(stadium).discountPercent(20).isActive(true).build();
+        when(promotionRepository.findById(promotionId)).thenReturn(Optional.of(promotion));
         when(promotionRepository.save(any(Promotion.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        service.deactivatePromotion(5L, 2L);
+        service.deactivatePromotion(promotionId, OWNER_ID);
 
         assertThat(promotion.isActive()).isFalse();
     }
 
     @Test
     void expireEndedPromotionsDeactivatesThem() {
-        Promotion a = Promotion.builder().id(1L).isActive(true).build();
-        Promotion b = Promotion.builder().id(2L).isActive(true).build();
+        Promotion a = Promotion.builder().id(UUID.randomUUID()).isActive(true).build();
+        Promotion b = Promotion.builder().id(UUID.randomUUID()).isActive(true).build();
         when(promotionRepository.findByIsActiveTrueAndEndsAtBefore(any())).thenReturn(List.of(a, b));
 
         int count = service.expireEndedPromotions();

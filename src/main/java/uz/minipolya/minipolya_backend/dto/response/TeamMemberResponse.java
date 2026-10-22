@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.UUID;
+
 /** One row in a {@link TeamDetailResponse}'s member list. */
 @Data
 @Builder
@@ -14,7 +16,7 @@ import lombok.NoArgsConstructor;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class TeamMemberResponse {
 
-    private Long userId;
+    private UUID userId;
     private String userName;
     private String role;
 }

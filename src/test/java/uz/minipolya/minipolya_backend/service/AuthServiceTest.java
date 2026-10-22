@@ -15,6 +15,7 @@ import uz.minipolya.minipolya_backend.util.TelegramAuthValidator;
 import uz.minipolya.minipolya_backend.util.TelegramUserData;
 
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -24,6 +25,9 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class AuthServiceTest {
+
+    private static final UUID USER_ID_1 = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    private static final UUID USER_ID_5 = UUID.fromString("00000000-0000-0000-0000-000000000005");
 
     @Mock
     private TelegramAuthValidator telegramAuthValidator;
@@ -43,10 +47,10 @@ class AuthServiceTest {
         when(telegramAuthValidator.validate("init")).thenReturn(data);
         when(userRepository.findByTelegramId(777L)).thenReturn(Optional.empty());
 
-        User saved = User.builder().id(1L).telegramId(777L).name("Ali Valiyev").language("ru").build();
+        User saved = User.builder().id(USER_ID_1).telegramId(777L).name("Ali Valiyev").language("ru").build();
         when(userRepository.save(any(User.class))).thenReturn(saved);
         when(jwtProvider.generateToken(saved)).thenReturn("jwt-token");
-        UserResponse mapped = UserResponse.builder().id(1L).telegramId(777L).name("Ali Valiyev").build();
+        UserResponse mapped = UserResponse.builder().id(USER_ID_1).telegramId(777L).name("Ali Valiyev").build();
         when(userMapper.toResponse(saved)).thenReturn(mapped);
 
         AuthResponse result = authService.authenticateTelegram("init");
@@ -60,10 +64,10 @@ class AuthServiceTest {
     void reusesExistingUserWithoutSaving() {
         TelegramUserData data = new TelegramUserData(777L, "Ali", null, "ali", "uz");
         when(telegramAuthValidator.validate("init")).thenReturn(data);
-        User existing = User.builder().id(5L).telegramId(777L).name("Ali").build();
+        User existing = User.builder().id(USER_ID_5).telegramId(777L).name("Ali").build();
         when(userRepository.findByTelegramId(777L)).thenReturn(Optional.of(existing));
         when(jwtProvider.generateToken(existing)).thenReturn("jwt-token");
-        when(userMapper.toResponse(existing)).thenReturn(UserResponse.builder().id(5L).build());
+        when(userMapper.toResponse(existing)).thenReturn(UserResponse.builder().id(USER_ID_5).build());
 
         AuthResponse result = authService.authenticateTelegram("init");
 

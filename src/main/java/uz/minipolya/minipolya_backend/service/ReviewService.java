@@ -24,6 +24,7 @@ import uz.minipolya.minipolya_backend.repository.UserRepository;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Stadium reviews. A player may leave one review per stadium, and only after
@@ -42,7 +43,7 @@ public class ReviewService {
     private final NotificationService notificationService;
 
     @Transactional
-    public ReviewResponse createReview(CreateReviewRequest request, Long userId) {
+    public ReviewResponse createReview(CreateReviewRequest request, UUID userId) {
         Stadium stadium = stadiumRepository.findById(request.getStadiumId())
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
 
@@ -70,7 +71,7 @@ public class ReviewService {
     }
 
     @Transactional
-    public ReviewResponse replyToReview(Long reviewId, String reply, Long ownerUserId) {
+    public ReviewResponse replyToReview(UUID reviewId, String reply, UUID ownerUserId) {
         Review review = reviewRepository.findById(reviewId)
                 .orElseThrow(() -> new ResourceNotFoundException("Review not found"));
         if (!review.getStadium().getOwner().getId().equals(ownerUserId)) {
@@ -79,7 +80,7 @@ public class ReviewService {
         review.setOwnerReply(reply);
         review.setOwnerReplyAt(OffsetDateTime.now(ZoneOffset.UTC));
         Review saved = reviewRepository.save(review);
-        Long reviewerId = review.getUser().getId();
+        UUID reviewerId = review.getUser().getId();
         try {
             notificationService.notify(reviewerId, Notification.Type.REVIEW_REPLY, "Ответ на отзыв",
                     "Владелец стадиона ответил на ваш отзыв о «" + review.getStadium().getName() + "».",
@@ -92,18 +93,18 @@ public class ReviewService {
     }
 
     @Transactional(readOnly = true)
-    public Page<ReviewResponse> getStadiumReviews(Long stadiumId, Pageable pageable) {
+    public Page<ReviewResponse> getStadiumReviews(UUID stadiumId, Pageable pageable) {
         return reviewRepository.findByStadiumIdOrderByCreatedAtDesc(stadiumId, pageable)
                 .map(reviewMapper::toResponse);
     }
 
     @Transactional(readOnly = true)
-    public Page<ReviewResponse> getMyReviews(Long userId, Pageable pageable) {
+    public Page<ReviewResponse> getMyReviews(UUID userId, Pageable pageable) {
         return reviewRepository.findByUserId(userId, pageable).map(reviewMapper::toResponse);
     }
 
     @Transactional
-    public void deleteReview(Long reviewId, Long userId) {
+    public void deleteReview(UUID reviewId, UUID userId) {
         Review review = reviewRepository.findById(reviewId)
                 .orElseThrow(() -> new ResourceNotFoundException("Review not found"));
         if (!review.getUser().getId().equals(userId)) {
@@ -113,7 +114,7 @@ public class ReviewService {
         log.info("Review deleted: id={} userId={}", reviewId, userId);
     }
 
-    private boolean hasCompletedBooking(Long userId, Long stadiumId) {
+    private boolean hasCompletedBooking(UUID userId, UUID stadiumId) {
         return bookingRepository.findByUserIdAndStatusIn(userId, List.of("completed")).stream()
                 .anyMatch(booking -> booking.getStadium().getId().equals(stadiumId));
     }

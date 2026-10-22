@@ -11,6 +11,7 @@ import uz.minipolya.minipolya_backend.service.NotificationService;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -32,8 +33,8 @@ class BookingExpiryJobTest {
 
     @Test
     void expiresEveryOverduePendingBooking() {
-        Booking a = Booking.builder().id(1L).status("pending").build();
-        Booking b = Booking.builder().id(2L).status("pending").build();
+        Booking a = Booking.builder().id(UUID.randomUUID()).status("pending").build();
+        Booking b = Booking.builder().id(UUID.randomUUID()).status("pending").build();
         when(bookingRepository.findByStatusAndExpiresAtBefore(eq("pending"), any(OffsetDateTime.class)))
                 .thenReturn(List.of(a, b));
 

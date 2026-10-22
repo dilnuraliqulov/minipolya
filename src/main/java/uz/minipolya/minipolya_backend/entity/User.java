@@ -2,8 +2,8 @@ package uz.minipolya.minipolya_backend.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
+import org.hibernate.annotations.UuidGenerator;
+import java.util.UUID;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
@@ -32,8 +32,8 @@ import java.time.ZoneOffset;
 public class User {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @UuidGenerator(style = UuidGenerator.Style.VERSION_7)
+    private UUID id;
 
     /** Nullable: Telegram initData carries no phone, so a Telegram-created user starts without one. */
     @Column(length = 20, unique = true)

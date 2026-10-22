@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.UUID;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -13,5 +15,5 @@ import lombok.NoArgsConstructor;
 public class AddTeamMemberRequest {
 
     @NotNull
-    private Long userId;
+    private UUID userId;
 }

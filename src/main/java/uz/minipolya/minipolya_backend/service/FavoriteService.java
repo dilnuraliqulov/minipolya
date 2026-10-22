@@ -17,6 +17,8 @@ import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
+import java.util.UUID;
+
 /** A user's favorited stadiums, managed with a single add/remove toggle. */
 @Slf4j
 @Service
@@ -31,7 +33,7 @@ public class FavoriteService {
 
     /** Adds the favorite if absent, removes it if present. @return true if now favorited. */
     @Transactional
-    public boolean toggleFavorite(Long stadiumId, Long userId) {
+    public boolean toggleFavorite(UUID stadiumId, UUID userId) {
         if (favoriteRepository.existsByUserIdAndStadiumId(userId, stadiumId)) {
             favoriteRepository.deleteByUserIdAndStadiumId(userId, stadiumId);
             log.info("Favorite removed: userId={} stadiumId={}", userId, stadiumId);
@@ -47,13 +49,13 @@ public class FavoriteService {
     }
 
     @Transactional(readOnly = true)
-    public Page<StadiumResponse> getFavorites(Long userId, Pageable pageable) {
+    public Page<StadiumResponse> getFavorites(UUID userId, Pageable pageable) {
         return favoriteRepository.findByUserId(userId, pageable)
                 .map(favorite -> toResponseWithRatings(favorite.getStadium()));
     }
 
     @Transactional(readOnly = true)
-    public boolean isFavorited(Long stadiumId, Long userId) {
+    public boolean isFavorited(UUID stadiumId, UUID userId) {
         return favoriteRepository.existsByUserIdAndStadiumId(userId, stadiumId);
     }
 

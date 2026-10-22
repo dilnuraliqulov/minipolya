@@ -27,6 +27,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Computes free/occupied 1-hour slots for a stadium on a Tashkent-local date,
@@ -51,7 +52,7 @@ public class AvailabilityService {
     private final AppProperties appProperties;
 
     @Transactional(readOnly = true)
-    public AvailabilityResponse getAvailability(Long stadiumId, LocalDate date) {
+    public AvailabilityResponse getAvailability(UUID stadiumId, LocalDate date) {
         Stadium stadium = stadiumRepository.findByIdAndStatus(stadiumId, STATUS_APPROVED)
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
@@ -114,8 +115,7 @@ public class AvailabilityService {
             Optional<Promotion> promo = promotionService.getBestPromotion(stadium.getId(), slotStartUtc);
             if (promo.isPresent()) {
                 int percent = promo.get().getDiscountPercent();
-                int discounted = base - (int) ((long) base * percent / 100);
-                slot.pricePerHour(discounted)
+                slot.pricePerHour(BookingPriceCalculator.applyDiscount(base, percent))
                         .originalPrice(base)
                         .discountPercent(percent)
                         .promotionName(promo.get().getName());

@@ -10,13 +10,16 @@ import uz.minipolya.minipolya_backend.entity.Game;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Repository
-public interface GameRepository extends JpaRepository<Game, Long> {
+public interface GameRepository extends JpaRepository<Game, UUID> {
 
-    List<Game> findByStadiumIdAndStatus(Long stadiumId, String status);
+    List<Game> findByStadiumIdAndStatus(UUID stadiumId, String status);
 
-    List<Game> findByCreatorId(Long creatorId);
+    long countByStatus(String status);
+
+    List<Game> findByCreatorId(UUID creatorId);
 
     /** Used by GameTimeoutJob to find games past their start time. */
     List<Game> findByStatusAndStartsAtBefore(String status, OffsetDateTime time);
@@ -26,7 +29,7 @@ public interface GameRepository extends JpaRepository<Game, Long> {
 
     Page<Game> findByIsPublicTrueAndStatus(String status, Pageable pageable);
 
-    Page<Game> findByStadiumIdAndIsPublicTrueAndStatus(Long stadiumId, String status, Pageable pageable);
+    Page<Game> findByStadiumIdAndIsPublicTrueAndStatus(UUID stadiumId, String status, Pageable pageable);
 
     /** Games the user created or joined (for the "my games" listing). */
     @Query("""
@@ -34,5 +37,5 @@ public interface GameRepository extends JpaRepository<Game, Long> {
             WHERE g.creator.id = :userId
                OR g.id IN (SELECT p.game.id FROM GameParticipant p WHERE p.user.id = :userId)
             """)
-    Page<Game> findMyGames(@Param("userId") Long userId, Pageable pageable);
+    Page<Game> findMyGames(@Param("userId") UUID userId, Pageable pageable);
 }

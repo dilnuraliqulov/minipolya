@@ -135,7 +135,9 @@ src/main/java/uz/minipolya/minipolya_backend/
   - Each changeset has a unique `--changeset minipolya:<id>` tag
   - Liquibase tracks applied changesets in `DATABASECHANGELOG` and `DATABASECHANGELOGLOCK` tables
   - **NEVER edit an already-applied changeset** — always create a new changeset file for schema changes
+    - One-time exception, already taken: changesets 001–017 were edited in place once to convert all ids from BIGINT to UUID, before the first deployment, and the local dev database was dropped and recreated. The "never edit an applied changeset" rule applies again from now on — any further schema change is a new changeset (018+).
 - Hibernate: `ddl-auto: validate` — Hibernate validates against existing schema, NEVER creates or alters tables
+- **All primary keys are UUID** (PostgreSQL `UUID` type). UUIDs are generated application-side by Hibernate as **UUID v7** (`@UuidGenerator(style = UuidGenerator.Style.VERSION_7)` on each entity's `@Id private UUID id;`), with a DB-side `DEFAULT gen_random_uuid()` as a fallback. All foreign-key and raw entity-id columns are `UUID` too. The only non-UUID id is `users.telegram_id` (Telegram's own id, stays `BIGINT`); `payments.provider_txn_id` stays `VARCHAR`.
 - All money: integer so'm (never use float/double for money)
 - All timestamps: TIMESTAMPTZ stored in UTC, convert to `Asia/Tashkent` only for display/response
 - Double-booking prevention: PostgreSQL `EXCLUDE USING gist` constraint on bookings table — the database itself rejects overlapping bookings on the same stadium
@@ -215,7 +217,12 @@ When you need to change the schema (add column, new table, alter constraint):
   - `app` → player booked via Mini App
   - `manual` → owner added walk-in/phone booking (client_name, client_phone, is_walkin=true)
   - `game` → created automatically when a game is confirmed
-- Duration: 1 or 2 hours (chosen by user)
+- Duration: any number of consecutive whole hours, minimum 1, no fixed maximum. The practical limit is the stadium's opening hours, closures, and existing bookings (a booking is a run of free consecutive 1-hour slots).
+  - `startsAt` must be on the hour in `Asia/Tashkent` (minutes/seconds/nanos = 0) so bookings line up with the hourly availability slots.
+  - The whole booking (`startsAt` → `startsAt + durationHours`) must fall within the stadium's `open_time`–`close_time` (Tashkent). `close_time` is treated as a same-day bound: a window where `close_time <= open_time` is unbookable (matches availability, which generates no slots for it), so bookings cannot cross midnight.
+  - The booking must not overlap any `stadium_closure`.
+  - Price = the sum of each 1-hour slot's price (per-hour pricing rule by local weekday/time, falling back to `stadium.price_per_hour`), with the best active promotion applied per hour — identical to what the availability endpoint shows for the same slots.
+  - Violations throw `BadRequestException` → HTTP 400. A multi-hour overlap rejected by the DB EXCLUDE constraint reports "One or more of the selected hours is already booked"; a 1-hour overlap reports "Slot is already booked".
 - Max booking: 4 weeks ahead
 - Hold: unpaid bookings set `expires_at = now + 10 minutes`, status = `pending`
 - Expiry: `BookingExpiryJob` runs every minute, marks expired pending bookings as `expired`

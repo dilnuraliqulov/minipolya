@@ -1,7 +1,6 @@
 package uz.minipolya.minipolya_backend.dto.request;
 
 import jakarta.validation.constraints.Future;
-import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -13,6 +12,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -21,7 +21,7 @@ import java.time.OffsetDateTime;
 public class CreateGameRequest {
 
     @NotNull
-    private Long stadiumId;
+    private UUID stadiumId;
 
     @NotNull
     @Pattern(regexp = "casual|open|team_vs_team", message = "type must be casual, open or team_vs_team")
@@ -39,10 +39,9 @@ public class CreateGameRequest {
     private OffsetDateTime startsAt;
 
     @NotNull
-    @Min(value = 1, message = "duration must be 1 or 2 hours")
-    @Max(value = 2, message = "duration must be 1 or 2 hours")
+    @Min(value = 1, message = "duration must be at least 1 hour")
     private Integer duration;
 
     /** Only used for team_vs_team: the creating team. */
-    private Long teamAId;
+    private UUID teamAId;
 }
