@@ -16,7 +16,7 @@ import java.util.UUID;
 @AllArgsConstructor
 public class CreateStadiumClosureRequest {
 
-    @NotNull
+    /** Supplied by the {stadiumId} path variable; a value sent in the body is overwritten. */
     private UUID stadiumId;
 
     @NotNull

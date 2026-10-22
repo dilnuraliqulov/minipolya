@@ -17,7 +17,7 @@ import java.util.UUID;
 @AllArgsConstructor
 public class CreateManualBookingRequest {
 
-    @NotNull
+    /** Supplied by the {stadiumId} path variable; a value sent in the body is overwritten. */
     private UUID stadiumId;
 
     @NotBlank
