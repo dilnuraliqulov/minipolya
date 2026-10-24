@@ -304,11 +304,40 @@ config. Admins read and change them at `GET` / `PUT /api/admin/settings`.
 
 ### Payments
 
-- Providers: Payme, Click, cash (for manual bookings)
+**Provider.** ATMOS is the card provider. Every new flow goes through the
+`PaymentProvider` interface in `provider/`: bind a card once
+(`startCardBinding` → `confirmCardBinding` with the SMS code), then `charge`,
+`hold`, `capture`, `release` and `refund` it by token. Amounts are tiyin.
+
+- `FakePaymentProvider` stands in until the ATMOS docs land. It is active only
+  when `app.payments.provider=fake` and **refuses to start under the `prod`
+  profile**. Its SMS code is always `111111`, and a card number ending in `0002`
+  is always declined so failure paths can be tested.
+- A declined card comes back as a `FAILED` `ProviderTransaction`, not an
+  exception. Malformed input (unknown binding or transaction, wrong SMS code,
+  a hold settled twice) throws.
+- **Refunds are always for the whole transaction** — ATMOS cannot refund part of
+  one.
+- `LegacyCheckoutProvider` (Payme/Click hosted checkout) is **legacy**. It only
+  survives so the existing game payment path keeps compiling until the
+  team-vs-team work replaces it. Never use it in a new flow.
+
+**Saved cards** (`saved_cards`): the provider token, a masked number
+(`8600 •••• 1234`), card type and an active flag. The full card number is passed
+straight to the provider and is **never stored or logged**; `AddCardRequest`
+overrides `toString` to keep it out of stray log lines, and `SavedCardResponse`
+has no token field at all. Deleting a card sets `is_active = false` so past
+payments stay explainable. Endpoints: `POST /api/cards`,
+`POST /api/cards/confirm`, `GET /api/cards`, `DELETE /api/cards/{id}`.
+
+**Payment rows**
+
 - `provider_txn_id` is UNIQUE — handles duplicate webhook calls (idempotent)
 - Payment types: `booking`, `game_share`, `service_fee`, `refund`
-- Refunds create a NEW payment row with negative amount and refund_reason
-- Never mutate an existing payment row's amount
+- Amounts and the owner/platform split never change after a row is created
+- Status only moves forward (`held` → `captured` or `released`)
+- Refunds create a NEW payment row with negative amount and refund_reason; the
+  original may be marked refunded but is never otherwise rewritten
 
 ### Availability Calculation
 

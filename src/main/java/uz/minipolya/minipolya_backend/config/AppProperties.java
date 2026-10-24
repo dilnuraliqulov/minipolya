@@ -16,6 +16,7 @@ public class AppProperties {
     private Booking booking = new Booking();
     private Cancellation cancellation = new Cancellation();
     private Game game = new Game();
+    private Payments payments = new Payments();
 
     @Getter
     @Setter
@@ -51,5 +52,16 @@ public class AppProperties {
     @Setter
     public static class Game {
         private int defaultCreatorSharePct = 50;
+    }
+
+    @Getter
+    @Setter
+    public static class Payments {
+        /**
+         * Which card provider to wire up. {@code fake} selects
+         * FakePaymentProvider, which refuses to start under the prod profile;
+         * the real ATMOS client will register itself under its own value.
+         */
+        private String provider = "fake";
     }
 }

@@ -12835,6 +12835,427 @@
           }
         }
       ]
+    },
+    {
+      "name": "14 Cards",
+      "description": "Saving a card is two calls: POST /api/cards starts the binding, POST /api/cards/confirm finishes it with the SMS code. Against FakePaymentProvider the code is always 111111, and a card number ending in 0002 is always declined.",
+      "item": [
+        {
+          "name": "200 start card binding",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('returns a binding id', function () {",
+                  "    pm.expect(pm.response.json().data.bindingId).to.be.a('string').and.not.empty;",
+                  "});",
+                  "pm.test('the card number is not echoed back', function () {",
+                  "    pm.expect(pm.response.text()).to.not.include('8600123412341234');",
+                  "});",
+                  "pm.collectionVariables.set('cardBindingId', pm.response.json().data.bindingId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardNumber\": \"8600123412341234\",\n  \"expiry\": \"12/29\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/cards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cards"
+              ]
+            },
+            "description": "Nothing is stored yet - the provider holds the card against the binding id."
+          }
+        },
+        {
+          "name": "400 confirm with a wrong SMS code",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('the message mentions the SMS code', function () {",
+                  "    pm.expect(pm.response.json().message).to.include('SMS code');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bindingId\": \"{{cardBindingId}}\",\n  \"smsCode\": \"000000\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/cards/confirm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cards",
+                "confirm"
+              ]
+            },
+            "description": "Runs before the successful confirm: a wrong code leaves the binding usable."
+          }
+        },
+        {
+          "name": "200 confirm card with SMS code 111111",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('only the masked number comes back', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.maskedNumber).to.eql('8600 •••• 1234');",
+                  "    pm.expect(d.cardType).to.eql('uzcard');",
+                  "    pm.expect(d.isActive).to.eql(true);",
+                  "});",
+                  "pm.test('no provider token and no card number in the response', function () {",
+                  "    var t = pm.response.text();",
+                  "    pm.expect(t).to.not.include('tok-');",
+                  "    pm.expect(t).to.not.include('8600123412341234');",
+                  "});",
+                  "pm.collectionVariables.set('cardId', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bindingId\": \"{{cardBindingId}}\",\n  \"smsCode\": \"111111\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/cards/confirm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cards",
+                "confirm"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "400 a binding cannot be confirmed twice",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bindingId\": \"{{cardBindingId}}\",\n  \"smsCode\": \"111111\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/cards/confirm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cards",
+                "confirm"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "400 card number that is not 16 digits",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardNumber\": \"8600\",\n  \"expiry\": \"12/29\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/cards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cards"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "200 my cards",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('every card is masked and active', function () {",
+                  "    pm.response.json().data.forEach(function (c) {",
+                  "        pm.expect(c.maskedNumber).to.include('••••');",
+                  "        pm.expect(c.isActive).to.eql(true);",
+                  "    });",
+                  "});",
+                  "pm.test('no provider token is exposed', function () {",
+                  "    pm.expect(pm.response.text()).to.not.include('tok-');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/cards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cards"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "403 delete a card belonging to another player",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player2Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/cards/{{cardId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cards",
+                "{{cardId}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "200 delete my card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/cards/{{cardId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cards",
+                "{{cardId}}"
+              ]
+            },
+            "description": "Soft delete: the row stays and is_active becomes false, so past payments stay explainable."
+          }
+        },
+        {
+          "name": "200 my cards no longer lists the deleted one",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the deleted card is gone', function () {",
+                  "    var ids = pm.response.json().data.map(function (c) { return c.id; });",
+                  "    pm.expect(ids).to.not.include(pm.collectionVariables.get('cardId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/cards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cards"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "401 cards without a token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/cards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cards"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
     }
   ],
   "event": [

@@ -18,7 +18,7 @@ import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
-import uz.minipolya.minipolya_backend.provider.PaymentProvider;
+import uz.minipolya.minipolya_backend.provider.LegacyCheckoutProvider;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -53,7 +53,7 @@ public class PaymentService {
     private final GameRepository gameRepository;
     private final GameParticipantRepository gameParticipantRepository;
     private final PaymentMapper paymentMapper;
-    private final List<PaymentProvider> paymentProviders;
+    private final List<LegacyCheckoutProvider> paymentProviders;
     private final GameService gameService;
     private final NotificationService notificationService;
     private final AuditService auditService;
@@ -64,7 +64,7 @@ public class PaymentService {
                           GameRepository gameRepository,
                           GameParticipantRepository gameParticipantRepository,
                           PaymentMapper paymentMapper,
-                          List<PaymentProvider> paymentProviders,
+                          List<LegacyCheckoutProvider> paymentProviders,
                           @Lazy GameService gameService,
                           NotificationService notificationService,
                           AuditService auditService) {
@@ -333,7 +333,7 @@ public class PaymentService {
         }
     }
 
-    private PaymentProvider resolveProvider(Payment.Provider provider) {
+    private LegacyCheckoutProvider resolveProvider(Payment.Provider provider) {
         return paymentProviders.stream()
                 .filter(p -> p.provider() == provider)
                 .findFirst()

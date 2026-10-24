@@ -7,7 +7,7 @@ import java.util.UUID;
 
 /** Mock Click integration. */
 @Component
-public class ClickProvider implements PaymentProvider {
+public class ClickProvider implements LegacyCheckoutProvider {
 
     @Override
     public Payment.Provider provider() {

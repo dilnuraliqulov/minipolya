@@ -41,3 +41,5 @@ databaseChangeLog:
       file: db/changelog/changes/020-money-in-tiyin.sql
   - include:
       file: db/changelog/changes/021-create-platform-settings.sql
+  - include:
+      file: db/changelog/changes/022-create-saved-cards.sql
