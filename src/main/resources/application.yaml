@@ -36,8 +36,3 @@ app:
   booking:
     max-weeks-ahead: 4
     hold-expiry-minutes: 10
-  game:
-    # Tiyin: 500 000 tiyin = 5 000 so'm.
-    default-service-fee-per-person: 500000
-
-

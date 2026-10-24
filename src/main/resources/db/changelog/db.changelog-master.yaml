@@ -39,3 +39,5 @@ databaseChangeLog:
       file: db/changelog/changes/019-users-is-blocked.sql
   - include:
       file: db/changelog/changes/020-money-in-tiyin.sql
+  - include:
+      file: db/changelog/changes/021-create-platform-settings.sql

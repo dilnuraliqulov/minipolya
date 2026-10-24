@@ -12286,6 +12286,227 @@
           }
         },
         {
+          "name": "200 read platform settings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('returns the three settings', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d).to.have.property('bookingCommissionPercent');",
+                  "    pm.expect(d).to.have.property('teamGamePlatformFee');",
+                  "    pm.expect(d).to.have.property('casualGameServiceFee');",
+                  "});",
+                  "pm.test('fees are whole integers of tiyin', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.teamGamePlatformFee % 1).to.eql(0);",
+                  "    pm.expect(d.casualGameServiceFee % 1).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "settings"
+              ]
+            },
+            "description": "Platform money settings. Fees are tiyin; the commission is a whole percent."
+          }
+        },
+        {
+          "name": "200 update platform settings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the new values are returned', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.bookingCommissionPercent).to.eql(5);",
+                  "    pm.expect(d.teamGamePlatformFee).to.eql(3000000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bookingCommissionPercent\": 5,\n  \"teamGamePlatformFee\": 3000000\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "settings"
+              ]
+            },
+            "description": "Partial update: only the supplied fields change. Each change is written to the audit log with its old and new value."
+          }
+        },
+        {
+          "name": "400 commission above 50",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('the message names the field', function () {",
+                  "    pm.expect(pm.response.json().message).to.include('bookingCommissionPercent');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bookingCommissionPercent\": 51\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "settings"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "400 negative fee",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('the message names the field', function () {",
+                  "    pm.expect(pm.response.json().message).to.include('teamGamePlatformFee');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"teamGamePlatformFee\": -1\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "settings"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "403 settings as a player",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "settings"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
           "name": "200 platform stats",
           "event": [
             {

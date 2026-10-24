@@ -12,6 +12,7 @@ import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
 import uz.minipolya.minipolya_backend.entity.PricingRule;
+import uz.minipolya.minipolya_backend.entity.PlatformSettings;
 import uz.minipolya.minipolya_backend.entity.Promotion;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
@@ -116,6 +117,9 @@ class GameBookingPriceParityTest {
                 mock(PaymentService.class), mock(GameService.class), mock(NotificationService.class),
                 mock(AuditService.class), windowValidator);
 
+        PlatformSettingsService platformSettings = mock(PlatformSettingsService.class);
+        when(platformSettings.current()).thenReturn(PlatformSettings.builder().build());
+
         gameRepository = mock(GameRepository.class);
         when(gameRepository.save(any(Game.class))).thenAnswer(inv -> inv.getArgument(0));
         GameParticipantRepository participantRepository = mock(GameParticipantRepository.class);
@@ -128,7 +132,7 @@ class GameBookingPriceParityTest {
                 mock(TeamRepository.class), priceCalculator, bookingRepository,
                 gameMapper, mock(GameParticipantMapper.class), new AppProperties(),
                 mock(PaymentService.class), mock(NotificationService.class), mock(AuditService.class),
-                windowValidator);
+                windowValidator, platformSettings);
     }
 
     @Test

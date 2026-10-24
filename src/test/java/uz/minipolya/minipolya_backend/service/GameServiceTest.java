@@ -8,6 +8,7 @@ import uz.minipolya.minipolya_backend.dto.request.CreateGameRequest;
 import uz.minipolya.minipolya_backend.dto.response.GameDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameParticipantResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
+import uz.minipolya.minipolya_backend.entity.PlatformSettings;
 import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
 import uz.minipolya.minipolya_backend.entity.Payment;
@@ -60,6 +61,7 @@ class GameServiceTest {
     private NotificationService notificationService;
     private AuditService auditService;
     private StadiumClosureService closureService;
+    private PlatformSettingsService platformSettingsService;
     private GameService service;
 
     private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
@@ -92,11 +94,13 @@ class GameServiceTest {
         notificationService = mock(NotificationService.class);
         auditService = mock(AuditService.class);
         closureService = mock(StadiumClosureService.class);
+        platformSettingsService = mock(PlatformSettingsService.class);
+        when(platformSettingsService.current()).thenReturn(PlatformSettings.builder().build());
 
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, bookingPriceCalculator, bookingRepository,
                 gameMapper, participantMapper, new AppProperties(), paymentService, notificationService,
-                auditService, new BookingWindowValidator(closureService));
+                auditService, new BookingWindowValidator(closureService), platformSettingsService);
 
         creator = User.builder().id(CREATOR_ID).name("Creator").build();
         stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000L)
@@ -127,6 +131,40 @@ class GameServiceTest {
         when(participantRepository.save(any(GameParticipant.class))).thenAnswer(inv -> inv.getArgument(0));
         when(gameMapper.toDetailResponse(any(Game.class))).thenReturn(new GameDetailResponse());
         when(participantRepository.findByGameId(GAME_ID)).thenReturn(List.of());
+    }
+
+    // ---- fees come from platform settings, not from static config ----
+
+    @Test
+    void casualGameTakesItsServiceFeeFromPlatformSettings() {
+        stubCreate();
+        when(platformSettingsService.current()).thenReturn(PlatformSettings.builder()
+                .casualGameServiceFee(700_000L).teamGamePlatformFee(2_500_000L).build());
+
+        service.createGame(CreateGameRequest.builder()
+                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10)
+                .startsAt(startAt(18, 1)).duration(1).build(), CREATOR_ID);
+
+        ArgumentCaptor<Game> captor = ArgumentCaptor.forClass(Game.class);
+        verify(gameRepository).save(captor.capture());
+        assertThat(captor.getValue().getServiceFeePerPerson()).isEqualTo(700_000L);
+    }
+
+    @Test
+    void teamGameTakesTheTeamFeeFromPlatformSettings() {
+        stubCreate();
+        when(teamRepository.findById(TEAM_A_ID)).thenReturn(Optional.of(
+                Team.builder().id(TEAM_A_ID).leader(creator).build()));
+        when(platformSettingsService.current()).thenReturn(PlatformSettings.builder()
+                .casualGameServiceFee(700_000L).teamGamePlatformFee(2_500_000L).build());
+
+        service.createGame(CreateGameRequest.builder()
+                .stadiumId(STADIUM_ID).type("team_vs_team").maxPlayers(10).teamAId(TEAM_A_ID)
+                .startsAt(startAt(18, 1)).duration(1).build(), CREATOR_ID);
+
+        ArgumentCaptor<Game> captor = ArgumentCaptor.forClass(Game.class);
+        verify(gameRepository).save(captor.capture());
+        assertThat(captor.getValue().getServiceFeePerPerson()).isEqualTo(2_500_000L);
     }
 
     // ---- booking window (a confirmed game becomes a source=game booking) ----
@@ -210,7 +248,7 @@ class GameServiceTest {
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, bookingPriceCalculator, bookingRepository,
                 gameMapper, participantMapper, props, paymentService, notificationService,
-                auditService, new BookingWindowValidator(closureService));
+                auditService, new BookingWindowValidator(closureService), platformSettingsService);
         stubCreate();
         CreateGameRequest req = CreateGameRequest.builder()
                 .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(18, 1)).duration(1).build();

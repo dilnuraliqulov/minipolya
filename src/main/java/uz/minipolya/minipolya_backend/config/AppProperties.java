@@ -50,8 +50,6 @@ public class AppProperties {
     @Getter
     @Setter
     public static class Game {
-        /** Tiyin: 500 000 tiyin = 5 000 so'm. */
-        private long defaultServiceFeePerPerson = 500_000L;
         private int defaultCreatorSharePct = 50;
     }
 }

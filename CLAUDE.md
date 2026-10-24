@@ -277,13 +277,30 @@ Players MUST see the stadium's cancellation policy before confirming a booking.
 - When both leaders paid → booking created
 - Leaders invite team members via link (members do NOT pay for the pitch)
 - Chat available between teams for each game
-- Service fee: `service_fee_per_person` (default 500 000 tiyin = 5 000 so'm) charged to both leaders
+- Service fee: `service_fee_per_person`, taken from `platform_settings.team_game_platform_fee` at creation, charged to both leaders
 
 **Common game rules:**
 - `GameTimeoutJob` cancels `open` games where `starts_at <= now` and status is still `open`
 - When a regular booking takes the slot, find any `open` game on that stadium/time → cancel it, refund all participants
 - Game statuses: `open` → `confirmed` → `completed`
 - Cancel statuses: `cancelled_slot_taken`, `cancelled_by_creator`, `cancelled_not_filled`
+
+### Platform Settings
+
+Platform-wide money rules live in the single-row `platform_settings` table, not in
+config. Admins read and change them at `GET` / `PUT /api/admin/settings`.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `booking_commission_percent` | 0 | Percent of a booking price the platform keeps |
+| `team_game_platform_fee` | 2 500 000 tiyin (25 000 so'm) | Charged per team on a team game |
+| `casual_game_service_fee` | 0 | Charged per player on a casual game |
+
+- The row is seeded by changeset 021; `singleton` is UNIQUE and CHECKed true, so a
+  second row is impossible.
+- Validation: commission 0–50, fees not negative. A rejected value writes nothing.
+- Every change writes one `PLATFORM_SETTINGS_UPDATED` audit entry naming each
+  changed field with its old and new value.
 
 ### Payments
 

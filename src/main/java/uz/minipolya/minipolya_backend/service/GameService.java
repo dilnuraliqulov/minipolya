@@ -16,6 +16,7 @@ import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
+import uz.minipolya.minipolya_backend.entity.PlatformSettings;
 import uz.minipolya.minipolya_backend.entity.Notification;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.Team;
@@ -73,6 +74,7 @@ public class GameService {
     private final NotificationService notificationService;
     private final AuditService auditService;
     private final BookingWindowValidator bookingWindowValidator;
+    private final PlatformSettingsService platformSettingsService;
 
     @Transactional
     public GameDetailResponse createGame(CreateGameRequest request, UUID creatorUserId) {
@@ -107,7 +109,9 @@ public class GameService {
                 // Same calculation as a direct booking, promotions included, so a game
                 // costs exactly what booking the same slot costs.
                 .totalPrice(bookingPriceCalculator.totalPrice(stadium, startsAt, duration))
-                .serviceFeePerPerson(appProperties.getGame().getDefaultServiceFeePerPerson())
+                // Fees are platform settings, not static config: a team game is charged the
+                // per-team platform fee, any other game the per-player service fee.
+                .serviceFeePerPerson(serviceFeeFor(type))
                 .creatorSharePct(appProperties.getGame().getDefaultCreatorSharePct())
                 .isPublic(TYPE_OPEN.equals(type))
                 .build();
@@ -314,6 +318,14 @@ public class GameService {
             refundPaidParticipants(game, "Slot was taken before the game was confirmed");
             log.info("Game {} could not get its slot and was cancelled", game.getId());
         }
+    }
+
+    /** Team games are charged the per-team platform fee; everything else the casual service fee. */
+    private long serviceFeeFor(String type) {
+        PlatformSettings settings = platformSettingsService.current();
+        return TYPE_TEAM_VS_TEAM.equals(type)
+                ? settings.getTeamGamePlatformFee()
+                : settings.getCasualGameServiceFee();
     }
 
     private boolean isFullyFunded(Game game) {
