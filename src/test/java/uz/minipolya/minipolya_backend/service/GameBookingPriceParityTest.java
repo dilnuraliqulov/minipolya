@@ -56,8 +56,8 @@ class GameBookingPriceParityTest {
     private static final UUID PLAYER_ID = UUID.randomUUID();
     private static final UUID OWNER_ID = UUID.randomUUID();
 
-    private static final int BASE_PER_HOUR = 130_000;
-    private static final int RULE_PER_HOUR = 155_000;
+    private static final long BASE_PER_HOUR = 130_000L;
+    private static final long RULE_PER_HOUR = 155_000L;
     private static final int DISCOUNT_PERCENT = 10;
     private static final int DURATION_HOURS = 2;
 
@@ -139,14 +139,14 @@ class GameBookingPriceParityTest {
                 .stadiumId(STADIUM_ID).startsAt(start).durationHours(DURATION_HOURS).build());
         ArgumentCaptor<Booking> bookingCaptor = ArgumentCaptor.forClass(Booking.class);
         verify(bookingRepository).saveAndFlush(bookingCaptor.capture());
-        int bookingPrice = bookingCaptor.getValue().getPrice();
+        long bookingPrice = bookingCaptor.getValue().getPrice();
 
         gameService.createGame(CreateGameRequest.builder()
                 .stadiumId(STADIUM_ID).type("casual").maxPlayers(10)
                 .startsAt(start).duration(DURATION_HOURS).build(), PLAYER_ID);
         ArgumentCaptor<Game> gameCaptor = ArgumentCaptor.forClass(Game.class);
         verify(gameRepository).save(gameCaptor.capture());
-        int gamePrice = gameCaptor.getValue().getTotalPrice();
+        long gamePrice = gameCaptor.getValue().getTotalPrice();
 
         assertThat(gamePrice).isEqualTo(bookingPrice);
     }
@@ -154,8 +154,8 @@ class GameBookingPriceParityTest {
     @Test
     void thatSharedTotalHasThePromotionApplied() {
         OffsetDateTime start = slotStart();
-        int undiscounted = RULE_PER_HOUR * DURATION_HOURS;
-        int expected = (RULE_PER_HOUR - RULE_PER_HOUR * DISCOUNT_PERCENT / 100) * DURATION_HOURS;
+        long undiscounted = RULE_PER_HOUR * DURATION_HOURS;
+        long expected = (RULE_PER_HOUR - RULE_PER_HOUR * DISCOUNT_PERCENT / 100) * DURATION_HOURS;
 
         gameService.createGame(CreateGameRequest.builder()
                 .stadiumId(STADIUM_ID).type("casual").maxPlayers(10)
@@ -163,7 +163,7 @@ class GameBookingPriceParityTest {
 
         ArgumentCaptor<Game> gameCaptor = ArgumentCaptor.forClass(Game.class);
         verify(gameRepository).save(gameCaptor.capture());
-        int gamePrice = gameCaptor.getValue().getTotalPrice();
+        long gamePrice = gameCaptor.getValue().getTotalPrice();
 
         // 2 x 139 500, not 2 x 155 000: the game is no longer charged the pre-promotion rate.
         assertThat(gamePrice).isEqualTo(expected);

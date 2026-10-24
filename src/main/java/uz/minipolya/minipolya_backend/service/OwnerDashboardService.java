@@ -90,13 +90,13 @@ public class OwnerDashboardService {
                 .stadiumId(stadiumId)
                 .stadiumName(stadium.getName())
                 .todayBookings((int) bookingRepository.countByStadiumAndDateRange(stadiumId, todayStart, todayEnd, COUNTED_STATUSES))
-                .todayRevenue((int) revenue(stadiumId, todayStart, todayEnd))
+                .todayRevenue(revenue(stadiumId, todayStart, todayEnd))
                 .weekBookings((int) bookingRepository.countByStadiumAndDateRange(stadiumId, weekStartUtc, weekEndUtc, COUNTED_STATUSES))
-                .weekRevenue((int) revenue(stadiumId, weekStartUtc, weekEndUtc))
+                .weekRevenue(revenue(stadiumId, weekStartUtc, weekEndUtc))
                 .monthBookings((int) bookingRepository.countByStadiumAndDateRange(stadiumId, monthStartUtc, monthEndUtc, COUNTED_STATUSES))
-                .monthRevenue((int) revenue(stadiumId, monthStartUtc, monthEndUtc))
+                .monthRevenue(revenue(stadiumId, monthStartUtc, monthEndUtc))
                 .totalBookings((int) bookingRepository.countByStadiumIdAndStatusIn(stadiumId, COUNTED_STATUSES))
-                .totalRevenue((int) paymentRepository.sumRevenueByStadium(stadiumId, Payment.Status.COMPLETED, Payment.PaymentType.BOOKING))
+                .totalRevenue(paymentRepository.sumRevenueByStadium(stadiumId, Payment.Status.COMPLETED, Payment.PaymentType.BOOKING))
                 .averageRating(avg == null ? 0.0 : avg)
                 .reviewCount(reviewRepository.countByStadiumId(stadiumId))
                 .occupancyPercent(occupancy)
@@ -110,11 +110,11 @@ public class OwnerDashboardService {
         OffsetDateTime from = startOfDay(today.minusDays(29));
         OffsetDateTime to = startOfDay(today.plusDays(1));
 
-        Map<LocalDate, int[]> byDate = new LinkedHashMap<>(); // [revenue, count]
+        Map<LocalDate, long[]> byDate = new LinkedHashMap<>(); // [revenue in tiyin, count]
         for (Payment payment : paymentRepository.findStadiumBookingPayments(
                 stadiumId, Payment.Status.COMPLETED, Payment.PaymentType.BOOKING, from, to)) {
             LocalDate date = payment.getCreatedAt().atZoneSameInstant(TASHKENT).toLocalDate();
-            int[] agg = byDate.computeIfAbsent(date, d -> new int[2]);
+            long[] agg = byDate.computeIfAbsent(date, d -> new long[2]);
             agg[0] += payment.getAmount();
             agg[1] += 1;
         }
@@ -122,7 +122,7 @@ public class OwnerDashboardService {
         List<DailyRevenue> daily = byDate.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
                 .map(e -> DailyRevenue.builder()
-                        .date(e.getKey()).revenue(e.getValue()[0]).bookingCount(e.getValue()[1]).build())
+                        .date(e.getKey()).revenue(e.getValue()[0]).bookingCount((int) e.getValue()[1]).build())
                 .toList();
 
         return OwnerRevenueResponse.builder().stadiumId(stadiumId).dailyRevenue(daily).build();
@@ -154,9 +154,9 @@ public class OwnerDashboardService {
                     .filter(b -> OCCUPIED_STATUSES.contains(b.getStatus()))
                     .mapToInt(b -> b.getDurationHours() == null ? 0 : b.getDurationHours())
                     .sum();
-            int revenue = dayBookings.stream()
+            long revenue = dayBookings.stream()
                     .filter(b -> COUNTED_STATUSES.contains(b.getStatus()))
-                    .mapToInt(b -> b.getPrice() == null ? 0 : b.getPrice())
+                    .mapToLong(b -> b.getPrice() == null ? 0 : b.getPrice())
                     .sum();
             schedule.add(OwnerScheduleResponse.builder()
                     .date(date)

@@ -66,7 +66,7 @@ class AvailabilityServiceTest {
         service = newServiceWithClock(Clock.systemUTC());
 
         stadium = Stadium.builder().id(STADIUM_ID).name("Arena").status("approved").isActive(true)
-                .pricePerHour(50_000).openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).build();
+                .pricePerHour(50_000L).openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).build();
         date = LocalDate.now(TASHKENT).plusDays(1);
     }
 
@@ -216,7 +216,7 @@ class AvailabilityServiceTest {
         stubStadium();
         int dow = date.getDayOfWeek().getValue() - 1;
         PricingRule rule = PricingRule.builder().dayOfWeek(dow)
-                .startTime(LocalTime.of(18, 0)).endTime(LocalTime.of(22, 0)).pricePerHour(80_000).isActive(true).build();
+                .startTime(LocalTime.of(18, 0)).endTime(LocalTime.of(22, 0)).pricePerHour(80_000L).isActive(true).build();
         when(pricingRuleRepository.findByStadiumIdAndIsActiveTrue(STADIUM_ID)).thenReturn(List.of(rule));
 
         AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);

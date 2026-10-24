@@ -12,7 +12,7 @@ import java.util.List;
  * Pure, stateless price calculation. Prices are computed hour by hour, so a
  * booking that spans two different price slots sums each hour's rate. When no
  * active rule matches a given hour, that hour falls back to the stadium's
- * default {@code pricePerHour}. All money is integer so'm.
+ * default {@code pricePerHour}. All money is tiyin (1 so'm = 100 tiyin).
  *
  * <p>Each hour is priced against its own local weekday, so a span that crosses
  * midnight correctly switches to the next day's rules.
@@ -26,19 +26,19 @@ public class PriceCalculator {
      * @param startTime          booking start time
      * @param durationHours      whole hours, at least 1
      * @param defaultPricePerHour stadium fallback price for unmatched hours
-     * @return total price in so'm
+     * @return total price in tiyin
      */
-    public int calculateTotalPrice(List<PricingRule> activeRules,
-                                   LocalDate date,
-                                   LocalTime startTime,
-                                   int durationHours,
-                                   int defaultPricePerHour) {
+    public long calculateTotalPrice(List<PricingRule> activeRules,
+                                    LocalDate date,
+                                    LocalTime startTime,
+                                    int durationHours,
+                                    long defaultPricePerHour) {
         if (durationHours < 1) {
             throw new IllegalArgumentException("durationHours must be at least 1");
         }
         LocalDateTime cursor = LocalDateTime.of(date, startTime);
 
-        int total = 0;
+        long total = 0;
         for (int hour = 0; hour < durationHours; hour++) {
             LocalDateTime slot = cursor.plusHours(hour);
             int dayOfWeek = toDayOfWeek(slot.toLocalDate());
@@ -47,7 +47,7 @@ public class PriceCalculator {
         return total;
     }
 
-    private int priceForHour(List<PricingRule> activeRules, int dayOfWeek, LocalTime slotStart, int defaultPrice) {
+    private long priceForHour(List<PricingRule> activeRules, int dayOfWeek, LocalTime slotStart, long defaultPrice) {
         if (activeRules != null) {
             for (PricingRule rule : activeRules) {
                 if (rule.isActive()

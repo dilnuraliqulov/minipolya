@@ -122,7 +122,7 @@ public class AvailabilityService {
                 .available(available);
 
         if (available) {
-            int base = priceCalculator.calculateTotalPrice(rules, date, slotStart, 1, stadium.getPricePerHour());
+            long base = priceCalculator.calculateTotalPrice(rules, date, slotStart, 1, stadium.getPricePerHour());
             Optional<Promotion> promo = promotionService.getBestPromotion(stadium.getId(), slotStartUtc);
             if (promo.isPresent()) {
                 int percent = promo.get().getDiscountPercent();

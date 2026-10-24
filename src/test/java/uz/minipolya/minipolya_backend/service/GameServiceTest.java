@@ -99,7 +99,7 @@ class GameServiceTest {
                 auditService, new BookingWindowValidator(closureService));
 
         creator = User.builder().id(CREATOR_ID).name("Creator").build();
-        stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000)
+        stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000L)
                 .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).build();
     }
 
@@ -116,7 +116,7 @@ class GameServiceTest {
     private void stubCreate() {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(CREATOR_ID)).thenReturn(Optional.of(creator));
-        when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt())).thenReturn(100_000);
+        when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt())).thenReturn(100_000L);
         when(gameRepository.save(any(Game.class))).thenAnswer(inv -> {
             Game g = inv.getArgument(0);
             if (g.getId() == null) {
@@ -482,7 +482,7 @@ class GameServiceTest {
     void allPlayersPaidCreatesBookingAndConfirmsCasualGame() {
         OffsetDateTime start = inHours(24);
         Game game = Game.builder().id(GAME_ID).type("casual").status("open").maxPlayers(2)
-                .creator(creator).stadium(stadium).startsAt(start).endsAt(start.plusHours(1)).totalPrice(100_000).build();
+                .creator(creator).stadium(stadium).startsAt(start).endsAt(start.plusHours(1)).totalPrice(100_000L).build();
         GameParticipant participant = GameParticipant.builder().id(UUID.randomUUID()).game(game).user(creator)
                 .status(GameParticipant.Status.JOINED).build();
         when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game));
@@ -512,7 +512,7 @@ class GameServiceTest {
         OffsetDateTime start = inHours(24);
         User leaderB = User.builder().id(LEADER_B_ID).name("Leader B").build();
         Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("open").creatorSharePct(50)
-                .creator(creator).stadium(stadium).startsAt(start).endsAt(start.plusHours(1)).totalPrice(100_000).build();
+                .creator(creator).stadium(stadium).startsAt(start).endsAt(start.plusHours(1)).totalPrice(100_000L).build();
         GameParticipant leaderBPart = GameParticipant.builder().id(UUID.randomUUID()).game(game).user(leaderB)
                 .side(GameParticipant.Side.B).status(GameParticipant.Status.JOINED).build();
         GameParticipant leaderAPart = GameParticipant.builder().id(UUID.randomUUID()).game(game).user(creator)

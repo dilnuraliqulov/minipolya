@@ -5,7 +5,7 @@ import org.springframework.stereotype.Component;
 /**
  * Pure, stateless cancellation-refund math. The policy is configured per
  * stadium (full / partial refund windows and the partial percentage). All
- * money is integer so'm.
+ * money is tiyin (1 so'm = 100 tiyin).
  */
 @Component
 public class RefundCalculator {
@@ -27,8 +27,8 @@ public class RefundCalculator {
         return 0;
     }
 
-    /** Refund due in so'm, rounding down. Uses long math to avoid overflow. */
-    public int refundAmount(int price, int percent) {
-        return (int) ((long) price * percent / 100);
+    /** Refund due in tiyin, rounding down. */
+    public long refundAmount(long price, int percent) {
+        return price * percent / 100;
     }
 }

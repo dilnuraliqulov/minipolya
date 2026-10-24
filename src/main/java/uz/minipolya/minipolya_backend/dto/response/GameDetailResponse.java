@@ -40,8 +40,8 @@ public class GameDetailResponse {
     private OffsetDateTime startsAt;
     private OffsetDateTime endsAt;
 
-    private Integer totalPrice;
-    private Integer serviceFeePerPerson;
+    private Long totalPrice;
+    private Long serviceFeePerPerson;
     private Integer creatorSharePct;
 
     private UUID teamAId;

@@ -138,7 +138,7 @@ src/main/java/uz/minipolya/minipolya_backend/
     - One-time exception, already taken: changesets 001–017 were edited in place once to convert all ids from BIGINT to UUID, before the first deployment, and the local dev database was dropped and recreated. The "never edit an applied changeset" rule applies again from now on — any further schema change is a new changeset (018+).
 - Hibernate: `ddl-auto: validate` — Hibernate validates against existing schema, NEVER creates or alters tables
 - **All primary keys are UUID** (PostgreSQL `UUID` type). UUIDs are generated application-side by Hibernate as **UUID v7** (`@UuidGenerator(style = UuidGenerator.Style.VERSION_7)` on each entity's `@Id private UUID id;`), with a DB-side `DEFAULT gen_random_uuid()` as a fallback. All foreign-key and raw entity-id columns are `UUID` too. The only non-UUID id is `users.telegram_id` (Telegram's own id, stays `BIGINT`); `payments.provider_txn_id` stays `VARCHAR`.
-- All money: integer so'm (never use float/double for money)
+- All money: BIGINT tiyin (1 so'm = 100 tiyin), in the database, backend and API (never use float/double for money). One unit everywhere — the frontend formats so'm for display.
 - All timestamps: TIMESTAMPTZ stored in UTC, convert to `Asia/Tashkent` only for display/response
 - Double-booking prevention: PostgreSQL `EXCLUDE USING gist` constraint on bookings table — the database itself rejects overlapping bookings on the same stadium
 - 1 stadium = 1 pitch (no separate pitches table)
@@ -277,7 +277,7 @@ Players MUST see the stadium's cancellation policy before confirming a booking.
 - When both leaders paid → booking created
 - Leaders invite team members via link (members do NOT pay for the pitch)
 - Chat available between teams for each game
-- Service fee: `service_fee_per_person` (default 5000 so'm) charged to both leaders
+- Service fee: `service_fee_per_person` (default 500 000 tiyin = 5 000 so'm) charged to both leaders
 
 **Common game rules:**
 - `GameTimeoutJob` cancels `open` games where `starts_at <= now` and status is still `open`

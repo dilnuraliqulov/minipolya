@@ -80,7 +80,7 @@ public class Booking {
 
     /** Integer so'm — never floating point for money. */
     @Column(nullable = false)
-    private Integer price;
+    private Long price;
 
     @Column(name = "client_name", length = 100)
     private String clientName;

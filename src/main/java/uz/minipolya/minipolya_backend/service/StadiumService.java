@@ -111,7 +111,7 @@ public class StadiumService {
     // ---- Public operations ----
 
     @Transactional(readOnly = true)
-    public PageResponse<StadiumResponse> searchPublic(String q, String format, Integer maxPrice, int page, int size) {
+    public PageResponse<StadiumResponse> searchPublic(String q, String format, Long maxPrice, int page, int size) {
         Pageable pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "createdAt"));
         return PageResponse.from(
                 stadiumRepository.search(blankToNull(q), blankToNull(format), maxPrice, pageable),

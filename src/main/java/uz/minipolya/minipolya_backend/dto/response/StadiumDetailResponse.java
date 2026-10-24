@@ -38,7 +38,7 @@ public class StadiumDetailResponse {
     private String surfaceType;
     private LocalTime openTime;
     private LocalTime closeTime;
-    private Integer pricePerHour;
+    private Long pricePerHour;
     private String status;
 
     @JsonProperty("isActive")

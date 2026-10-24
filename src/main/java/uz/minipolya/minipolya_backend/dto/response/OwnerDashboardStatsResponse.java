@@ -17,16 +17,16 @@ public class OwnerDashboardStatsResponse {
     private String stadiumName;
 
     private int todayBookings;
-    private int todayRevenue;
+    private long todayRevenue;
 
     private int weekBookings;
-    private int weekRevenue;
+    private long weekRevenue;
 
     private int monthBookings;
-    private int monthRevenue;
+    private long monthRevenue;
 
     private int totalBookings;
-    private int totalRevenue;
+    private long totalRevenue;
 
     private double averageRating;
     private int reviewCount;

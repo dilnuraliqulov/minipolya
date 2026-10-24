@@ -60,7 +60,7 @@ public class CreateStadiumRequest {
 
     @NotNull
     @PositiveOrZero
-    private Integer pricePerHour;
+    private Long pricePerHour;
 
     @PositiveOrZero
     private Integer fullRefundHours;

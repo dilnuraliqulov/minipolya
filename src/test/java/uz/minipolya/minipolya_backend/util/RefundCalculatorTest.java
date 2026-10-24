@@ -34,4 +34,9 @@ class RefundCalculatorTest {
         assertThat(calc.refundAmount(100_000, 0)).isZero();
         assertThat(calc.refundAmount(99_999, 50)).isEqualTo(49_999); // 49999.5 floored
     }
+
+    @Test
+    void refundAmountAboveIntRangeIsExact() {
+        assertThat(calc.refundAmount(3_000_000_000L, 100)).isEqualTo(3_000_000_000L);
+    }
 }

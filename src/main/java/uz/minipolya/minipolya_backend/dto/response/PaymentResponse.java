@@ -25,7 +25,7 @@ public class PaymentResponse {
     private UUID bookingId;
     private UUID gameId;
     private UUID userId;
-    private Integer amount;
+    private Long amount;
     private Payment.PaymentType paymentType;
     private Payment.Provider provider;
     private String providerTxnId;

@@ -24,7 +24,7 @@ public class OwnerRevenueResponse {
     @AllArgsConstructor
     public static class DailyRevenue {
         private LocalDate date;
-        private int revenue;
+        private long revenue;
         private int bookingCount;
     }
 }

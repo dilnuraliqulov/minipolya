@@ -106,17 +106,17 @@ public class AdminService {
     public OwnerRevenueResponse getPlatformRevenue() {
         LocalDate today = LocalDate.now(TASHKENT);
         OffsetDateTime from = startOfDay(today.minusDays(29));
-        Map<LocalDate, int[]> byDate = new LinkedHashMap<>();
+        Map<LocalDate, long[]> byDate = new LinkedHashMap<>(); // [revenue in tiyin, count]
         for (Payment payment : paymentRepository.findPositiveCompletedSince(Payment.Status.COMPLETED, from)) {
             LocalDate date = payment.getCreatedAt().atZoneSameInstant(TASHKENT).toLocalDate();
-            int[] agg = byDate.computeIfAbsent(date, d -> new int[2]);
+            long[] agg = byDate.computeIfAbsent(date, d -> new long[2]);
             agg[0] += payment.getAmount();
             agg[1] += 1;
         }
         List<DailyRevenue> daily = byDate.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
                 .map(e -> DailyRevenue.builder()
-                        .date(e.getKey()).revenue(e.getValue()[0]).bookingCount(e.getValue()[1]).build())
+                        .date(e.getKey()).revenue(e.getValue()[0]).bookingCount((int) e.getValue()[1]).build())
                 .toList();
         return OwnerRevenueResponse.builder().stadiumId(null).dailyRevenue(daily).build();
     }
@@ -294,7 +294,7 @@ public class AdminService {
                 .averageRating(avg == null ? 0.0 : avg)
                 .reviewCount(reviewRepository.countByStadiumId(stadium.getId()))
                 .totalBookings((int) bookingRepository.countByStadiumIdAndStatusIn(stadium.getId(), COUNTED_STATUSES))
-                .totalRevenue((int) paymentRepository.sumRevenueByStadium(
+                .totalRevenue(paymentRepository.sumRevenueByStadium(
                         stadium.getId(), Payment.Status.COMPLETED, Payment.PaymentType.BOOKING))
                 .createdAt(stadium.getCreatedAt())
                 .build();

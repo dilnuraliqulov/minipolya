@@ -1553,7 +1553,7 @@
                   "    pm.expect(v, \"stadiumId\").to.be.a('string');",
                   "    pm.environment.set('stadiumId', v);",
                   "});",
-                  "pm.test('money is a whole integer number of som', function () {",
+                  "pm.test('money is a whole integer number of tiyin', function () {",
                   "    var v = pm.response.json().data.pricePerHour;",
                   "    pm.expect(v).to.be.a('number');",
                   "    pm.expect(v % 1).to.eql(0);",
@@ -1595,7 +1595,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Chilonzor Arena\",\n  \"address\": \"Chilonzor 12, Tashkent\",\n  \"latitude\": 41.2756,\n  \"longitude\": 69.2034,\n  \"phone\": \"+998901112233\",\n  \"description\": \"Covered pitch\",\n  \"format\": \"5x5\",\n  \"surfaceType\": \"artificial\",\n  \"openTime\": \"08:00\",\n  \"closeTime\": \"23:00\",\n  \"pricePerHour\": 130000,\n  \"fullRefundHours\": 24,\n  \"partialRefundHours\": 12,\n  \"partialRefundPercent\": 50,\n  \"photos\": [\n    \"https://cdn.example.com/a.jpg\"\n  ],\n  \"amenities\": {\n    \"parking\": true,\n    \"lighting\": true,\n    \"showers\": true,\n    \"lockerRoom\": true,\n    \"wifi\": false,\n    \"cafe\": false,\n    \"equipmentRental\": true,\n    \"tribune\": false\n  }\n}",
+              "raw": "{\n  \"name\": \"Chilonzor Arena\",\n  \"address\": \"Chilonzor 12, Tashkent\",\n  \"latitude\": 41.2756,\n  \"longitude\": 69.2034,\n  \"phone\": \"+998901112233\",\n  \"description\": \"Covered pitch\",\n  \"format\": \"5x5\",\n  \"surfaceType\": \"artificial\",\n  \"openTime\": \"08:00\",\n  \"closeTime\": \"23:00\",\n  \"pricePerHour\": 13000000,\n  \"fullRefundHours\": 24,\n  \"partialRefundHours\": 12,\n  \"partialRefundPercent\": 50,\n  \"photos\": [\n    \"https://cdn.example.com/a.jpg\"\n  ],\n  \"amenities\": {\n    \"parking\": true,\n    \"lighting\": true,\n    \"showers\": true,\n    \"lockerRoom\": true,\n    \"wifi\": false,\n    \"cafe\": false,\n    \"equipmentRental\": true,\n    \"tribune\": false\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2234,7 +2234,7 @@
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
                   "});",
-                  "pm.test('money is a whole integer number of som', function () {",
+                  "pm.test('money is a whole integer number of tiyin', function () {",
                   "    var v = pm.response.json().data.pricePerHour;",
                   "    pm.expect(v).to.be.a('number');",
                   "    pm.expect(v % 1).to.eql(0);",
@@ -2607,7 +2607,7 @@
                   "    pm.expect(v, \"pricingRuleId\").to.be.a('string');",
                   "    pm.environment.set('pricingRuleId', v);",
                   "});",
-                  "pm.test('money is a whole integer number of som', function () {",
+                  "pm.test('money is a whole integer number of tiyin', function () {",
                   "    var v = pm.response.json().data.pricePerHour;",
                   "    pm.expect(v).to.be.a('number');",
                   "    pm.expect(v % 1).to.eql(0);",
@@ -2644,7 +2644,7 @@
             "description": "dayOfWeek is 0=Monday .. 6=Sunday.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"dayOfWeek\": 4,\n  \"startTime\": \"18:00\",\n  \"endTime\": \"23:00\",\n  \"pricePerHour\": 155000\n}",
+              "raw": "{\n  \"dayOfWeek\": 4,\n  \"startTime\": \"18:00\",\n  \"endTime\": \"23:00\",\n  \"pricePerHour\": 15500000\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2703,7 +2703,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"dayOfWeek\": 4,\n  \"startTime\": \"20:00\",\n  \"endTime\": \"22:00\",\n  \"pricePerHour\": 160000\n}",
+              "raw": "{\n  \"dayOfWeek\": 4,\n  \"startTime\": \"20:00\",\n  \"endTime\": \"22:00\",\n  \"pricePerHour\": 16000000\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2762,7 +2762,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"dayOfWeek\": 4,\n  \"startTime\": \"22:00\",\n  \"endTime\": \"20:00\",\n  \"pricePerHour\": 160000\n}",
+              "raw": "{\n  \"dayOfWeek\": 4,\n  \"startTime\": \"22:00\",\n  \"endTime\": \"20:00\",\n  \"pricePerHour\": 16000000\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3072,7 +3072,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"pricePerHour\": 155000\n}",
+              "raw": "{\n  \"pricePerHour\": 15500000\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4390,7 +4390,7 @@
                   "    pm.expect(v, \"bookingId\").to.be.a('string');",
                   "    pm.environment.set('bookingId', v);",
                   "});",
-                  "pm.test('money is a whole integer number of som', function () {",
+                  "pm.test('money is a whole integer number of tiyin', function () {",
                   "    var v = pm.response.json().data.price;",
                   "    pm.expect(v).to.be.a('number');",
                   "    pm.expect(v % 1).to.eql(0);",
@@ -5692,7 +5692,7 @@
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
                   "});",
-                  "pm.test('money is a whole integer number of som', function () {",
+                  "pm.test('money is a whole integer number of tiyin', function () {",
                   "    var v = pm.response.json().data.amount;",
                   "    pm.expect(v).to.be.a('number');",
                   "    pm.expect(v % 1).to.eql(0);",
@@ -5980,7 +5980,7 @@
                   "    pm.expect(v, \"manualBookingId\").to.be.a('string');",
                   "    pm.environment.set('manualBookingId', v);",
                   "});",
-                  "pm.test('money is a whole integer number of som', function () {",
+                  "pm.test('money is a whole integer number of tiyin', function () {",
                   "    var v = pm.response.json().data.price;",
                   "    pm.expect(v).to.be.a('number');",
                   "    pm.expect(v % 1).to.eql(0);",
@@ -7723,7 +7723,7 @@
                   "    pm.expect(v, \"casualGameId\").to.be.a('string');",
                   "    pm.environment.set('casualGameId', v);",
                   "});",
-                  "pm.test('money is a whole integer number of som', function () {",
+                  "pm.test('money is a whole integer number of tiyin', function () {",
                   "    var v = pm.response.json().data.totalPrice;",
                   "    pm.expect(v).to.be.a('number');",
                   "    pm.expect(v % 1).to.eql(0);",

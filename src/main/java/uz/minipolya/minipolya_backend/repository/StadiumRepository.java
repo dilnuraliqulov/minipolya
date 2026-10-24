@@ -57,6 +57,6 @@ public interface StadiumRepository extends JpaRepository<Stadium, UUID> {
         """)
     Page<Stadium> search(@Param("q") String q,
                          @Param("format") String format,
-                         @Param("maxPrice") Integer maxPrice,
+                         @Param("maxPrice") Long maxPrice,
                          Pageable pageable);
 }

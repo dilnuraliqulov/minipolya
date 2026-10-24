@@ -79,7 +79,7 @@ class PaymentServiceTest {
     }
 
     private Booking pendingBooking() {
-        return Booking.builder().id(BOOKING_ID).status("pending").user(player).stadium(stadium).price(100_000).build();
+        return Booking.builder().id(BOOKING_ID).status("pending").user(player).stadium(stadium).price(100_000L).build();
     }
 
     // ---- initiateBookingPayment ----
@@ -123,7 +123,7 @@ class PaymentServiceTest {
     void callbackCompletesPaymentAndConfirmsBooking() {
         Booking booking = pendingBooking();
         booking.setExpiresAt(java.time.OffsetDateTime.now());
-        Payment payment = Payment.builder().id(PAYMENT_ID).booking(booking).user(player).amount(100_000)
+        Payment payment = Payment.builder().id(PAYMENT_ID).booking(booking).user(player).amount(100_000L)
                 .paymentType(Payment.PaymentType.BOOKING).provider(Payment.Provider.PAYME)
                 .providerTxnId("mock-100").status(Payment.Status.PENDING).build();
         when(paymentRepository.findByProviderAndProviderTxnId(Payment.Provider.PAYME, "mock-100"))
@@ -157,7 +157,7 @@ class PaymentServiceTest {
     @Test
     void createRefundAddsNegativeRowAndMarksOriginalRefunded() {
         Booking booking = pendingBooking();
-        Payment original = Payment.builder().id(PAYMENT_ID).booking(booking).user(player).amount(100_000)
+        Payment original = Payment.builder().id(PAYMENT_ID).booking(booking).user(player).amount(100_000L)
                 .paymentType(Payment.PaymentType.BOOKING).provider(Payment.Provider.PAYME)
                 .status(Payment.Status.COMPLETED).build();
         when(paymentRepository.findById(PAYMENT_ID)).thenReturn(Optional.of(original));
@@ -176,7 +176,7 @@ class PaymentServiceTest {
     @Test
     void createRefundWritesParseableJsonAuditDetails() {
         Booking booking = pendingBooking();
-        Payment original = Payment.builder().id(PAYMENT_ID).booking(booking).user(player).amount(100_000)
+        Payment original = Payment.builder().id(PAYMENT_ID).booking(booking).user(player).amount(100_000L)
                 .paymentType(Payment.PaymentType.BOOKING).provider(Payment.Provider.PAYME)
                 .status(Payment.Status.COMPLETED).build();
         when(paymentRepository.findById(PAYMENT_ID)).thenReturn(Optional.of(original));
@@ -197,7 +197,7 @@ class PaymentServiceTest {
 
     @Test
     void recordCashPaymentCompletesImmediatelyAndConfirmsBooking() {
-        Booking booking = Booking.builder().id(BOOKING_ID).status("pending").stadium(stadium).price(70_000).build();
+        Booking booking = Booking.builder().id(BOOKING_ID).status("pending").stadium(stadium).price(70_000L).build();
         when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(userRepository.findById(OWNER_ID)).thenReturn(Optional.of(owner));
         when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));

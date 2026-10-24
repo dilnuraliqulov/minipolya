@@ -18,5 +18,5 @@ public class OwnerScheduleResponse {
     private List<BookingResponse> bookings;
     private int totalSlots;
     private int bookedSlots;
-    private int revenue;
+    private long revenue;
 }

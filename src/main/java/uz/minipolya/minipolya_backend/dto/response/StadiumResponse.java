@@ -28,7 +28,7 @@ public class StadiumResponse {
     private BigDecimal longitude;
     private String format;
     private String surfaceType;
-    private Integer pricePerHour;
+    private Long pricePerHour;
     private String status;
     private String ownerName;
 

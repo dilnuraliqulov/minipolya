@@ -86,11 +86,11 @@ public class Game {
 
     /** Integer so'm — never floating point for money. */
     @Column(name = "total_price", nullable = false)
-    private Integer totalPrice;
+    private Long totalPrice;
 
     @Builder.Default
     @Column(name = "service_fee_per_person", nullable = false)
-    private Integer serviceFeePerPerson = 5000;
+    private Long serviceFeePerPerson = 500_000L;
 
     /** Share of the pitch price the creator's team pays in team_vs_team (1..100). */
     @Builder.Default

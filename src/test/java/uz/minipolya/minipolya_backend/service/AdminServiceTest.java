@@ -6,6 +6,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateStadiumStatusRequest;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateUserRequest;
+import uz.minipolya.minipolya_backend.dto.response.AdminStadiumResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminUserResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminPlatformStatsResponse;
 import uz.minipolya.minipolya_backend.dto.response.OwnerRevenueResponse;
@@ -262,7 +263,7 @@ class AdminServiceTest {
         Stadium stadium = stadium("approved");
         when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
         when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
-        Booking future = Booking.builder().id(BOOKING_ID).status("confirmed").price(100_000)
+        Booking future = Booking.builder().id(BOOKING_ID).status("confirmed").price(100_000L)
                 .user(User.builder().id(BOOKING_USER_ID).build()).startsAt(OffsetDateTime.now().plusDays(3)).build();
         when(bookingRepository.findByStadiumIdAndStartsAtBetween(eq(STADIUM_ID), any(), any())).thenReturn(List.of(future));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -280,12 +281,34 @@ class AdminServiceTest {
         OffsetDateTime d1 = LocalDate.now(TASHKENT).minusDays(1).atTime(12, 0).atZone(TASHKENT).toOffsetDateTime();
         OffsetDateTime d2 = LocalDate.now(TASHKENT).atTime(10, 0).atZone(TASHKENT).toOffsetDateTime();
         when(paymentRepository.findPositiveCompletedSince(any(), any())).thenReturn(List.of(
-                Payment.builder().amount(100_000).createdAt(d1).build(),
-                Payment.builder().amount(70_000).createdAt(d2).build()));
+                Payment.builder().amount(100_000L).createdAt(d1).build(),
+                Payment.builder().amount(70_000L).createdAt(d2).build()));
 
         OwnerRevenueResponse revenue = service.getPlatformRevenue();
 
         assertThat(revenue.getDailyRevenue()).hasSize(2);
         assertThat(revenue.getDailyRevenue().get(0).getRevenue()).isEqualTo(100_000);
+    }
+
+    @Test
+    void stadiumTotalRevenueAboveIntRangeIsNotTruncated() {
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium("approved")));
+        when(paymentRepository.sumRevenueByStadium(eq(STADIUM_ID), any(), any())).thenReturn(3_000_000_000L);
+
+        AdminStadiumResponse response = service.getStadium(STADIUM_ID);
+
+        assertThat(response.getTotalRevenue()).isEqualTo(3_000_000_000L);
+    }
+
+    @Test
+    void platformDailyRevenueAboveIntRangeIsNotTruncated() {
+        OffsetDateTime day = LocalDate.now(TASHKENT).atTime(12, 0).atZone(TASHKENT).toOffsetDateTime();
+        when(paymentRepository.findPositiveCompletedSince(any(), any())).thenReturn(List.of(
+                Payment.builder().amount(2_000_000_000L).createdAt(day).build(),
+                Payment.builder().amount(2_000_000_000L).createdAt(day).build()));
+
+        OwnerRevenueResponse revenue = service.getPlatformRevenue();
+
+        assertThat(revenue.getDailyRevenue().get(0).getRevenue()).isEqualTo(4_000_000_000L);
     }
 }

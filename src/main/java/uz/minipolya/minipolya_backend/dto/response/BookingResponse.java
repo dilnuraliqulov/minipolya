@@ -33,7 +33,7 @@ public class BookingResponse {
     private OffsetDateTime startsAt;
     private OffsetDateTime endsAt;
     private Integer durationHours;
-    private Integer price;
+    private Long price;
 
     private String clientName;
     private String clientPhone;
@@ -48,7 +48,7 @@ public class BookingResponse {
     private CancellationPolicyResponse cancellationPolicy;
 
     /** Only set on a cancellation response: the refund due, in so'm. */
-    private Integer refundAmount;
+    private Long refundAmount;
 
     private OffsetDateTime createdAt;
 }

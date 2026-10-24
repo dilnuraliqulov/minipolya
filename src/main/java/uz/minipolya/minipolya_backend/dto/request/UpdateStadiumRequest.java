@@ -56,7 +56,7 @@ public class UpdateStadiumRequest {
     private LocalTime closeTime;
 
     @PositiveOrZero
-    private Integer pricePerHour;
+    private Long pricePerHour;
 
     @PositiveOrZero
     private Integer fullRefundHours;

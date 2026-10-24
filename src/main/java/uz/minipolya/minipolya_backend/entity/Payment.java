@@ -61,7 +61,7 @@ public class Payment {
 
     /** Integer so'm — positive for charges, negative for refunds. */
     @Column(nullable = false)
-    private Integer amount;
+    private Long amount;
 
     @Convert(converter = PaymentTypeConverter.class)
     @Column(name = "payment_type", nullable = false, length = 20)

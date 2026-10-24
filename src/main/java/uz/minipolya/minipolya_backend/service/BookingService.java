@@ -87,7 +87,7 @@ public class BookingService {
                     "Cannot book more than " + appProperties.getBooking().getMaxWeeksAhead() + " weeks ahead");
         }
 
-        int price = bookingPriceCalculator.totalPrice(stadium, startsAt, duration);
+        long price = bookingPriceCalculator.totalPrice(stadium, startsAt, duration);
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -137,7 +137,7 @@ public class BookingService {
 
         validateBookingWindow(stadium, startsAt, duration);
 
-        int price = bookingPriceCalculator.totalPrice(stadium, startsAt, duration);
+        long price = bookingPriceCalculator.totalPrice(stadium, startsAt, duration);
 
         Booking booking = Booking.builder()
                 .stadium(stadium)
@@ -206,7 +206,7 @@ public class BookingService {
         int refundPercent = "pending".equals(booking.getStatus())
                 ? 0 // nothing was paid yet
                 : refundPercentFor(booking);
-        int refundAmount = refundCalculator.refundAmount(booking.getPrice(), refundPercent);
+        long refundAmount = refundCalculator.refundAmount(booking.getPrice(), refundPercent);
 
         applyCancellation(booking, "cancelled_by_user", reason);
         if (refundAmount > 0) {
@@ -231,7 +231,7 @@ public class BookingService {
         }
         requireCancellable(booking);
 
-        int refundAmount = booking.getPrice();
+        long refundAmount = booking.getPrice();
         applyCancellation(booking, "cancelled_by_owner", reason);
         if (refundAmount > 0) {
             paymentService.refundBookingPayment(booking.getId(), refundAmount, reason);
@@ -328,7 +328,7 @@ public class BookingService {
         bookingRepository.save(booking);
     }
 
-    private BookingResponse withRefund(Booking booking, int refundAmount) {
+    private BookingResponse withRefund(Booking booking, long refundAmount) {
         BookingResponse response = bookingMapper.toResponse(booking);
         response.setRefundAmount(refundAmount);
         return response;

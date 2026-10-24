@@ -92,7 +92,7 @@ class BookingServiceTest {
 
         player = User.builder().id(USER_ID).name("Player").build();
         owner = User.builder().id(OWNER_ID).name("Owner").build();
-        stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000)
+        stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000L)
                 .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0))
                 .fullRefundHours(24).partialRefundHours(12).partialRefundPercent(50).owner(owner).build();
     }
@@ -116,7 +116,7 @@ class BookingServiceTest {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
         when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
-                .thenReturn(100_000);
+                .thenReturn(100_000L);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
@@ -143,7 +143,7 @@ class BookingServiceTest {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
         when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
-                .thenReturn(300_000);
+                .thenReturn(300_000L);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
@@ -189,7 +189,7 @@ class BookingServiceTest {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
         when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
-                .thenReturn(100_000);
+                .thenReturn(100_000L);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
@@ -286,7 +286,7 @@ class BookingServiceTest {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
         when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
-                .thenReturn(100_000);
+                .thenReturn(100_000L);
         when(bookingRepository.saveAndFlush(any(Booking.class)))
                 .thenThrow(new DataIntegrityViolationException("bookings_no_overlap"));
 
@@ -302,7 +302,7 @@ class BookingServiceTest {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
         when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
-                .thenReturn(150_000);
+                .thenReturn(150_000L);
         when(bookingRepository.saveAndFlush(any(Booking.class)))
                 .thenThrow(new DataIntegrityViolationException("bookings_no_overlap"));
 
@@ -319,7 +319,7 @@ class BookingServiceTest {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
         when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
-                .thenReturn(100_000);
+                .thenReturn(100_000L);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
@@ -367,7 +367,7 @@ class BookingServiceTest {
 
     // ---- cancelByUser: cancellation policy ----
 
-    private Booking confirmedBooking(OffsetDateTime start, int price) {
+    private Booking confirmedBooking(OffsetDateTime start, long price) {
         return Booking.builder().id(BOOKING_ID).status("confirmed").user(player).stadium(stadium)
                 .price(price).startsAt(start).build();
     }
@@ -413,7 +413,7 @@ class BookingServiceTest {
     @Test
     void cancelByUserGivesNoRefundForUnpaidPendingHold() {
         Booking booking = Booking.builder().id(BOOKING_ID).status("pending").user(player).stadium(stadium)
-                .price(100_000).startsAt(inHours(48)).build();
+                .price(100_000L).startsAt(inHours(48)).build();
         when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
@@ -438,7 +438,7 @@ class BookingServiceTest {
     @Test
     void cancelByOwnerAlwaysRefundsFullEvenWhenLate() {
         Booking booking = Booking.builder().id(BOOKING_ID).status("confirmed").user(player).stadium(stadium)
-                .price(80_000).startsAt(inHours(1)).build(); // < 12h: a user would get 0
+                .price(80_000L).startsAt(inHours(1)).build(); // < 12h: a user would get 0
         when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
@@ -496,7 +496,7 @@ class BookingServiceTest {
     void createManualBookingConfirmsImmediatelyAndRecordsCash() {
         when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
         when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
-                .thenReturn(100_000);
+                .thenReturn(100_000L);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> {
             Booking b = inv.getArgument(0);
             b.setId(MANUAL_BOOKING_ID);
@@ -554,7 +554,7 @@ class BookingServiceTest {
     void createManualBookingTranslatesMultiHourOverlapToClearerMessage() {
         when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
         when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
-                .thenReturn(150_000);
+                .thenReturn(150_000L);
         when(bookingRepository.saveAndFlush(any(Booking.class)))
                 .thenThrow(new DataIntegrityViolationException("bookings_no_overlap"));
 

@@ -130,9 +130,9 @@ class OwnerDashboardServiceTest {
         OffsetDateTime d1 = LocalDate.now(TASHKENT).minusDays(1).atTime(12, 0).atZone(TASHKENT).toOffsetDateTime();
         OffsetDateTime d2 = LocalDate.now(TASHKENT).atTime(9, 0).atZone(TASHKENT).toOffsetDateTime();
         when(paymentRepository.findStadiumBookingPayments(eq(STADIUM_ID), any(), any(), any(), any())).thenReturn(List.of(
-                Payment.builder().amount(100_000).createdAt(d1).build(),
-                Payment.builder().amount(50_000).createdAt(d1).build(),
-                Payment.builder().amount(70_000).createdAt(d2).build()));
+                Payment.builder().amount(100_000L).createdAt(d1).build(),
+                Payment.builder().amount(50_000L).createdAt(d1).build(),
+                Payment.builder().amount(70_000L).createdAt(d2).build()));
 
         OwnerRevenueResponse revenue = service.getRevenue(STADIUM_ID, OWNER_ID);
 
@@ -146,9 +146,9 @@ class OwnerDashboardServiceTest {
     void getScheduleGroupsBookingsByDay() {
         when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
         LocalDate today = LocalDate.now(TASHKENT);
-        Booking later = Booking.builder().status("confirmed").durationHours(1).price(80_000)
+        Booking later = Booking.builder().status("confirmed").durationHours(1).price(80_000L)
                 .startsAt(today.atTime(10, 0).atZone(TASHKENT).toOffsetDateTime()).build();
-        Booking earlier = Booking.builder().status("confirmed").durationHours(1).price(80_000)
+        Booking earlier = Booking.builder().status("confirmed").durationHours(1).price(80_000L)
                 .startsAt(today.atTime(9, 0).atZone(TASHKENT).toOffsetDateTime()).build();
         when(bookingRepository.findByStadiumIdAndStartsAtBetween(eq(STADIUM_ID), any(), any()))
                 .thenReturn(List.of(later, earlier));
@@ -163,6 +163,54 @@ class OwnerDashboardServiceTest {
         assertThat(todaySchedule.getBookedSlots()).isEqualTo(2);
         assertThat(todaySchedule.getRevenue()).isEqualTo(160_000);
         assertThat(todaySchedule.getTotalSlots()).isEqualTo(15);
+    }
+
+    @Test
+    void statsTotalRevenueAboveIntRangeIsNotTruncated() {
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(bookingRepository.countByStadiumAndDateRange(any(UUID.class), any(), any(), any())).thenReturn(0L);
+        when(bookingRepository.countByStadiumIdAndStatusIn(any(UUID.class), any())).thenReturn(0L);
+        when(paymentRepository.sumRevenueByStadiumAndDateRange(any(UUID.class), any(), any(), any(), any()))
+                .thenReturn(0L);
+        when(paymentRepository.sumRevenueByStadium(eq(STADIUM_ID), any(), any())).thenReturn(3_000_000_000L);
+        when(reviewRepository.countByStadiumId(STADIUM_ID)).thenReturn(0);
+        when(bookingRepository.findByStadiumIdAndStartsAtBetween(eq(STADIUM_ID), any(), any())).thenReturn(List.of());
+
+        OwnerDashboardStatsResponse stats = service.getStats(STADIUM_ID, OWNER_ID);
+
+        assertThat(stats.getTotalRevenue()).isEqualTo(3_000_000_000L);
+    }
+
+    @Test
+    void dailyRevenueAboveIntRangeIsNotTruncated() {
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        OffsetDateTime day = LocalDate.now(TASHKENT).atTime(12, 0).atZone(TASHKENT).toOffsetDateTime();
+        when(paymentRepository.findStadiumBookingPayments(eq(STADIUM_ID), any(), any(), any(), any()))
+                .thenReturn(List.of(
+                        Payment.builder().amount(2_000_000_000L).createdAt(day).build(),
+                        Payment.builder().amount(2_000_000_000L).createdAt(day).build()));
+
+        OwnerRevenueResponse revenue = service.getRevenue(STADIUM_ID, OWNER_ID);
+
+        assertThat(revenue.getDailyRevenue().get(0).getRevenue()).isEqualTo(4_000_000_000L);
+    }
+
+    @Test
+    void scheduleRevenueAboveIntRangeIsNotTruncated() {
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        LocalDate today = LocalDate.now(TASHKENT);
+        Booking first = Booking.builder().status("confirmed").durationHours(1).price(2_000_000_000L)
+                .startsAt(today.atTime(9, 0).atZone(TASHKENT).toOffsetDateTime()).build();
+        Booking second = Booking.builder().status("confirmed").durationHours(1).price(2_000_000_000L)
+                .startsAt(today.atTime(10, 0).atZone(TASHKENT).toOffsetDateTime()).build();
+        when(bookingRepository.findByStadiumIdAndStartsAtBetween(eq(STADIUM_ID), any(), any()))
+                .thenReturn(List.of(first, second));
+        when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
+
+        OwnerScheduleResponse todaySchedule = service.getSchedule(STADIUM_ID, null, null, OWNER_ID).stream()
+                .filter(s -> s.getDate().equals(today)).findFirst().orElseThrow();
+
+        assertThat(todaySchedule.getRevenue()).isEqualTo(4_000_000_000L);
     }
 
     @Test

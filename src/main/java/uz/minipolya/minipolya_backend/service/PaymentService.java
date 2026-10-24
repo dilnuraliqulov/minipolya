@@ -166,7 +166,7 @@ public class PaymentService {
     }
 
     @Transactional
-    public Payment createRefund(UUID originalPaymentId, int refundAmount, String reason) {
+    public Payment createRefund(UUID originalPaymentId, long refundAmount, String reason) {
         Payment original = paymentRepository.findById(originalPaymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
         if (original.getStatus() != Payment.Status.COMPLETED) {
@@ -198,7 +198,7 @@ public class PaymentService {
 
     /** Refund the completed booking payment, if one exists. Called by BookingService on cancellation. */
     @Transactional
-    public Payment refundBookingPayment(UUID bookingId, int refundAmount, String reason) {
+    public Payment refundBookingPayment(UUID bookingId, long refundAmount, String reason) {
         Optional<Payment> original = paymentRepository.findByBookingIdAndPaymentTypeAndStatus(
                 bookingId, Payment.PaymentType.BOOKING, Payment.Status.COMPLETED);
         if (original.isEmpty()) {
@@ -296,14 +296,14 @@ public class PaymentService {
         return paymentRepository.save(saved);
     }
 
-    private int gameShareAmount(Game game, GameParticipant participant) {
-        int fee = game.getServiceFeePerPerson() == null ? 0 : game.getServiceFeePerPerson();
-        int total = game.getTotalPrice();
+    private long gameShareAmount(Game game, GameParticipant participant) {
+        long fee = game.getServiceFeePerPerson() == null ? 0 : game.getServiceFeePerPerson();
+        long total = game.getTotalPrice();
         if ("team_vs_team".equals(game.getType())) {
             int pct = participant.getSide() == GameParticipant.Side.B
                     ? 100 - game.getCreatorSharePct()
                     : game.getCreatorSharePct();
-            return (int) ((long) total * pct / 100) + fee;
+            return total * pct / 100 + fee;
         }
         int players = game.getMaxPlayers() == null || game.getMaxPlayers() < 1 ? 1 : game.getMaxPlayers();
         return total / players + fee;

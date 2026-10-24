@@ -83,7 +83,7 @@ public class Stadium {
 
     /** Integer so'm — never floating point for money. */
     @Column(name = "price_per_hour", nullable = false)
-    private Integer pricePerHour;
+    private Long pricePerHour;
 
     /** One of: pending, approved, blocked. */
     @Builder.Default
