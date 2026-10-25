@@ -13,6 +13,7 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.mapper.BookingMapper;
+import uz.minipolya.minipolya_backend.util.CancellationPolicy;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 import uz.minipolya.minipolya_backend.repository.ReviewRepository;
@@ -61,7 +62,9 @@ class OwnerDashboardServiceTest {
         reviewService = mock(ReviewService.class);
 
         service = new OwnerDashboardService(stadiumRepository, bookingRepository, paymentRepository,
-                reviewRepository, bookingMapper, stadiumService, reviewService);
+                reviewRepository,
+                new BookingResponseFactory(bookingMapper, new CancellationPolicy(), mock(PaymentService.class)),
+                stadiumService, reviewService);
 
         stadium = Stadium.builder().id(STADIUM_ID).name("Arena").owner(User.builder().id(OWNER_ID).build())
                 .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).build();

@@ -15,7 +15,7 @@ import uz.minipolya.minipolya_backend.mapper.BookingMapper;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
-import uz.minipolya.minipolya_backend.util.RefundCalculator;
+import uz.minipolya.minipolya_backend.util.CancellationPolicy;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -68,8 +68,9 @@ class BookingRemainderTest {
         auditService = mock(AuditService.class);
 
         service = new BookingService(bookingRepository, mock(StadiumRepository.class),
-                mock(UserRepository.class), mock(BookingPriceCalculator.class), new RefundCalculator(),
-                bookingMapper, new AppProperties(), paymentService, mock(GameService.class),
+                mock(UserRepository.class), mock(BookingPriceCalculator.class), new CancellationPolicy(),
+                new BookingResponseFactory(bookingMapper, new CancellationPolicy(), paymentService),
+                new AppProperties(), paymentService, mock(GameService.class),
                 mock(NotificationService.class), auditService,
                 new BookingWindowValidator(mock(StadiumClosureService.class)), savedCardService);
 

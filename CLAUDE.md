@@ -120,7 +120,7 @@ src/main/java/uz/minipolya/minipolya_backend/
 │   ├── GameMapper.java
 │   └── ...
 └── util/                    # Pure helper functions
-    ├── RefundCalculator.java
+    ├── CancellationPolicy.java
     ├── PriceCalculator.java
     ├── TelegramAuthValidator.java
     └── TimeUtils.java
@@ -277,16 +277,32 @@ leaves the booking `partially_paid` with a `failed` row.
 
 ### Cancellation Policy (configurable per stadium)
 
+Cancellation is **all or nothing** — there are no partial refunds, because ATMOS
+cannot refund part of a transaction. Each stadium has one setting,
+`cancellation_hours` (default 24):
+
 ```java
-// Each stadium has: full_refund_hours (default 24), partial_refund_hours (default 12), partial_refund_percent (default 50)
-long hoursLeft = hours between now and booking.startsAt;
+deadline = booking.startsAt - stadium.cancellationHours;
 
-if (hoursLeft >= stadium.fullRefundHours)    → 100% refund
-if (hoursLeft >= stadium.partialRefundHours) → stadium.partialRefundPercent% refund
-else                                         → 0% refund
+if (now <= deadline) → every card payment of the booking refunded in full
+else                 → the booking is still cancelled, but nothing is refunded
 
-// Owner cancels → ALWAYS 100% refund, regardless of time left
+// Owner cancels → ALWAYS every card payment back, whatever the time left
+// Admin blocks the stadium → same as an owner cancellation
+// Cash is NEVER refunded through the platform; the owner settles that directly
 ```
+
+- **One method does every refund**: `PaymentService.refundInFull(payment, reason)`,
+  driven for a whole booking by `refundAllCardPayments(bookingId, reason)`. There
+  is no method that refunds an arbitrary amount, so a partial refund cannot be
+  written by accident. A failed row, a cash row and an already-refunded row are
+  all skipped.
+- Booking responses carry **`cancellationDeadline`** and
+  **`refundIfCancelledNow`** (tiyin). Both come from `CancellationPolicy` and the
+  same refundable payments that a real cancellation uses, so the figure a player
+  is shown is the figure they get. `BookingResponseFactory` fills them in.
+- `cancellationPolicy` on a booking or stadium response is just
+  `{ "cancellationHours": 24 }`.
 
 Players MUST see the stadium's cancellation policy before confirming a booking.
 

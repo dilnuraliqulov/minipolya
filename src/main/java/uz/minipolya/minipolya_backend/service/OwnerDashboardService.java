@@ -17,7 +17,7 @@ import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
-import uz.minipolya.minipolya_backend.mapper.BookingMapper;
+
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 import uz.minipolya.minipolya_backend.repository.ReviewRepository;
@@ -53,7 +53,7 @@ public class OwnerDashboardService {
     private final BookingRepository bookingRepository;
     private final PaymentRepository paymentRepository;
     private final ReviewRepository reviewRepository;
-    private final BookingMapper bookingMapper;
+    private final BookingResponseFactory bookingResponseFactory;
     private final StadiumService stadiumService;
     private final ReviewService reviewService;
 
@@ -160,7 +160,7 @@ public class OwnerDashboardService {
                     .sum();
             schedule.add(OwnerScheduleResponse.builder()
                     .date(date)
-                    .bookings(dayBookings.stream().map(bookingMapper::toResponse).toList())
+                    .bookings(bookingResponseFactory.of(dayBookings))
                     .totalSlots(slotsPerDay)
                     .bookedSlots(bookedSlots)
                     .revenue(revenue)

@@ -54,7 +54,17 @@ public class BookingResponse {
 
     private CancellationPolicyResponse cancellationPolicy;
 
-    /** Only set on a cancellation response: the refund due, in so'm. */
+    /** The last moment a cancellation still earns a refund. */
+    private OffsetDateTime cancellationDeadline;
+
+    /**
+     * Tiyin that would come back if the player cancelled right now — the sum of
+     * this booking's card payments inside the window, 0 past it. Computed by the
+     * same code that performs the cancellation, so it is what they will get.
+     */
+    private Long refundIfCancelledNow;
+
+    /** Only set on a cancellation response: the refund actually issued, in tiyin. */
     private Long refundAmount;
 
     private OffsetDateTime createdAt;

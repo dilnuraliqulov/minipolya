@@ -66,14 +66,9 @@ public class CreateStadiumRequest {
     @PositiveOrZero
     private Long minBookingAmount;
 
+    /** Hours before kick-off up to which a player can cancel and be refunded in full. */
     @PositiveOrZero
-    private Integer fullRefundHours;
-
-    @PositiveOrZero
-    private Integer partialRefundHours;
-
-    @PositiveOrZero
-    private Integer partialRefundPercent;
+    private Integer cancellationHours;
 
     private List<@NotBlank @Size(max = 500) String> photos;
 

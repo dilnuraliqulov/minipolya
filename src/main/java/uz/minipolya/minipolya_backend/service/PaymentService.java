@@ -52,6 +52,13 @@ public class PaymentService {
 
     private static final Set<String> SUCCESS_TOKENS = Set.of("completed", "success", "paid", "ok", "1");
 
+    /**
+     * Statuses that mean money actually arrived and has not been given back.
+     * {@code COMPLETED} is only here for the legacy Payme/Click game rows.
+     */
+    private static final Set<Payment.Status> REFUNDABLE_STATUSES =
+            Set.of(Payment.Status.PAID, Payment.Status.CAPTURED, Payment.Status.COMPLETED);
+
     private final PaymentRepository paymentRepository;
     private final BookingRepository bookingRepository;
     private final UserRepository userRepository;
@@ -199,9 +206,14 @@ public class PaymentService {
     }
 
     /**
-     * Refunds a card payment in full — the only refund shape ATMOS supports, and
-     * therefore the only one we offer. Cash is never refunded through the
-     * platform; the owner settles that directly.
+     * The one refund method. ATMOS cannot refund part of a transaction, so a
+     * refund is always for the whole payment; a partial refund simply does not
+     * exist in this system. Cash is never refunded through the platform — the
+     * owner settles that directly — and a payment that never succeeded, or was
+     * already given back, is skipped.
+     *
+     * @return the new negative refund row, or {@code null} if there was nothing
+     *         to refund
      */
     @Transactional
     public Payment refundInFull(Payment original, String reason) {
@@ -209,11 +221,18 @@ public class PaymentService {
             log.info("Cash payment {} is not refunded through the platform", original.getId());
             return null;
         }
-        if (original.getStatus() == Payment.Status.REFUNDED) {
-            return null; // already given back
+        if (!REFUNDABLE_STATUSES.contains(original.getStatus())) {
+            return null; // never settled, or already given back
+        }
+        if (original.getAmount() == null || original.getAmount() <= 0) {
+            return null; // a refund row itself is not refundable
         }
 
-        paymentProvider.refund(original.getProviderTxnId());
+        // Only the card provider can give money back. Legacy Payme/Click rows
+        // predate it and are reversed on paper only, as they always were.
+        if (original.getProvider() == Payment.Provider.ATMOS) {
+            paymentProvider.refund(original.getProviderTxnId());
+        }
 
         Payment refund = paymentRepository.save(Payment.builder()
                 .booking(original.getBooking())
@@ -226,7 +245,8 @@ public class PaymentService {
                 .method(original.getMethod())
                 .paymentType(Payment.PaymentType.REFUND)
                 .provider(original.getProvider())
-                .providerTxnId(original.getProviderTxnId() + "-refund")
+                .providerTxnId(original.getProviderTxnId() == null
+                        ? null : original.getProviderTxnId() + "-refund")
                 .status(Payment.Status.REFUNDED)
                 .refundReason(reason)
                 .refundOfPayment(original)
@@ -328,64 +348,50 @@ public class PaymentService {
         return payment;
     }
 
-    @Transactional
-    public Payment createRefund(UUID originalPaymentId, long refundAmount, String reason) {
-        Payment original = paymentRepository.findById(originalPaymentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
-        if (original.getStatus() != Payment.Status.COMPLETED) {
-            throw new BadRequestException("Only a completed payment can be refunded");
-        }
-
-        // The split is carried over in proportion so owner + platform still adds
-        // up to the refunded amount, which the DB CHECK requires.
-        long amount = -Math.abs(refundAmount);
-        long platformPart = original.getAmount() == 0 ? 0
-                : amount * original.getPlatformAmount() / original.getAmount();
-        Payment refund = Payment.builder()
-                .booking(original.getBooking())
-                .game(original.getGame())
-                .user(original.getUser())
-                .amount(amount)
-                .ownerAmount(amount - platformPart)
-                .platformAmount(platformPart)
-                .commissionPercent(original.getCommissionPercent())
-                .method(original.getMethod())
-                .paymentType(Payment.PaymentType.REFUND)
-                .provider(original.getProvider())
-                .status(Payment.Status.COMPLETED)
-                .refundReason(reason)
-                .refundOfPayment(original)
-                .build();
-        Payment savedRefund = paymentRepository.save(refund);
-
-        original.setStatus(Payment.Status.REFUNDED);
-        paymentRepository.save(original);
-
-        auditService.log(original.getUser().getId(), "REFUND_CREATED", "payment", savedRefund.getId(),
-                "{\"originalPaymentId\":\"" + originalPaymentId + "\",\"amount\":" + savedRefund.getAmount() + "}");
-        log.info("Refund created: id={} originalId={} amount={}",
-                savedRefund.getId(), originalPaymentId, savedRefund.getAmount());
-        return savedRefund;
+    /**
+     * Every card payment of a booking that can still be given back. Cash is
+     * excluded — the owner settles that off-platform — as are failed rows and
+     * ones already refunded.
+     *
+     * <p>This is the list a cancellation refunds, so summing it answers "what
+     * would I get back if I cancelled now?" without guessing.
+     */
+    @Transactional(readOnly = true)
+    public List<Payment> refundableCardPayments(UUID bookingId) {
+        return paymentRepository.findByBookingId(bookingId).stream()
+                .filter(p -> p.getMethod() != Payment.Method.CASH)
+                .filter(p -> REFUNDABLE_STATUSES.contains(p.getStatus()))
+                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .toList();
     }
 
-    /** Refund the completed booking payment, if one exists. Called by BookingService on cancellation. */
-    @Transactional
-    public Payment refundBookingPayment(UUID bookingId, long refundAmount, String reason) {
-        Optional<Payment> original = paymentRepository.findByBookingIdAndPaymentTypeAndStatus(
-                bookingId, Payment.PaymentType.BOOKING, Payment.Status.COMPLETED);
-        if (original.isEmpty()) {
-            log.warn("No completed booking payment to refund for booking {}", bookingId);
-            return null;
-        }
-        return createRefund(original.get().getId(), refundAmount, reason);
+    /** Tiyin that would come back if this booking's card payments were refunded. */
+    @Transactional(readOnly = true)
+    public long refundableCardTotal(UUID bookingId) {
+        return refundableCardPayments(bookingId).stream()
+                .mapToLong(Payment::getAmount)
+                .sum();
     }
 
-    /** Refund a payment in full by its id. Called by GameService for participant refunds. */
+    /**
+     * Refunds every card payment of a booking in full — what both a player
+     * cancellation inside the window and any owner or admin cancellation do.
+     *
+     * @return the tiyin actually given back
+     */
     @Transactional
-    public Payment refundFullPayment(UUID paymentId, String reason) {
-        Payment original = paymentRepository.findById(paymentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
-        return createRefund(paymentId, Math.abs(original.getAmount()), reason);
+    public long refundAllCardPayments(UUID bookingId, String reason) {
+        long refunded = 0;
+        for (Payment original : refundableCardPayments(bookingId)) {
+            Payment refund = refundInFull(original, reason);
+            if (refund != null) {
+                refunded += Math.abs(refund.getAmount());
+            }
+        }
+        if (refunded == 0) {
+            log.info("Nothing to refund for booking {}", bookingId);
+        }
+        return refunded;
     }
 
     @Transactional

@@ -57,8 +57,7 @@ public class StadiumService {
         Stadium stadium = stadiumMapper.toEntity(request);
         stadium.setOwner(owner);
         stadium.setStatus(STATUS_PENDING);
-        applyRefundOverrides(stadium, request.getFullRefundHours(),
-                request.getPartialRefundHours(), request.getPartialRefundPercent());
+        applyCancellationHours(stadium, request.getCancellationHours());
 
         StadiumAmenities amenities = request.getAmenities() != null
                 ? stadiumMapper.toAmenities(request.getAmenities())
@@ -157,15 +156,10 @@ public class StadiumService {
         }
     }
 
-    private void applyRefundOverrides(Stadium stadium, Integer fullHours, Integer partialHours, Integer partialPercent) {
-        if (fullHours != null) {
-            stadium.setFullRefundHours(fullHours);
-        }
-        if (partialHours != null) {
-            stadium.setPartialRefundHours(partialHours);
-        }
-        if (partialPercent != null) {
-            stadium.setPartialRefundPercent(partialPercent);
+    /** Leaves the stadium's own default in place when the owner sends nothing. */
+    private void applyCancellationHours(Stadium stadium, Integer cancellationHours) {
+        if (cancellationHours != null) {
+            stadium.setCancellationHours(cancellationHours);
         }
     }
 

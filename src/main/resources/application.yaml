@@ -30,9 +30,7 @@ app:
     token: ${BOT_TOKEN}
     username: ${BOT_USERNAME:}
   cancellation:
-    default-full-refund-hours: 24
-    default-partial-refund-hours: 12
-    default-partial-refund-percent: 50
+    default-cancellation-hours: 24
   booking:
     max-weeks-ahead: 4
     hold-expiry-minutes: 10

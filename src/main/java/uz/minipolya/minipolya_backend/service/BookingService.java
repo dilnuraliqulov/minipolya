@@ -24,11 +24,10 @@ import uz.minipolya.minipolya_backend.exception.BookingExpiredException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.exception.SlotAlreadyBookedException;
-import uz.minipolya.minipolya_backend.mapper.BookingMapper;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
-import uz.minipolya.minipolya_backend.util.RefundCalculator;
+import uz.minipolya.minipolya_backend.util.CancellationPolicy;
 import uz.minipolya.minipolya_backend.util.Pagination;
 
 import java.time.Duration;
@@ -60,8 +59,8 @@ public class BookingService {
     private final StadiumRepository stadiumRepository;
     private final UserRepository userRepository;
     private final BookingPriceCalculator bookingPriceCalculator;
-    private final RefundCalculator refundCalculator;
-    private final BookingMapper bookingMapper;
+    private final CancellationPolicy cancellationPolicy;
+    private final BookingResponseFactory bookingResponseFactory;
     private final AppProperties appProperties;
     private final PaymentService paymentService;
     private final GameService gameService;
@@ -133,7 +132,7 @@ public class BookingService {
         // Confirms the booking when the money arrives; a decline leaves it
         // pending so the usual hold timeout expires it.
         paymentService.chargeForBooking(saved, card, amountToCharge);
-        return bookingMapper.toResponse(saved);
+        return bookingResponseFactory.of(saved);
     }
 
     /**
@@ -189,7 +188,7 @@ public class BookingService {
                         + booking.getPaymentStatus().getValue() + "\"}");
         log.info("Booking remainder charged: id={} userId={} amount={} status={}",
                 bookingId, userId, remainder, booking.getPaymentStatus().getValue());
-        return bookingMapper.toResponse(booking);
+        return bookingResponseFactory.of(booking);
     }
 
     /** Owner adds a walk-in/phone booking: confirmed immediately, no hold. */
@@ -242,7 +241,7 @@ public class BookingService {
         auditService.log(ownerUserId, "MANUAL_BOOKING_CREATED", "booking", saved.getId());
         log.info("Manual booking created: id={} stadiumId={} ownerId={} client='{}'",
                 saved.getId(), stadium.getId(), ownerUserId, request.getClientName());
-        return bookingMapper.toResponse(saved);
+        return bookingResponseFactory.of(saved);
     }
 
     /** Pending → confirmed, called after a successful payment. Idempotent. */
@@ -250,7 +249,7 @@ public class BookingService {
     public BookingResponse confirmBooking(UUID bookingId) {
         Booking booking = requireBooking(bookingId);
         if ("confirmed".equals(booking.getStatus())) {
-            return bookingMapper.toResponse(booking);
+            return bookingResponseFactory.of(booking);
         }
         if ("expired".equals(booking.getStatus())) {
             throw new BookingExpiredException("Booking has expired");
@@ -262,7 +261,7 @@ public class BookingService {
         booking.setExpiresAt(null);
         Booking saved = bookingRepository.save(booking);
         log.info("Booking confirmed: id={}", bookingId);
-        return bookingMapper.toResponse(saved);
+        return bookingResponseFactory.of(saved);
     }
 
     @Transactional
@@ -273,22 +272,23 @@ public class BookingService {
         }
         requireCancellable(booking);
 
-        int refundPercent = "pending".equals(booking.getStatus())
-                ? 0 // nothing was paid yet
-                : refundPercentFor(booking);
-        long refundAmount = refundCalculator.refundAmount(booking.getPrice(), refundPercent);
+        // All or nothing: in time for the stadium's window, every card payment
+        // comes back in full; past it the booking is still cancelled, but the
+        // player keeps nothing.
+        boolean refundable = cancellationPolicy.refundableNow(booking);
 
         applyCancellation(booking, "cancelled_by_user", reason);
-        if (refundAmount > 0) {
-            paymentService.refundBookingPayment(booking.getId(), refundAmount, reason);
-        }
+        long refundAmount = refundable
+                ? paymentService.refundAllCardPayments(booking.getId(), reason)
+                : 0L;
+
         safeNotify(() -> notificationService.notify(userId, Notification.Type.BOOKING_CANCELLED,
                 "Бронь отменена", "Вы отменили бронь в «" + booking.getStadium().getName() + "».",
                 Notification.ReferenceType.BOOKING, booking.getId()));
         auditService.log(userId, "BOOKING_CANCELLED_BY_USER", "booking", booking.getId(),
-                "{\"refundAmount\":" + refundAmount + "}");
-        log.info("Booking cancelled by user: id={} userId={} refundPercent={} refundAmount={}",
-                bookingId, userId, refundPercent, refundAmount);
+                "{\"refundAmount\":" + refundAmount + ",\"inTime\":" + refundable + "}");
+        log.info("Booking cancelled by user: id={} userId={} inTime={} refundAmount={}",
+                bookingId, userId, refundable, refundAmount);
         return withRefund(booking, refundAmount);
     }
 
@@ -301,11 +301,11 @@ public class BookingService {
         }
         requireCancellable(booking);
 
-        long refundAmount = booking.getPrice();
+        // The owner cancelling is never the player's fault: everything back,
+        // whatever the window says.
         applyCancellation(booking, "cancelled_by_owner", reason);
-        if (refundAmount > 0) {
-            paymentService.refundBookingPayment(booking.getId(), refundAmount, reason);
-        }
+        long refundAmount = paymentService.refundAllCardPayments(booking.getId(), reason);
+
         if (booking.getUser() != null) {
             UUID uid = booking.getUser().getId();
             safeNotify(() -> notificationService.notify(uid, Notification.Type.BOOKING_CANCELLED,
@@ -322,7 +322,7 @@ public class BookingService {
     @Transactional(readOnly = true)
     public PageResponse<BookingResponse> getMyBookings(UUID userId, int page, int size) {
         Pageable pageable = Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"));
-        return PageResponse.from(bookingRepository.findByUserId(userId, pageable), bookingMapper::toResponse);
+        return PageResponse.from(bookingRepository.findByUserId(userId, pageable), bookingResponseFactory::of);
     }
 
     @Transactional(readOnly = true)
@@ -331,7 +331,7 @@ public class BookingService {
         if (booking.getUser() == null || !booking.getUser().getId().equals(userId)) {
             throw new ForbiddenException("This booking does not belong to you");
         }
-        return bookingMapper.toResponse(booking);
+        return bookingResponseFactory.of(booking);
     }
 
     /** Owner's unified schedule (app + manual bookings), optionally within a date range. */
@@ -349,9 +349,9 @@ public class BookingService {
             OffsetDateTime toUtc = to.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime();
             return PageResponse.from(
                     bookingRepository.findByStadiumIdAndStartsAtBetween(stadiumId, fromUtc, toUtc, pageable),
-                    bookingMapper::toResponse);
+                    bookingResponseFactory::of);
         }
-        return PageResponse.from(bookingRepository.findByStadiumId(stadiumId, pageable), bookingMapper::toResponse);
+        return PageResponse.from(bookingRepository.findByStadiumId(stadiumId, pageable), bookingResponseFactory::of);
     }
 
     // ---- Helpers ----
@@ -381,16 +381,6 @@ public class BookingService {
                 : "Slot is already booked";
     }
 
-    private int refundPercentFor(Booking booking) {
-        long hoursLeft = Duration.between(OffsetDateTime.now(ZoneOffset.UTC), booking.getStartsAt()).toHours();
-        Stadium stadium = booking.getStadium();
-        return refundCalculator.refundPercent(
-                hoursLeft,
-                stadium.getFullRefundHours(),
-                stadium.getPartialRefundHours(),
-                stadium.getPartialRefundPercent());
-    }
-
     private void applyCancellation(Booking booking, String status, String reason) {
         booking.setStatus(status);
         booking.setCancelledAt(OffsetDateTime.now(ZoneOffset.UTC));
@@ -399,7 +389,7 @@ public class BookingService {
     }
 
     private BookingResponse withRefund(Booking booking, long refundAmount) {
-        BookingResponse response = bookingMapper.toResponse(booking);
+        BookingResponse response = bookingResponseFactory.of(booking);
         response.setRefundAmount(refundAmount);
         return response;
     }

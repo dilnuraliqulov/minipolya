@@ -255,7 +255,9 @@ public class AdminService {
             booking.setCancelledAt(now);
             booking.setCancellationReason(cancelReason);
             bookingRepository.save(booking);
-            paymentService.refundBookingPayment(booking.getId(), booking.getPrice(), cancelReason);
+            // Blocking a stadium is the platform's doing, so it follows the
+            // owner rule: every card payment back in full, whatever the window.
+            paymentService.refundAllCardPayments(booking.getId(), cancelReason);
             if (booking.getUser() != null) {
                 notify(booking.getUser().getId(), Notification.Type.BOOKING_CANCELLED, "Бронь отменена",
                         "Стадион заблокирован — ваша бронь отменена, возврат средств оформлен.",

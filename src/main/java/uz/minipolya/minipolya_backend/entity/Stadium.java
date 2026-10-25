@@ -102,17 +102,14 @@ public class Stadium {
     @Column(nullable = false, length = 20)
     private String status = "pending";
 
+    /**
+     * How many hours before kick-off a player may still cancel and get their
+     * money back. Cancelling at or beyond this refunds every card payment in
+     * full; later cancels the booking but refunds nothing.
+     */
     @Builder.Default
-    @Column(name = "full_refund_hours", nullable = false)
-    private int fullRefundHours = 24;
-
-    @Builder.Default
-    @Column(name = "partial_refund_hours", nullable = false)
-    private int partialRefundHours = 12;
-
-    @Builder.Default
-    @Column(name = "partial_refund_percent", nullable = false)
-    private int partialRefundPercent = 50;
+    @Column(name = "cancellation_hours", nullable = false)
+    private int cancellationHours = 24;
 
     @Builder.Default
     @Column(name = "is_active", nullable = false)

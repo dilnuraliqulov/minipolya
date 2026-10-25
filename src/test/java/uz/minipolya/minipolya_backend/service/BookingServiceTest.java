@@ -25,7 +25,7 @@ import uz.minipolya.minipolya_backend.mapper.BookingMapper;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
-import uz.minipolya.minipolya_backend.util.RefundCalculator;
+import uz.minipolya.minipolya_backend.util.CancellationPolicy;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -94,7 +94,9 @@ class BookingServiceTest {
                 SavedCard.builder().id(CARD_ID).providerToken("tok-1").isActive(true).build());
 
         service = new BookingService(bookingRepository, stadiumRepository, userRepository,
-                bookingPriceCalculator, new RefundCalculator(), bookingMapper, new AppProperties(),
+                bookingPriceCalculator, new CancellationPolicy(),
+                new BookingResponseFactory(bookingMapper, new CancellationPolicy(), paymentService),
+                new AppProperties(),
                 paymentService, gameService, notificationService, auditService,
                 new BookingWindowValidator(closureService), savedCardService);
 
@@ -102,7 +104,7 @@ class BookingServiceTest {
         owner = User.builder().id(OWNER_ID).name("Owner").build();
         stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000L)
                 .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0))
-                .fullRefundHours(24).partialRefundHours(12).partialRefundPercent(50).owner(owner).build();
+                .cancellationHours(24).owner(owner).build();
     }
 
     /** A future start aligned to the hour in Tashkent, within the 08:00–23:00 window. */
@@ -381,41 +383,55 @@ class BookingServiceTest {
     }
 
     @Test
-    void cancelByUserFullRefundWhenWellAhead() {
+    void cancelByUserRefundsEveryCardPaymentWhenInTime() {
         Booking booking = confirmedBooking(inHours(48), 100_000); // >= 24h
         when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
+        when(paymentService.refundAllCardPayments(BOOKING_ID, "changed plans")).thenReturn(100_000L);
 
         BookingResponse resp = service.cancelByUser(USER_ID, BOOKING_ID, "changed plans");
 
         assertThat(booking.getStatus()).isEqualTo("cancelled_by_user");
         assertThat(booking.getCancelledAt()).isNotNull();
         assertThat(resp.getRefundAmount()).isEqualTo(100_000);
-        verify(paymentService).refundBookingPayment(BOOKING_ID, 100_000, "changed plans");
+        verify(paymentService).refundAllCardPayments(BOOKING_ID, "changed plans");
     }
 
     @Test
-    void cancelByUserPartialRefundInsidePartialWindow() {
-        Booking booking = confirmedBooking(inHours(18), 100_000); // >=12 and <24
+    void cancellingExactlyOnTheDeadlineStillRefunds() {
+        Booking booking = confirmedBooking(inHours(25), 100_000); // the 24h deadline is an hour off
+        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
+        when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
+        when(paymentService.refundAllCardPayments(BOOKING_ID, null)).thenReturn(100_000L);
+
+        BookingResponse resp = service.cancelByUser(USER_ID, BOOKING_ID, null);
+
+        assertThat(resp.getRefundAmount()).isEqualTo(100_000);
+    }
+
+    @Test
+    void cancelByUserRefundsNothingInsideTheWindow() {
+        Booking booking = confirmedBooking(inHours(18), 100_000); // under 24h: no partial any more
         when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
         BookingResponse resp = service.cancelByUser(USER_ID, BOOKING_ID, null);
 
-        assertThat(resp.getRefundAmount()).isEqualTo(50_000); // 50%
-        verify(paymentService).refundBookingPayment(BOOKING_ID, 50_000, null);
+        assertThat(booking.getStatus()).isEqualTo("cancelled_by_user");
+        assertThat(resp.getRefundAmount()).isZero();
+        verify(paymentService, never()).refundAllCardPayments(any(UUID.class), any());
     }
 
     @Test
     void cancelByUserNoRefundWhenTooLate() {
-        Booking booking = confirmedBooking(inHours(2), 100_000); // < 12h
+        Booking booking = confirmedBooking(inHours(2), 100_000);
         when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
         BookingResponse resp = service.cancelByUser(USER_ID, BOOKING_ID, null);
 
         assertThat(resp.getRefundAmount()).isZero();
-        verify(paymentService, never()).refundBookingPayment(any(UUID.class), anyInt(), any());
+        verify(paymentService, never()).refundAllCardPayments(any(UUID.class), any());
     }
 
     @Test
@@ -424,12 +440,14 @@ class BookingServiceTest {
                 .price(100_000L).startsAt(inHours(48)).build();
         when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
+        // In time, so the refund runs — but an unpaid hold has no card payment,
+        // so there is nothing to give back.
+        when(paymentService.refundAllCardPayments(BOOKING_ID, null)).thenReturn(0L);
 
         BookingResponse resp = service.cancelByUser(USER_ID, BOOKING_ID, null);
 
         assertThat(booking.getStatus()).isEqualTo("cancelled_by_user");
         assertThat(resp.getRefundAmount()).isZero();
-        verify(paymentService, never()).refundBookingPayment(any(UUID.class), anyInt(), any());
     }
 
     @Test
@@ -446,15 +464,16 @@ class BookingServiceTest {
     @Test
     void cancelByOwnerAlwaysRefundsFullEvenWhenLate() {
         Booking booking = Booking.builder().id(BOOKING_ID).status("confirmed").user(player).stadium(stadium)
-                .price(80_000L).startsAt(inHours(1)).build(); // < 12h: a user would get 0
+                .price(80_000L).startsAt(inHours(1)).build(); // inside the window: a user would get 0
         when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
+        when(paymentService.refundAllCardPayments(BOOKING_ID, "pitch flooded")).thenReturn(80_000L);
 
         BookingResponse resp = service.cancelByOwner(OWNER_ID, BOOKING_ID, "pitch flooded");
 
         assertThat(booking.getStatus()).isEqualTo("cancelled_by_owner");
         assertThat(resp.getRefundAmount()).isEqualTo(80_000);
-        verify(paymentService).refundBookingPayment(BOOKING_ID, 80_000, "pitch flooded");
+        verify(paymentService).refundAllCardPayments(BOOKING_ID, "pitch flooded");
     }
 
     @Test

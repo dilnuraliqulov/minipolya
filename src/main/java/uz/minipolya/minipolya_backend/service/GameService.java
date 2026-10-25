@@ -193,7 +193,7 @@ public class GameService {
         GameParticipant participant = participantRepository.findByGameIdAndUserId(gameId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("You are not in this game"));
         if (participant.getStatus() == GameParticipant.Status.PAID && participant.getPayment() != null) {
-            paymentService.refundFullPayment(participant.getPayment().getId(), "Left the game");
+            paymentService.refundInFull(participant.getPayment(), "Left the game");
         }
         participantRepository.delete(participant);
         safeNotify(() -> notificationService.notify(game.getCreator().getId(),
@@ -358,7 +358,7 @@ public class GameService {
     private void refundPaidParticipants(Game game, String reason) {
         for (GameParticipant participant : participantRepository.findByGameId(game.getId())) {
             if (participant.getStatus() == GameParticipant.Status.PAID && participant.getPayment() != null) {
-                paymentService.refundFullPayment(participant.getPayment().getId(), reason);
+                paymentService.refundInFull(participant.getPayment(), reason);
                 participant.setStatus(GameParticipant.Status.REFUNDED);
                 participantRepository.save(participant);
             }

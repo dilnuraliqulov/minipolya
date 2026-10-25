@@ -43,9 +43,8 @@ public class AppProperties {
     @Getter
     @Setter
     public static class Cancellation {
-        private int defaultFullRefundHours = 24;
-        private int defaultPartialRefundHours = 12;
-        private int defaultPartialRefundPercent = 50;
+        /** Window used for a stadium that does not set its own. */
+        private int defaultCancellationHours = 24;
     }
 
     @Getter

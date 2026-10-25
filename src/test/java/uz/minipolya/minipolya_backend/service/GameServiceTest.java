@@ -593,7 +593,7 @@ class GameServiceTest {
 
         assertThat(game.getStatus()).isEqualTo("cancelled_slot_taken");
         assertThat(paid.getStatus()).isEqualTo(GameParticipant.Status.REFUNDED);
-        verify(paymentService).refundFullPayment(PAYMENT_ID, "Slot taken by another booking");
+        verify(paymentService).refundInFull(paid.getPayment(), "Slot taken by another booking");
     }
 
     // ---- cancelUnfilledGames (GameTimeoutJob) ----
@@ -617,6 +617,6 @@ class GameServiceTest {
         assertThat(count).isEqualTo(1);
         assertThat(game.getStatus()).isEqualTo("cancelled_not_filled");
         assertThat(paid.getStatus()).isEqualTo(GameParticipant.Status.REFUNDED);
-        verify(paymentService).refundFullPayment(PAYMENT_ID, "Game did not fill in time");
+        verify(paymentService).refundInFull(paid.getPayment(), "Game did not fill in time");
     }
 }

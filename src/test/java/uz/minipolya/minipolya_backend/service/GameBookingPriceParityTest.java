@@ -29,7 +29,7 @@ import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.PriceCalculator;
-import uz.minipolya.minipolya_backend.util.RefundCalculator;
+import uz.minipolya.minipolya_backend.util.CancellationPolicy;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -119,10 +119,12 @@ class GameBookingPriceParityTest {
         BookingMapper bookingMapper = mock(BookingMapper.class);
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
+        PaymentService bookingPayments = mock(PaymentService.class);
         bookingService = new BookingService(bookingRepository, stadiumRepository, userRepository,
-                priceCalculator, new RefundCalculator(), bookingMapper, new AppProperties(),
-                mock(PaymentService.class), mock(GameService.class), mock(NotificationService.class),
-                mock(AuditService.class), windowValidator, savedCardService);
+                priceCalculator, new CancellationPolicy(),
+                new BookingResponseFactory(bookingMapper, new CancellationPolicy(), bookingPayments),
+                new AppProperties(), bookingPayments, mock(GameService.class),
+                mock(NotificationService.class), mock(AuditService.class), windowValidator, savedCardService);
 
         PlatformSettingsService platformSettings = mock(PlatformSettingsService.class);
         when(platformSettings.current()).thenReturn(PlatformSettings.builder().build());

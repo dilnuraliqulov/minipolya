@@ -1595,7 +1595,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Chilonzor Arena\",\n  \"address\": \"Chilonzor 12, Tashkent\",\n  \"latitude\": 41.2756,\n  \"longitude\": 69.2034,\n  \"phone\": \"+998901112233\",\n  \"description\": \"Covered pitch\",\n  \"format\": \"5x5\",\n  \"surfaceType\": \"artificial\",\n  \"openTime\": \"08:00\",\n  \"closeTime\": \"23:00\",\n  \"pricePerHour\": 13000000,\n  \"fullRefundHours\": 24,\n  \"partialRefundHours\": 12,\n  \"partialRefundPercent\": 50,\n  \"photos\": [\n    \"https://cdn.example.com/a.jpg\"\n  ],\n  \"amenities\": {\n    \"parking\": true,\n    \"lighting\": true,\n    \"showers\": true,\n    \"lockerRoom\": true,\n    \"wifi\": false,\n    \"cafe\": false,\n    \"equipmentRental\": true,\n    \"tribune\": false\n  }\n}",
+              "raw": "{\n  \"name\": \"Chilonzor Arena\",\n  \"address\": \"Chilonzor 12, Tashkent\",\n  \"latitude\": 41.2756,\n  \"longitude\": 69.2034,\n  \"phone\": \"+998901112233\",\n  \"description\": \"Covered pitch\",\n  \"format\": \"5x5\",\n  \"surfaceType\": \"artificial\",\n  \"openTime\": \"08:00\",\n  \"closeTime\": \"23:00\",\n  \"pricePerHour\": 13000000,\n  \"photos\": [\n    \"https://cdn.example.com/a.jpg\"\n  ],\n  \"amenities\": {\n    \"parking\": true,\n    \"lighting\": true,\n    \"showers\": true,\n    \"lockerRoom\": true,\n    \"wifi\": false,\n    \"cafe\": false,\n    \"equipmentRental\": true,\n    \"tribune\": false\n  },\n  \"cancellationHours\": 24\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2246,7 +2246,7 @@
                   "    });",
                   "});",
                   "pm.test('shows the cancellation policy before booking', function () {",
-                  "    pm.expect(pm.response.json().data.cancellationPolicy).to.have.property('fullRefundHours');",
+                  "    pm.expect(pm.response.json().data.cancellationPolicy).to.have.property('cancellationHours');",
                   "});"
                 ]
               }
@@ -5125,6 +5125,24 @@
                   "});",
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('shows the single cancellation window', function () {",
+                  "    var p = pm.response.json().data.cancellationPolicy;",
+                  "    pm.expect(p).to.have.property('cancellationHours');",
+                  "    pm.expect(p).to.not.have.property('partialRefundHours');",
+                  "    pm.expect(p).to.not.have.property('partialRefundPercent');",
+                  "});",
+                  "pm.test('says when cancelling stops being refundable, and for how much', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.cancellationDeadline, 'cancellationDeadline').to.be.a('string');",
+                  "    pm.expect(d.refundIfCancelledNow, 'refundIfCancelledNow').to.be.a('number');",
+                  "    pm.expect(d.refundIfCancelledNow % 1).to.eql(0);",
+                  "    var deadline = new Date(d.cancellationDeadline);",
+                  "    var start = new Date(d.startsAt);",
+                  "    var hours = (start - deadline) / 3600000;",
+                  "    pm.expect(hours).to.eql(d.cancellationPolicy.cancellationHours);",
+                  "    // Captured so the cancel request can check it was honoured.",
+                  "    pm.environment.set('refundIfCancelledNow', d.refundIfCancelledNow);",
                   "});"
                 ]
               }
@@ -5953,10 +5971,18 @@
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
                   "});",
-                  "pm.test('refund is a whole so m integer and the status changed', function () {",
+                  "pm.test('refund is a whole tiyin integer and the status changed', function () {",
                   "    var d = pm.response.json().data;",
                   "    pm.expect(d.status).to.eql('cancelled_by_user');",
                   "    pm.expect(d.refundAmount % 1).to.eql(0);",
+                  "});",
+                  "pm.test('the refund matches what was promised before cancelling', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    var promised = pm.environment.get('refundIfCancelledNow');",
+                  "    if (promised === undefined || promised === null || promised === '') {",
+                  "        pm.expect.fail('run \"200 booking detail\" first so the promise is captured');",
+                  "    }",
+                  "    pm.expect(d.refundAmount).to.eql(Number(promised));",
                   "});"
                 ]
               }
@@ -6453,10 +6479,12 @@
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
                   "});",
-                  "pm.test('cancelled by owner with a full refund', function () {",
+                  "pm.test('cancelled by owner, every card payment back in full', function () {",
                   "    var d = pm.response.json().data;",
                   "    pm.expect(d.status).to.eql('cancelled_by_owner');",
-                  "    pm.expect(d.refundAmount).to.eql(d.price);",
+                  "    // An owner cancellation ignores the window, so everything the",
+                  "    // player paid by card comes back. This booking was paid by card.",
+                  "    pm.expect(d.refundAmount).to.eql(d.paidAmount);",
                   "});"
                 ]
               }

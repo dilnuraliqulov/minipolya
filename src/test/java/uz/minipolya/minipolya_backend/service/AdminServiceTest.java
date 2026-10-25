@@ -273,7 +273,7 @@ class AdminServiceTest {
 
         assertThat(stadium.getStatus()).isEqualTo("blocked");
         assertThat(future.getStatus()).isEqualTo("cancelled_by_owner");
-        verify(paymentService).refundBookingPayment(BOOKING_ID, 100_000, "fraud");
+        verify(paymentService).refundAllCardPayments(BOOKING_ID, "fraud");
     }
 
     @Test

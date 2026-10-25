@@ -7,7 +7,9 @@ import lombok.NoArgsConstructor;
 
 /**
  * The stadium's cancellation policy — players must see this before confirming
- * a booking.
+ * a booking. Cancelling at least {@code cancellationHours} before kick-off
+ * refunds every card payment in full; later cancels the booking but refunds
+ * nothing.
  */
 @Data
 @Builder
@@ -15,7 +17,5 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class CancellationPolicyResponse {
 
-    private int fullRefundHours;
-    private int partialRefundHours;
-    private int partialRefundPercent;
+    private int cancellationHours;
 }

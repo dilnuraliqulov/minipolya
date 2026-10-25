@@ -162,47 +162,78 @@ class PaymentServiceTest {
         verify(bookingRepository, never()).save(any());
     }
 
-    // ---- createRefund ----
+    // ---- refundInFull: the only refund there is ----
 
     @Test
-    void createRefundAddsNegativeRowAndMarksOriginalRefunded() {
+    void refundInFullAddsNegativeRowForTheWholeAmountAndMarksOriginalRefunded() {
         Booking booking = pendingBooking();
         Payment original = Payment.builder().id(PAYMENT_ID).booking(booking).user(player).amount(100_000L)
                 .ownerAmount(100_000L).platformAmount(0L).commissionPercent(0).method(Payment.Method.CARD)
                 .paymentType(Payment.PaymentType.BOOKING).provider(Payment.Provider.PAYME)
                 .status(Payment.Status.COMPLETED).build();
-        when(paymentRepository.findById(PAYMENT_ID)).thenReturn(Optional.of(original));
         when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        Payment refund = service.createRefund(PAYMENT_ID, 50_000, "user cancelled");
+        Payment refund = service.refundInFull(original, "user cancelled");
 
-        assertThat(refund.getAmount()).isEqualTo(-50_000);
+        assertThat(refund.getAmount()).isEqualTo(-100_000);
         assertThat(refund.getPaymentType()).isEqualTo(Payment.PaymentType.REFUND);
-        assertThat(refund.getStatus()).isEqualTo(Payment.Status.COMPLETED);
+        assertThat(refund.getStatus()).isEqualTo(Payment.Status.REFUNDED);
         assertThat(refund.getRefundOfPayment()).isSameAs(original);
         assertThat(refund.getRefundReason()).isEqualTo("user cancelled");
         assertThat(original.getStatus()).isEqualTo(Payment.Status.REFUNDED);
     }
 
     @Test
-    void createRefundWritesParseableJsonAuditDetails() {
+    void refundInFullWritesParseableJsonAuditDetails() {
         Booking booking = pendingBooking();
         Payment original = Payment.builder().id(PAYMENT_ID).booking(booking).user(player).amount(100_000L)
                 .ownerAmount(100_000L).platformAmount(0L).commissionPercent(0).method(Payment.Method.CARD)
                 .paymentType(Payment.PaymentType.BOOKING).provider(Payment.Provider.PAYME)
                 .status(Payment.Status.COMPLETED).build();
-        when(paymentRepository.findById(PAYMENT_ID)).thenReturn(Optional.of(original));
         when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        service.createRefund(PAYMENT_ID, 50_000, "user cancelled");
+        service.refundInFull(original, "user cancelled");
 
         ArgumentCaptor<String> details = ArgumentCaptor.forClass(String.class);
         verify(auditService).log(eq(PLAYER_ID), eq("REFUND_CREATED"), eq("payment"), any(), details.capture());
 
         // The UUID must be quoted, otherwise the details column holds unparseable JSON.
         assertThat(details.getValue())
-                .isEqualTo("{\"originalPaymentId\":\"" + PAYMENT_ID + "\",\"amount\":-50000}");
+                .isEqualTo("{\"originalPaymentId\":\"" + PAYMENT_ID + "\",\"amount\":-100000}");
         assertThatCode(() -> new ObjectMapper().readTree(details.getValue())).doesNotThrowAnyException();
+    }
+
+    @Test
+    void cashIsNeverRefundedThroughThePlatform() {
+        Payment cash = Payment.builder().id(PAYMENT_ID).booking(pendingBooking()).user(player).amount(100_000L)
+                .ownerAmount(100_000L).platformAmount(0L).commissionPercent(0).method(Payment.Method.CASH)
+                .paymentType(Payment.PaymentType.BOOKING).provider(Payment.Provider.CASH)
+                .status(Payment.Status.PAID).build();
+
+        assertThat(service.refundInFull(cash, "owner cancelled")).isNull();
+        verify(paymentRepository, never()).save(any(Payment.class));
+    }
+
+    @Test
+    void anAlreadyRefundedPaymentIsNotRefundedTwice() {
+        Payment original = Payment.builder().id(PAYMENT_ID).booking(pendingBooking()).user(player).amount(100_000L)
+                .ownerAmount(100_000L).platformAmount(0L).commissionPercent(0).method(Payment.Method.CARD)
+                .paymentType(Payment.PaymentType.BOOKING).provider(Payment.Provider.ATMOS)
+                .status(Payment.Status.REFUNDED).build();
+
+        assertThat(service.refundInFull(original, "again")).isNull();
+        verify(paymentRepository, never()).save(any(Payment.class));
+    }
+
+    @Test
+    void aFailedPaymentIsNotRefunded() {
+        Payment failed = Payment.builder().id(PAYMENT_ID).booking(pendingBooking()).user(player).amount(100_000L)
+                .ownerAmount(100_000L).platformAmount(0L).commissionPercent(0).method(Payment.Method.CARD)
+                .paymentType(Payment.PaymentType.BOOKING).provider(Payment.Provider.ATMOS)
+                .status(Payment.Status.FAILED).build();
+
+        assertThat(service.refundInFull(failed, "cancelled")).isNull();
+        verify(paymentRepository, never()).save(any(Payment.class));
     }
 
     // ---- recordCashPayment ----
