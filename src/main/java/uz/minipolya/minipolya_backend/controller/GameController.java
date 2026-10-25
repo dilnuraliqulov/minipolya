@@ -66,7 +66,8 @@ public class GameController {
                                                      @Valid @RequestBody(required = false) JoinGameRequest request) {
         String side = request == null ? null : request.getSide();
         UUID teamId = request == null ? null : request.getTeamId();
-        return ApiResponse.ok(gameService.joinGame(id, userId, side, teamId), "Joined game");
+        UUID cardId = request == null ? null : request.getCardId();
+        return ApiResponse.ok(gameService.joinGame(id, userId, side, teamId, cardId), "Joined game");
     }
 
     @PostMapping("/api/games/{id}/pay")

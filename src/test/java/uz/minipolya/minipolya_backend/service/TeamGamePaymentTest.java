@@ -133,6 +133,130 @@ class TeamGamePaymentTest {
         assertThat(payment.getStatus()).isEqualTo(Payment.Status.FAILED);
     }
 
+    // ---- chargeForTeamGame ----
+
+    @Test
+    void theJoiningChargeSplitsTheSameWayAsTheHold() {
+        when(paymentProvider.charge(any())).thenReturn(
+                new ProviderTransaction("txn-charge-b", ProviderTransactionStatus.PAID));
+
+        Payment payment = service.chargeForTeamGame(gameTeam, card, Payment.PaymentType.TEAM_GAME);
+
+        ArgumentCaptor<ChargeCommand> command = ArgumentCaptor.forClass(ChargeCommand.class);
+        org.mockito.Mockito.verify(paymentProvider).charge(command.capture());
+        assertThat(command.getValue().amount()).isEqualTo(FEE + ADVANCE);
+        assertThat(command.getValue().ownerAmount()).isEqualTo(ADVANCE);
+        assertThat(command.getValue().platformAmount()).isEqualTo(FEE);
+        assertThat(payment.getStatus()).isEqualTo(Payment.Status.PAID);
+    }
+
+    @Test
+    void aRemainderChargeIsAllTheOwnersMoney() {
+        when(paymentProvider.charge(any())).thenReturn(
+                new ProviderTransaction("txn-remainder-b", ProviderTransactionStatus.PAID));
+
+        Payment payment = service.chargeForTeamGame(gameTeam, card, Payment.PaymentType.REMAINDER);
+
+        ArgumentCaptor<ChargeCommand> command = ArgumentCaptor.forClass(ChargeCommand.class);
+        org.mockito.Mockito.verify(paymentProvider).charge(command.capture());
+        assertThat(command.getValue().amount()).isEqualTo(7_500_000L);   // the remainder, no fee again
+        assertThat(command.getValue().ownerAmount()).isEqualTo(7_500_000L);
+        assertThat(command.getValue().platformAmount()).isZero();
+        assertThat(payment.getPaymentType()).isEqualTo(Payment.PaymentType.REMAINDER);
+    }
+
+    // ---- captureHeld ----
+
+    @Test
+    void capturingAHoldTakesTheReservedMoney() {
+        Payment held = heldPayment();
+        when(paymentProvider.capture("txn-hold-a")).thenReturn(
+                new ProviderTransaction("txn-hold-a", ProviderTransactionStatus.CAPTURED));
+
+        service.captureHeld(held);
+
+        assertThat(held.getStatus()).isEqualTo(Payment.Status.CAPTURED);
+    }
+
+    // ---- giveBackInFull ----
+
+    @Test
+    void givingBackAHoldReleasesItAndWritesNoRefundRow() {
+        Payment held = heldPayment();
+        when(paymentProvider.release("txn-hold-a")).thenReturn(
+                new ProviderTransaction("txn-hold-a", ProviderTransactionStatus.RELEASED));
+
+        Payment result = service.giveBackInFull(held, "Game cancelled");
+
+        org.mockito.Mockito.verify(paymentProvider).release("txn-hold-a");
+        org.mockito.Mockito.verify(paymentProvider, org.mockito.Mockito.never()).refund(any());
+        assertThat(held.getStatus()).isEqualTo(Payment.Status.RELEASED);
+        assertThat(result).isNull();   // no money moved, so there is nothing to record
+    }
+
+    @Test
+    void givingBackACapturedPaymentRefundsItInFull() {
+        Payment captured = heldPayment();
+        captured.setStatus(Payment.Status.CAPTURED);
+        when(paymentProvider.refund("txn-hold-a")).thenReturn(
+                new ProviderTransaction("txn-hold-a", ProviderTransactionStatus.REFUNDED));
+
+        Payment refund = service.giveBackInFull(captured, "Game cancelled");
+
+        assertThat(refund).isNotNull();
+        assertThat(refund.getAmount()).isEqualTo(-(FEE + ADVANCE));
+        assertThat(captured.getStatus()).isEqualTo(Payment.Status.REFUNDED);
+    }
+
+    @Test
+    void givingBackAFailedPaymentDoesNothing() {
+        Payment failed = heldPayment();
+        failed.setStatus(Payment.Status.FAILED);
+
+        assertThat(service.giveBackInFull(failed, "Game cancelled")).isNull();
+        org.mockito.Mockito.verifyNoInteractions(paymentProvider);
+    }
+
+    // ---- giveBackAllTeamPayments ----
+
+    @Test
+    void aTeamGetsBackItsHoldAndItsSettledPaymentsTogether() {
+        Payment held = heldPayment();
+        Payment remainder = heldPayment();
+        remainder.setStatus(Payment.Status.PAID);
+        remainder.setProviderTxnId("txn-remainder-a");
+        remainder.setAmount(7_500_000L);
+        remainder.setOwnerAmount(7_500_000L);
+        remainder.setPlatformAmount(0L);
+        when(paymentRepository.findByGameTeamId(gameTeam.getId())).thenReturn(List.of(held, remainder));
+        when(paymentProvider.release("txn-hold-a")).thenReturn(
+                new ProviderTransaction("txn-hold-a", ProviderTransactionStatus.RELEASED));
+        when(paymentProvider.refund("txn-remainder-a")).thenReturn(
+                new ProviderTransaction("txn-remainder-a", ProviderTransactionStatus.REFUNDED));
+
+        long returned = service.giveBackAllTeamPayments(gameTeam.getId(), "Game cancelled");
+
+        assertThat(returned).isEqualTo(FEE + ADVANCE + 7_500_000L);
+    }
+
+    private Payment heldPayment() {
+        return Payment.builder()
+                .id(UUID.randomUUID())
+                .game(gameTeam.getGame())
+                .gameTeam(gameTeam)
+                .user(leader)
+                .amount(FEE + ADVANCE)
+                .ownerAmount(ADVANCE)
+                .platformAmount(FEE)
+                .commissionPercent(0)
+                .method(Payment.Method.CARD)
+                .paymentType(Payment.PaymentType.TEAM_GAME)
+                .provider(Payment.Provider.ATMOS)
+                .providerTxnId("txn-hold-a")
+                .status(Payment.Status.HELD)
+                .build();
+    }
+
     private void verifyHeld(ArgumentCaptor<ChargeCommand> command) {
         org.mockito.Mockito.verify(paymentProvider).hold(command.capture());
     }

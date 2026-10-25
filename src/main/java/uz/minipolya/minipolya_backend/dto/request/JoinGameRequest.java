@@ -28,4 +28,11 @@ public class JoinGameRequest {
      * invited members, who join without a side and do not pay for the pitch.
      */
     private UUID teamId;
+
+    /**
+     * The saved card to charge the platform fee and owner advance on. Required
+     * when a leader joins a team_vs_team game as side "b"; ignored for casual
+     * games and for invited members, who pay nothing for the pitch.
+     */
+    private UUID cardId;
 }

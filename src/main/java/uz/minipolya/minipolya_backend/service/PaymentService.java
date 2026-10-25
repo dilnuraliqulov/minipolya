@@ -185,6 +185,106 @@ public class PaymentService {
         return payment;
     }
 
+    /**
+     * Takes one team's money now: its fee plus advance when it joins
+     * ({@code TEAM_GAME}), or its outstanding remainder later
+     * ({@code REMAINDER}).
+     *
+     * <p>A remainder is all the owner's — the platform already took its fee
+     * when the team joined, and charging a cut twice would double-count it.
+     *
+     * <p>A declined card comes back as a {@code FAILED} row, not an exception.
+     */
+    @Transactional
+    public Payment chargeForTeamGame(GameTeam gameTeam, SavedCard card, Payment.PaymentType type) {
+        boolean remainder = type == Payment.PaymentType.REMAINDER;
+        long ownerAmount = remainder ? gameTeam.getRemainderAmount() : gameTeam.getAdvanceAmount();
+        long platformAmount = remainder ? 0L : gameTeam.getFeeAmount();
+
+        ProviderTransaction txn = paymentProvider.charge(new ChargeCommand(
+                card.getProviderToken(), ownerAmount + platformAmount, ownerAmount, platformAmount,
+                UUID.randomUUID().toString()));
+
+        Payment payment = paymentRepository.save(teamGameRow(gameTeam, ownerAmount, platformAmount, txn, type,
+                txn.failed() ? Payment.Status.FAILED : Payment.Status.PAID));
+
+        log.info("Team game charge {}: gameTeamId={} type={} amount={}",
+                txn.failed() ? "declined" : "taken", gameTeam.getId(), type.getValue(),
+                ownerAmount + platformAmount);
+        return payment;
+    }
+
+    /** Settles a hold by taking the reserved money. */
+    @Transactional
+    public Payment captureHeld(Payment held) {
+        paymentProvider.capture(held.getProviderTxnId());
+        held.setStatus(Payment.Status.CAPTURED);
+        Payment saved = paymentRepository.save(held);
+        log.info("Hold captured: paymentId={} amount={}", held.getId(), held.getAmount());
+        return saved;
+    }
+
+    /** Settles every hold one team placed on one game. */
+    @Transactional
+    public void captureAllHeldTeamPayments(UUID gameTeamId) {
+        for (Payment payment : paymentRepository.findByGameTeamId(gameTeamId)) {
+            if (payment.getStatus() == Payment.Status.HELD) {
+                captureHeld(payment);
+            }
+        }
+    }
+
+    /**
+     * Gives one payment back in whichever way its state allows — "everything
+     * back" for a team game.
+     *
+     * <p>A hold is released: no money ever left the card, so there is nothing
+     * to record and no refund row is written. A payment that actually settled
+     * is refunded in full through {@link #refundInFull}. A failed, released or
+     * already-refunded row is left alone.
+     *
+     * @return the refund row, or {@code null} when a release or a no-op
+     */
+    @Transactional
+    public Payment giveBackInFull(Payment original, String reason) {
+        if (original.getStatus() == Payment.Status.HELD) {
+            paymentProvider.release(original.getProviderTxnId());
+            original.setStatus(Payment.Status.RELEASED);
+            paymentRepository.save(original);
+            auditService.log(original.getUser() == null ? null : original.getUser().getId(),
+                    "PAYMENT_RELEASED", "payment", original.getId(),
+                    "{\"amount\":" + original.getAmount() + ",\"reason\":\"" + reason + "\"}");
+            log.info("Hold released: paymentId={} amount={} reason={}",
+                    original.getId(), original.getAmount(), reason);
+            return null;
+        }
+        return refundInFull(original, reason);
+    }
+
+    /**
+     * Everything one team put into one game, given back: holds released, settled
+     * payments refunded in full.
+     *
+     * @return the tiyin the team no longer owes or has lost
+     */
+    @Transactional
+    public long giveBackAllTeamPayments(UUID gameTeamId, String reason) {
+        long returned = 0;
+        for (Payment payment : paymentRepository.findByGameTeamId(gameTeamId)) {
+            if (payment.getAmount() == null || payment.getAmount() <= 0) {
+                continue; // a refund row is not itself refundable
+            }
+            long amount = payment.getAmount();
+            Payment.Status before = payment.getStatus();
+            giveBackInFull(payment, reason);
+            if (before != payment.getStatus()) {
+                returned += amount;
+            }
+        }
+        log.info("Team payments given back: gameTeamId={} amount={} reason={}", gameTeamId, returned, reason);
+        return returned;
+    }
+
     /** One team-game payment row. Amounts and split never change once written. */
     private Payment teamGameRow(GameTeam gameTeam, long ownerAmount, long platformAmount,
                                 ProviderTransaction txn, Payment.PaymentType type, Payment.Status status) {
