@@ -40,6 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -474,6 +475,24 @@ class BookingServiceTest {
         assertThat(booking.getStatus()).isEqualTo("cancelled_by_owner");
         assertThat(resp.getRefundAmount()).isEqualTo(80_000);
         verify(paymentService).refundAllCardPayments(BOOKING_ID, "pitch flooded");
+    }
+
+    @Test
+    void cancelByOwnerSendsAGameBookingThroughTheGame() {
+        UUID gameId = UUID.randomUUID();
+        Booking booking = Booking.builder().id(BOOKING_ID).status("confirmed").user(player).stadium(stadium)
+                .source("game").gameId(gameId).price(80_000L).startsAt(inHours(48)).build();
+        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
+        when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
+        when(gameService.cancelGameForBooking(eq(gameId), anyString())).thenReturn(true);
+
+        service.cancelByOwner(OWNER_ID, BOOKING_ID, "pitch flooded");
+
+        // A team game's money hangs off game_teams; refunding the booking's own
+        // payments would hand back nothing and hide the real refund.
+        verify(gameService).cancelGameForBooking(eq(gameId), anyString());
+        verify(paymentService, never()).refundAllCardPayments(eq(BOOKING_ID), anyString());
+        assertThat(booking.getStatus()).isEqualTo("cancelled_by_owner");
     }
 
     @Test

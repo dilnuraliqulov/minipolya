@@ -18,6 +18,7 @@ import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
+import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.exception.SlotAlreadyBookedException;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
@@ -55,6 +56,9 @@ public class TeamGameService {
     /** Fixed copy: an opponent arriving inside the window could not get there in time. */
     static final String TOO_LATE_TO_JOIN =
             "O'yin boshlanishiga 3 soatdan kam qoldi, qo'shilib bo'lmaydi";
+
+    /** Shown to the team that is still in after its opponent walked out. */
+    static final String OPPONENT_LEFT = "Raqib bekor qildi, yangi raqib qidirilmoqda";
 
     private static final String STATUS_WAITING = "open";
     private static final String STATUS_CONFIRMED = "confirmed";
@@ -186,11 +190,28 @@ public class TeamGameService {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         boolean waiting = STATUS_WAITING.equals(game.getStatus());
 
+        // A confirmed game holds a slot; freeing it is the first thing to do,
+        // whichever band we are in.
         if (!waiting) {
-            throw new BadRequestException("Only a game that is looking for an opponent can be cancelled");
+            freeBooking(game, "A team cancelled and the game is looking for a new opponent");
         }
+
         if (now.isAfter(opponentDeadline(game))) {
-            endWaitingGame(game, "cancelled_not_filled", "No opponent was found in time");
+            if (waiting) {
+                // The timeout job would have refunded this team within the
+                // minute; racing it by hand must not cost them their money.
+                endWaitingGame(game, "cancelled_not_filled", "No opponent was found in time");
+                return;
+            }
+            // Nobody can replace them in time, so the game is over: the leaver
+            // forfeits and the team that stayed is made whole.
+            paymentService.keepAllTeamPayments(leaving.getId());
+            releaseTeam(leaving, now);
+            endWaitingGame(game, "cancelled_not_filled",
+                    "The opponent cancelled too close to kick-off");
+            auditService.log(userId, "GAME_CANCELLED", "game", game.getId(),
+                    "{\"reason\":\"opponent_left_past_deadline\",\"refunded\":false}");
+            log.info("Confirmed team game ended: gameId={} leaverForfeited=true", game.getId());
             return;
         }
 
@@ -202,13 +223,33 @@ public class TeamGameService {
         }
         releaseTeam(leaving, now);
 
-        game.setStatus("cancelled_by_creator");
-        gameRepository.save(game);
-        notifyCancelled(game, "Игра отменена создателем.");
-        auditService.log(userId, "GAME_CANCELLED", "game", game.getId(),
-                "{\"reason\":\"cancelled_by_creator\",\"refunded\":" + refundable + "}");
-        log.info("Waiting team game cancelled by its leader: gameId={} refunded={}",
-                game.getId(), refundable);
+        if (waiting) {
+            game.setStatus("cancelled_by_creator");
+            gameRepository.save(game);
+            notifyCancelled(game, "Игра отменена создателем.");
+            auditService.log(userId, "GAME_CANCELLED", "game", game.getId(),
+                    "{\"reason\":\"cancelled_by_creator\",\"refunded\":" + refundable + "}");
+            log.info("Waiting team game cancelled by its leader: gameId={} refunded={}",
+                    game.getId(), refundable);
+            return;
+        }
+        reopenWithRemainingTeam(game, leaving, userId, refundable);
+    }
+
+    /**
+     * The owner cancelled the booking, or an admin blocked the stadium. Neither
+     * is any team's fault, so both get everything back whatever the window
+     * says, and the game is over.
+     */
+    @Transactional
+    public void cancelForBookingCancelled(UUID gameId, String reason) {
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new ResourceNotFoundException("Game not found"));
+        if (isOver(game)) {
+            return; // already cancelled or played: nothing to give back twice
+        }
+        game.setBookingId(null);
+        endWaitingGame(game, "cancelled_slot_taken", reason);
     }
 
     /**
@@ -346,6 +387,71 @@ public class TeamGameService {
         }
         auditService.log(null, "GAME_CANCELLED", "game", game.getId(),
                 "{\"reason\":\"" + status + "\"}");
+    }
+
+    /**
+     * Gives the slot back. {@code cancelled_opponent_left} rather than one of
+     * the ordinary cancel statuses, so the owner's schedule says why the pitch
+     * is free again instead of blaming a player or the owner.
+     */
+    private void freeBooking(Game game, String reason) {
+        if (game.getBookingId() == null) {
+            return;
+        }
+        bookingRepository.findById(game.getBookingId()).ifPresent(booking -> {
+            booking.setStatus("cancelled_opponent_left");
+            booking.setCancelledAt(OffsetDateTime.now(ZoneOffset.UTC));
+            booking.setCancellationReason(reason);
+            bookingRepository.save(booking);
+            notifyOwner(game, "Слот освободился: одна из команд отменила игру.");
+        });
+        game.setBookingId(null);
+    }
+
+    /**
+     * One team is gone but the other is still in and there is still time to
+     * find a replacement, so the game goes back to WAITING rather than ending.
+     */
+    private void reopenWithRemainingTeam(Game game, GameTeam leaving, UUID userId, boolean refunded) {
+        if (leaving.getSide() == Side.A) {
+            game.setTeamA(null);
+        } else {
+            game.setTeamB(null);
+        }
+        game.setStatus(STATUS_WAITING);
+        gameRepository.save(game);
+
+        for (GameTeam staying : gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)) {
+            UUID leaderId = staying.getLeader().getId();
+            safeNotify(() -> notificationService.notify(leaderId, Notification.Type.GAME_OPPONENT_LEFT,
+                    "Raqib bekor qildi", OPPONENT_LEFT,
+                    Notification.ReferenceType.GAME, game.getId()));
+        }
+        UUID leaverId = leaving.getLeader().getId();
+        String leaverMessage = refunded
+                ? "Siz o'yinni bekor qildingiz. To'lovingiz to'liq qaytarildi."
+                : "Siz o'yinni bekor qildingiz. Bekor qilish muddati o'tgani uchun to'lov qaytarilmaydi.";
+        safeNotify(() -> notificationService.notify(leaverId, Notification.Type.GAME_CANCELLED,
+                "Игра отменена", leaverMessage, Notification.ReferenceType.GAME, game.getId()));
+
+        auditService.log(userId, "GAME_OPPONENT_LEFT", "game", game.getId(),
+                "{\"side\":\"" + leaving.getSide().getValue() + "\",\"refunded\":" + refunded + "}");
+        log.info("Team game reopened after a team left: gameId={} side={} refunded={}",
+                game.getId(), leaving.getSide().getValue(), refunded);
+    }
+
+    private void notifyOwner(Game game, String message) {
+        if (game.getStadium().getOwner() == null) {
+            return;
+        }
+        UUID ownerId = game.getStadium().getOwner().getId();
+        safeNotify(() -> notificationService.notify(ownerId, Notification.Type.BOOKING_CANCELLED,
+                "Слот освободился", message, Notification.ReferenceType.GAME, game.getId()));
+    }
+
+    /** True once a game can no longer move: played, or already cancelled. */
+    private boolean isOver(Game game) {
+        return !STATUS_WAITING.equals(game.getStatus()) && !STATUS_CONFIRMED.equals(game.getStatus());
     }
 
     /** Takes a team out of the game, keeping its row so its payments stay explainable. */

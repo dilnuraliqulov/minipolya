@@ -64,6 +64,7 @@ class AdminServiceTest {
     private PaymentService paymentService;
     private NotificationService notificationService;
     private AuditService auditService;
+    private GameService gameService;
     private AdminService service;
 
     @BeforeEach
@@ -79,9 +80,10 @@ class AdminServiceTest {
         notificationService = mock(NotificationService.class);
         auditService = mock(AuditService.class);
 
+        gameService = mock(GameService.class);
         service = new AdminService(userRepository, stadiumRepository, bookingRepository, paymentRepository,
                 gameRepository, reviewRepository, ownerApplicationRepository, paymentService,
-                notificationService, auditService);
+                notificationService, auditService, gameService);
     }
 
     private Stadium stadium(String status) {
@@ -274,6 +276,30 @@ class AdminServiceTest {
         assertThat(stadium.getStatus()).isEqualTo("blocked");
         assertThat(future.getStatus()).isEqualTo("cancelled_by_owner");
         verify(paymentService).refundAllCardPayments(BOOKING_ID, "fraud");
+    }
+
+    @Test
+    void blockStadiumRefundsAGameBookingThroughTheGameNotTheBooking() {
+        Stadium stadium = stadium("approved");
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+        UUID gameId = UUID.randomUUID();
+        Booking gameBooking = Booking.builder().id(BOOKING_ID).status("confirmed").price(100_000L)
+                .source("game").gameId(gameId)
+                .user(User.builder().id(BOOKING_USER_ID).build())
+                .startsAt(OffsetDateTime.now().plusDays(3)).build();
+        when(bookingRepository.findByStadiumIdAndStartsAtBetween(eq(STADIUM_ID), any(), any()))
+                .thenReturn(List.of(gameBooking));
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(gameService.cancelGameForBooking(eq(gameId), anyString())).thenReturn(true);
+
+        service.updateStadiumStatus(STADIUM_ID,
+                AdminUpdateStadiumStatusRequest.builder().status("blocked").reason("fraud").build(), ADMIN_ID);
+
+        // The teams' money hangs off game_teams, so refunding the booking's own
+        // payments would give back nothing and hide the real refund.
+        verify(gameService).cancelGameForBooking(eq(gameId), anyString());
+        verify(paymentService, never()).refundAllCardPayments(eq(BOOKING_ID), anyString());
     }
 
     @Test

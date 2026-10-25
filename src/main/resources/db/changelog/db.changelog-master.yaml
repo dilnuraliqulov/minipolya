@@ -49,3 +49,5 @@ databaseChangeLog:
       file: db/changelog/changes/024-cancellation-policy.sql
   - include:
       file: db/changelog/changes/025-game-teams.sql
+  - include:
+      file: db/changelog/changes/026-opponent-left.sql

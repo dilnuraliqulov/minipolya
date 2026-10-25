@@ -302,9 +302,13 @@ public class BookingService {
         requireCancellable(booking);
 
         // The owner cancelling is never the player's fault: everything back,
-        // whatever the window says.
+        // whatever the window says. A game booking holds none of its teams'
+        // money — that hangs off the game — so the game refunds them instead.
         applyCancellation(booking, "cancelled_by_owner", reason);
-        long refundAmount = paymentService.refundAllCardPayments(booking.getId(), reason);
+        long refundAmount = isGameBooking(booking)
+                        && gameService.cancelGameForBooking(booking.getGameId(), cancelReasonOf(reason))
+                ? 0L
+                : paymentService.refundAllCardPayments(booking.getId(), reason);
 
         if (booking.getUser() != null) {
             UUID uid = booking.getUser().getId();
@@ -379,6 +383,15 @@ public class BookingService {
         return duration > 1
                 ? "One or more of the selected hours is already booked"
                 : "Slot is already booked";
+    }
+
+    /** A booking created by a game: its money belongs to the game, not to it. */
+    private boolean isGameBooking(Booking booking) {
+        return "game".equals(booking.getSource()) && booking.getGameId() != null;
+    }
+
+    private String cancelReasonOf(String reason) {
+        return reason == null || reason.isBlank() ? "The owner cancelled the booking" : reason;
     }
 
     private void applyCancellation(Booking booking, String status, String reason) {

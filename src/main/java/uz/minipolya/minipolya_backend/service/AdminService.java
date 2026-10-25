@@ -64,6 +64,7 @@ public class AdminService {
     private final PaymentService paymentService;
     private final NotificationService notificationService;
     private final AuditService auditService;
+    private final GameService gameService;
 
     @Transactional(readOnly = true)
     public AdminPlatformStatsResponse getPlatformStats() {
@@ -257,7 +258,13 @@ public class AdminService {
             bookingRepository.save(booking);
             // Blocking a stadium is the platform's doing, so it follows the
             // owner rule: every card payment back in full, whatever the window.
-            paymentService.refundAllCardPayments(booking.getId(), cancelReason);
+            // A game booking holds none of its teams' money, so the game gives
+            // that back instead.
+            boolean refundedByGame = "game".equals(booking.getSource()) && booking.getGameId() != null
+                    && gameService.cancelGameForBooking(booking.getGameId(), cancelReason);
+            if (!refundedByGame) {
+                paymentService.refundAllCardPayments(booking.getId(), cancelReason);
+            }
             if (booking.getUser() != null) {
                 notify(booking.getUser().getId(), Notification.Type.BOOKING_CANCELLED, "Бронь отменена",
                         "Стадион заблокирован — ваша бронь отменена, возврат средств оформлен.",

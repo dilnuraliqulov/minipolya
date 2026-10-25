@@ -241,6 +241,12 @@ public class GameService {
     @Transactional
     public void cancelGame(UUID gameId, UUID userId) {
         Game game = requireGame(gameId);
+        if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
+            // Either leader may pull their team out, waiting or confirmed, and
+            // what that costs them depends on how close kick-off is.
+            teamGameService.cancelByLeader(game, userId);
+            return;
+        }
         if (!game.getCreator().getId().equals(userId)) {
             throw new ForbiddenException("Only the creator can cancel this game");
         }
@@ -254,6 +260,35 @@ public class GameService {
                 "Игра в «" + game.getStadium().getName() + "» отменена создателем.");
         auditService.log(userId, "GAME_CANCELLED", "game", gameId, "{\"reason\":\"cancelled_by_creator\"}");
         log.info("Game cancelled by creator: id={} userId={}", gameId, userId);
+    }
+
+    /**
+     * Called when the stadium owner cancels a {@code source = game} booking, or
+     * an admin blocks the stadium. The booking is not where a team game's money
+     * lives, so the game itself has to give it back.
+     *
+     * @return true when the game handled the refunds, so the caller should not
+     *         also refund the booking's own payments
+     */
+    @Transactional
+    public boolean cancelGameForBooking(UUID gameId, String reason) {
+        Game game = gameRepository.findById(gameId).orElse(null);
+        if (game == null) {
+            return false;
+        }
+        if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
+            teamGameService.cancelForBookingCancelled(gameId, reason);
+            return true;
+        }
+        if (STATUS_OPEN.equals(game.getStatus()) || "confirmed".equals(game.getStatus())) {
+            game.setStatus("cancelled_slot_taken");
+            gameRepository.save(game);
+            refundPaidParticipants(game, reason);
+            notifyParticipants(game, Notification.Type.GAME_CANCELLED, "Игра отменена",
+                    "Игра в «" + game.getStadium().getName() + "» отменена.");
+            auditService.log(null, "GAME_CANCELLED", "game", gameId, "{\"reason\":\"booking_cancelled\"}");
+        }
+        return true;
     }
 
     /** Called by PaymentService when a game share payment completes. */
