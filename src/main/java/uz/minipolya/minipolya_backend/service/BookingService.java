@@ -10,10 +10,12 @@ import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.dto.request.CreateBookingRequest;
 import uz.minipolya.minipolya_backend.dto.request.CreateManualBookingRequest;
+import uz.minipolya.minipolya_backend.dto.request.PaymentOption;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Notification;
+import uz.minipolya.minipolya_backend.entity.SavedCard;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
@@ -65,6 +67,7 @@ public class BookingService {
     private final NotificationService notificationService;
     private final AuditService auditService;
     private final BookingWindowValidator bookingWindowValidator;
+    private final SavedCardService savedCardService;
 
     @Transactional
     public BookingResponse createBooking(UUID userId, CreateBookingRequest request) {
@@ -88,6 +91,10 @@ public class BookingService {
         }
 
         long price = bookingPriceCalculator.totalPrice(stadium, startsAt, duration);
+        long amountToCharge = amountFor(stadium, price, request.getPaymentOption());
+
+        // Resolved before the booking row exists, so an unusable card costs nothing.
+        SavedCard card = savedCardService.requireOwnedCard(userId, request.getCardId());
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -97,6 +104,8 @@ public class BookingService {
                 .user(user)
                 .source("app")
                 .status("pending")
+                .paymentStatus(Booking.PaymentStatus.UNPAID)
+                .paidAmount(0L)
                 .startsAt(startsAt)
                 .endsAt(endsAt)
                 .durationHours(duration)
@@ -117,9 +126,35 @@ public class BookingService {
         gameService.cancelGamesOnSlot(stadium.getId(), startsAt, endsAt);
 
         auditService.log(userId, "BOOKING_CREATED", "booking", saved.getId());
-        log.info("Booking created: id={} stadiumId={} userId={} {}-{} price={}",
-                saved.getId(), stadium.getId(), userId, startsAt, endsAt, price);
+        log.info("Booking created: id={} stadiumId={} userId={} {}-{} price={} charging={}",
+                saved.getId(), stadium.getId(), userId, startsAt, endsAt, price, amountToCharge);
+
+        // Confirms the booking when the money arrives; a decline leaves it
+        // pending so the usual hold timeout expires it.
+        paymentService.chargeForBooking(saved, card, amountToCharge);
         return bookingMapper.toResponse(saved);
+    }
+
+    /**
+     * The player pays either the stadium's minimum or the full price — nothing
+     * else. MINIMUM needs a stadium minimum that is actually below this
+     * booking's price, otherwise there is no remainder and the choice is
+     * meaningless.
+     */
+    private long amountFor(Stadium stadium, long price, PaymentOption option) {
+        if (option == PaymentOption.FULL) {
+            return price;
+        }
+        Long minimum = stadium.getMinBookingAmount();
+        if (minimum == null) {
+            throw new BadRequestException(
+                    "This stadium requires full payment; it has no minimum booking amount");
+        }
+        if (minimum >= price) {
+            throw new BadRequestException(
+                    "The stadium minimum is not below this booking's price, so full payment is required");
+        }
+        return minimum;
     }
 
     /** Owner adds a walk-in/phone booking: confirmed immediately, no hold. */

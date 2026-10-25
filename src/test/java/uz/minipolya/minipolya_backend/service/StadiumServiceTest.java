@@ -13,6 +13,7 @@ import uz.minipolya.minipolya_backend.dto.request.UpdateStadiumRequest;
 import uz.minipolya.minipolya_backend.dto.response.StadiumDetailResponse;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
+import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.StadiumMapper;
@@ -21,6 +22,7 @@ import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
+import java.time.LocalTime;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -136,5 +138,69 @@ class StadiumServiceTest {
 
         assertThatThrownBy(() -> stadiumService.getPublicDetail(PUBLIC_STADIUM_ID, null))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // ---- min_booking_amount ----
+
+    @Test
+    void createRejectsAMinimumBelowTheAtmosFloor() {
+        CreateStadiumRequest request = CreateStadiumRequest.builder()
+                .name("Arena").address("Tashkent").format("5x5").surfaceType("artificial")
+                .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0))
+                .pricePerHour(10_000_000L)
+                .minBookingAmount(49_999L) // one tiyin under 500 so'm
+                .build();
+
+        assertThatThrownBy(() -> stadiumService.create(OWNER_ID, request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("50000");
+
+        verify(stadiumRepository, never()).save(any());
+    }
+
+    @Test
+    void createAcceptsAMinimumExactlyAtTheFloor() {
+        when(userRepository.findById(OWNER_ID)).thenReturn(Optional.of(User.builder().id(OWNER_ID).build()));
+        CreateStadiumRequest request = CreateStadiumRequest.builder()
+                .name("Arena").address("Tashkent").format("5x5").surfaceType("artificial")
+                .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0))
+                .pricePerHour(10_000_000L)
+                .minBookingAmount(Stadium.MIN_BOOKING_AMOUNT_FLOOR)
+                .build();
+        Stadium entity = Stadium.builder().id(STADIUM_ID).build();
+        when(stadiumMapper.toEntity(request)).thenReturn(entity);
+        when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        stadiumService.create(OWNER_ID, request);
+
+        verify(stadiumRepository).save(any(Stadium.class));
+    }
+
+    @Test
+    void updateRejectsAMinimumBelowTheAtmosFloor() {
+        Stadium existing = Stadium.builder().id(STADIUM_ID)
+                .owner(User.builder().id(OWNER_ID).build()).build();
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(existing));
+
+        UpdateStadiumRequest request = UpdateStadiumRequest.builder().minBookingAmount(1_000L).build();
+
+        assertThatThrownBy(() -> stadiumService.update(OWNER_ID, STADIUM_ID, request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("50000");
+
+        verify(stadiumRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void aNullMinimumIsAllowedAndMeansFullPaymentUpFront() {
+        Stadium existing = Stadium.builder().id(STADIUM_ID)
+                .owner(User.builder().id(OWNER_ID).build()).minBookingAmount(100_000L).build();
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(existing));
+        when(stadiumRepository.saveAndFlush(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        // A null field on a partial update means "leave it alone", so this must not throw.
+        stadiumService.update(OWNER_ID, STADIUM_ID, UpdateStadiumRequest.builder().build());
+
+        verify(stadiumRepository).saveAndFlush(existing);
     }
 }

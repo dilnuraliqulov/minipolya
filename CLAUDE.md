@@ -232,6 +232,35 @@ When you need to change the schema (add column, new table, alter constraint):
   - `confirmed` → `cancelled_by_user`
   - `confirmed` → `cancelled_by_owner` (always 100% refund)
 
+#### Paying for a booking
+
+`POST /api/bookings` takes a `cardId` (a saved card of the booking player) and a
+`paymentOption`, and charges that card straight away:
+
+| `paymentOption` | Charged | Allowed when |
+|---|---|---|
+| `FULL` | the whole price | always |
+| `MINIMUM` | `stadium.min_booking_amount` | the stadium has one **and** it is below this booking's price |
+
+There are no other amounts. `min_booking_amount` is nullable — null means full
+payment is required — and when set must be at least 50 000 tiyin (500 so'm, the
+smallest payment ATMOS takes).
+
+- `bookings.payment_status` is `unpaid` / `partially_paid` / `paid`, and
+  `paid_amount` is the running total of successful payments. Responses carry
+  `price`, `paidAmount` and `remainingAmount` (all tiyin).
+- A successful charge confirms the booking. A **declined** card leaves it
+  `pending` with a `failed` payment row, so the usual hold timeout expires it;
+  the create call still answers 200 with `paymentStatus: unpaid`, and the
+  message says the payment failed.
+- **`PaymentService.applySuccessfulBookingPayment` is the only path from "money
+  arrived" to "booking confirmed"** — the synchronous charge uses it today and a
+  provider webhook will use the same method. If the hold already expired when
+  the money lands, it confirms the booking only when nothing else has taken the
+  slot; otherwise it refunds that payment in full and notifies the player. The
+  EXCLUDE constraint is the final arbiter and a violation is caught and refunded
+  there too, so **an overlap error never travels back to the payment provider**.
+
 ### Cancellation Policy (configurable per stadium)
 
 ```java

@@ -7,6 +7,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import uz.minipolya.minipolya_backend.entity.Booking;
+
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -33,7 +35,12 @@ public class BookingResponse {
     private OffsetDateTime startsAt;
     private OffsetDateTime endsAt;
     private Integer durationHours;
+
+    /** All three in tiyin: the total, what has been paid, and what is still owed. */
     private Long price;
+    private Long paidAmount;
+    private Long remainingAmount;
+    private Booking.PaymentStatus paymentStatus;
 
     private String clientName;
     private String clientPhone;

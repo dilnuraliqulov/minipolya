@@ -6,6 +6,7 @@ import org.mockito.ArgumentCaptor;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.dto.request.CreateBookingRequest;
 import uz.minipolya.minipolya_backend.dto.request.CreateGameRequest;
+import uz.minipolya.minipolya_backend.dto.request.PaymentOption;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameDetailResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
@@ -13,6 +14,7 @@ import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
 import uz.minipolya.minipolya_backend.entity.PricingRule;
 import uz.minipolya.minipolya_backend.entity.PlatformSettings;
+import uz.minipolya.minipolya_backend.entity.SavedCard;
 import uz.minipolya.minipolya_backend.entity.Promotion;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
@@ -60,6 +62,7 @@ class GameBookingPriceParityTest {
     private static final long BASE_PER_HOUR = 130_000L;
     private static final long RULE_PER_HOUR = 155_000L;
     private static final int DISCOUNT_PERCENT = 10;
+    private static final UUID CARD_ID = UUID.randomUUID();
     private static final int DURATION_HOURS = 2;
 
     private Stadium stadium;
@@ -107,6 +110,10 @@ class GameBookingPriceParityTest {
         UserRepository userRepository = mock(UserRepository.class);
         when(userRepository.findById(PLAYER_ID)).thenReturn(Optional.of(player));
 
+
+        SavedCardService savedCardService = mock(SavedCardService.class);
+        when(savedCardService.requireOwnedCard(any(), any())).thenReturn(
+                SavedCard.builder().id(CARD_ID).providerToken("tok-1").isActive(true).build());
         bookingRepository = mock(BookingRepository.class);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         BookingMapper bookingMapper = mock(BookingMapper.class);
@@ -115,7 +122,7 @@ class GameBookingPriceParityTest {
         bookingService = new BookingService(bookingRepository, stadiumRepository, userRepository,
                 priceCalculator, new RefundCalculator(), bookingMapper, new AppProperties(),
                 mock(PaymentService.class), mock(GameService.class), mock(NotificationService.class),
-                mock(AuditService.class), windowValidator);
+                mock(AuditService.class), windowValidator, savedCardService);
 
         PlatformSettingsService platformSettings = mock(PlatformSettingsService.class);
         when(platformSettings.current()).thenReturn(PlatformSettings.builder().build());
@@ -140,7 +147,7 @@ class GameBookingPriceParityTest {
         OffsetDateTime start = slotStart();
 
         bookingService.createBooking(PLAYER_ID, CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(start).durationHours(DURATION_HOURS).build());
+                .stadiumId(STADIUM_ID).startsAt(start).durationHours(DURATION_HOURS).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build());
         ArgumentCaptor<Booking> bookingCaptor = ArgumentCaptor.forClass(Booking.class);
         verify(bookingRepository).saveAndFlush(bookingCaptor.capture());
         long bookingPrice = bookingCaptor.getValue().getPrice();

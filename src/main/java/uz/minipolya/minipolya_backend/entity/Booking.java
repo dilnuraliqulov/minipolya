@@ -1,6 +1,10 @@
 package uz.minipolya.minipolya_backend.entity;
 
+import com.fasterxml.jackson.annotation.JsonValue;
+import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
+import jakarta.persistence.Converter;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import org.hibernate.annotations.UuidGenerator;
@@ -19,6 +23,7 @@ import lombok.Setter;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Locale;
 
 /**
  * A reserved slot on a stadium. Overlapping active bookings (pending or
@@ -82,6 +87,16 @@ public class Booking {
     @Column(nullable = false)
     private Long price;
 
+    /** Running total of this booking's successful payments, in tiyin. */
+    @Builder.Default
+    @Column(name = "paid_amount", nullable = false)
+    private Long paidAmount = 0L;
+
+    @Builder.Default
+    @Convert(converter = PaymentStatusConverter.class)
+    @Column(name = "payment_status", nullable = false, length = 20)
+    private PaymentStatus paymentStatus = PaymentStatus.UNPAID;
+
     @Column(name = "client_name", length = 100)
     private String clientName;
 
@@ -120,5 +135,43 @@ public class Booking {
     @PreUpdate
     void onUpdate() {
         updatedAt = OffsetDateTime.now(ZoneOffset.UTC);
+    }
+
+    /**
+     * What is still owed on this booking, in tiyin — never negative, so an
+     * overpayment reads as nothing left to pay. Derived, not stored: the
+     * mapper picks it up for the API response.
+     */
+    public long getRemainingAmount() {
+        long paid = paidAmount == null ? 0L : paidAmount;
+        long total = price == null ? 0L : price;
+        return Math.max(0L, total - paid);
+    }
+
+    /** How much of the price has been paid. */
+    public enum PaymentStatus {
+        UNPAID, PARTIALLY_PAID, PAID;
+
+        @JsonValue
+        public String getValue() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+
+        public static PaymentStatus fromValue(String value) {
+            return valueOf(value.trim().toUpperCase(Locale.ROOT));
+        }
+    }
+
+    @Converter
+    public static class PaymentStatusConverter implements AttributeConverter<PaymentStatus, String> {
+        @Override
+        public String convertToDatabaseColumn(PaymentStatus attribute) {
+            return attribute == null ? null : attribute.getValue();
+        }
+
+        @Override
+        public PaymentStatus convertToEntityAttribute(String dbData) {
+            return dbData == null ? null : PaymentStatus.fromValue(dbData);
+        }
     }
 }

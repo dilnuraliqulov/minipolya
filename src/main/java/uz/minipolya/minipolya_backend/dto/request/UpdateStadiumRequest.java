@@ -58,6 +58,10 @@ public class UpdateStadiumRequest {
     @PositiveOrZero
     private Long pricePerHour;
 
+    /** Tiyin; null means the player must pay in full. At least 50 000 (500 so.m). */
+    @PositiveOrZero
+    private Long minBookingAmount;
+
     @PositiveOrZero
     private Integer fullRefundHours;
 

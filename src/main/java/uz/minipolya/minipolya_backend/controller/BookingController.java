@@ -27,10 +27,21 @@ public class BookingController {
 
     private final BookingService bookingService;
 
+    /**
+     * Creates the booking and charges the chosen card. The booking survives a
+     * declined card — it stays pending until the hold expires — so the outcome
+     * is reported in the message and in {@code paymentStatus} rather than as an
+     * error status.
+     */
     @PostMapping("/api/bookings")
     public ApiResponse<BookingResponse> create(@AuthenticationPrincipal UUID userId,
                                                @Valid @RequestBody CreateBookingRequest request) {
-        return ApiResponse.ok(bookingService.createBooking(userId, request), "Booking held for payment");
+        BookingResponse booking = bookingService.createBooking(userId, request);
+        return ApiResponse.ok(booking, switch (booking.getPaymentStatus()) {
+            case PAID -> "Booking confirmed and paid in full";
+            case PARTIALLY_PAID -> "Booking confirmed; the remainder is still due";
+            case UNPAID -> "Payment failed — the booking is held until it expires; try paying again";
+        });
     }
 
     @GetMapping("/api/bookings")

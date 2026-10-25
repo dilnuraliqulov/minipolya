@@ -4436,7 +4436,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"{{bookingStartsAt}}\",\n  \"durationHours\": 2\n}",
+              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"{{bookingStartsAt}}\",\n  \"durationHours\": 2,\n  \"cardId\": \"{{cardId}}\",\n  \"paymentOption\": \"FULL\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4492,7 +4492,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"{{bookingStartsAt}}\",\n  \"durationHours\": 1\n}",
+              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"{{bookingStartsAt}}\",\n  \"durationHours\": 1,\n  \"cardId\": \"{{cardId}}\",\n  \"paymentOption\": \"FULL\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4548,7 +4548,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"{{bookingStartsAtHalfPast}}\",\n  \"durationHours\": 1\n}",
+              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"{{bookingStartsAtHalfPast}}\",\n  \"durationHours\": 1,\n  \"cardId\": \"{{cardId}}\",\n  \"paymentOption\": \"FULL\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4604,7 +4604,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"2020-01-01T10:00:00Z\",\n  \"durationHours\": 1\n}",
+              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"2020-01-01T10:00:00Z\",\n  \"durationHours\": 1,\n  \"cardId\": \"{{cardId}}\",\n  \"paymentOption\": \"FULL\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4660,7 +4660,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"{{bookingStartsAt}}\",\n  \"durationHours\": 0\n}",
+              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"{{bookingStartsAt}}\",\n  \"durationHours\": 0,\n  \"cardId\": \"{{cardId}}\",\n  \"paymentOption\": \"FULL\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4716,7 +4716,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"2030-01-01T13:00:00Z\",\n  \"durationHours\": 1\n}",
+              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"2030-01-01T13:00:00Z\",\n  \"durationHours\": 1,\n  \"cardId\": \"{{cardId}}\",\n  \"paymentOption\": \"FULL\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4772,7 +4772,7 @@
             "description": "Regression guard: an owner used to be able to book their own stadium through the player flow.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"{{bookingStartsAt}}\",\n  \"durationHours\": 1\n}",
+              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"{{bookingStartsAt}}\",\n  \"durationHours\": 1,\n  \"cardId\": \"{{cardId}}\",\n  \"paymentOption\": \"FULL\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4828,7 +4828,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"stadiumId\": \"00000000-0000-0000-0000-000000000000\",\n  \"startsAt\": \"{{bookingStartsAt}}\",\n  \"durationHours\": 1\n}",
+              "raw": "{\n  \"stadiumId\": \"00000000-0000-0000-0000-000000000000\",\n  \"startsAt\": \"{{bookingStartsAt}}\",\n  \"durationHours\": 1,\n  \"cardId\": \"{{cardId}}\",\n  \"paymentOption\": \"FULL\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4880,7 +4880,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"{{bookingStartsAt}}\",\n  \"durationHours\": 1\n}",
+              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"startsAt\": \"{{bookingStartsAt}}\",\n  \"durationHours\": 1,\n  \"cardId\": \"{{cardId}}\",\n  \"paymentOption\": \"FULL\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

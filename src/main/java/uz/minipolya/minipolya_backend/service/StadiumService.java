@@ -16,6 +16,7 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.StadiumAmenities;
 import uz.minipolya.minipolya_backend.entity.StadiumPhoto;
 import uz.minipolya.minipolya_backend.entity.User;
+import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.StadiumMapper;
@@ -48,6 +49,8 @@ public class StadiumService {
 
     @Transactional
     public StadiumDetailResponse create(UUID ownerId, CreateStadiumRequest request) {
+        requireValidMinBookingAmount(request.getMinBookingAmount());
+
         User owner = userRepository.findById(ownerId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
@@ -77,6 +80,8 @@ public class StadiumService {
         if (!stadium.getOwner().getId().equals(ownerId)) {
             throw new ForbiddenException("You do not own this stadium");
         }
+
+        requireValidMinBookingAmount(request.getMinBookingAmount());
 
         stadiumMapper.updateStadiumFromRequest(request, stadium);
 
@@ -139,6 +144,17 @@ public class StadiumService {
         response.setAverageRating(reviewRepository.averageRatingByStadiumId(stadium.getId()));
         response.setReviewCount(reviewRepository.countByStadiumId(stadium.getId()));
         return response;
+    }
+
+    /**
+     * A null minimum is fine — it means the player pays in full. A non-null one
+     * must be something ATMOS will actually accept.
+     */
+    private void requireValidMinBookingAmount(Long minBookingAmount) {
+        if (minBookingAmount != null && minBookingAmount < Stadium.MIN_BOOKING_AMOUNT_FLOOR) {
+            throw new BadRequestException("minBookingAmount must be at least "
+                    + Stadium.MIN_BOOKING_AMOUNT_FLOOR + " tiyin (500 so'm)");
+        }
     }
 
     private void applyRefundOverrides(Stadium stadium, Integer fullHours, Integer partialHours, Integer partialPercent) {

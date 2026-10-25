@@ -7,6 +7,7 @@ import tools.jackson.databind.ObjectMapper;
 import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Payment;
+import uz.minipolya.minipolya_backend.entity.PlatformSettings;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
@@ -14,6 +15,7 @@ import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
 import uz.minipolya.minipolya_backend.provider.ClickProvider;
 import uz.minipolya.minipolya_backend.provider.PaymeProvider;
+import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -48,6 +50,8 @@ class PaymentServiceTest {
     private GameRepository gameRepository;
     private GameParticipantRepository gameParticipantRepository;
     private PaymentMapper paymentMapper;
+    private PaymentProvider paymentProvider;
+    private PlatformSettingsService platformSettingsService;
     private GameService gameService;
     private NotificationService notificationService;
     private AuditService auditService;
@@ -69,9 +73,14 @@ class PaymentServiceTest {
         notificationService = mock(NotificationService.class);
         auditService = mock(AuditService.class);
 
+        paymentProvider = mock(PaymentProvider.class);
+        platformSettingsService = mock(PlatformSettingsService.class);
+        when(platformSettingsService.current()).thenReturn(PlatformSettings.builder().build());
+
         service = new PaymentService(paymentRepository, bookingRepository, userRepository,
                 gameRepository, gameParticipantRepository, paymentMapper,
-                List.of(new PaymeProvider(), new ClickProvider()), gameService, notificationService, auditService);
+                List.of(new PaymeProvider(), new ClickProvider()), gameService, notificationService, auditService,
+                paymentProvider, platformSettingsService);
 
         player = User.builder().id(PLAYER_ID).name("Player").build();
         owner = User.builder().id(OWNER_ID).name("Owner").build();
@@ -124,6 +133,7 @@ class PaymentServiceTest {
         Booking booking = pendingBooking();
         booking.setExpiresAt(java.time.OffsetDateTime.now());
         Payment payment = Payment.builder().id(PAYMENT_ID).booking(booking).user(player).amount(100_000L)
+                .ownerAmount(100_000L).platformAmount(0L).commissionPercent(0).method(Payment.Method.CARD)
                 .paymentType(Payment.PaymentType.BOOKING).provider(Payment.Provider.PAYME)
                 .providerTxnId("mock-100").status(Payment.Status.PENDING).build();
         when(paymentRepository.findByProviderAndProviderTxnId(Payment.Provider.PAYME, "mock-100"))
@@ -158,6 +168,7 @@ class PaymentServiceTest {
     void createRefundAddsNegativeRowAndMarksOriginalRefunded() {
         Booking booking = pendingBooking();
         Payment original = Payment.builder().id(PAYMENT_ID).booking(booking).user(player).amount(100_000L)
+                .ownerAmount(100_000L).platformAmount(0L).commissionPercent(0).method(Payment.Method.CARD)
                 .paymentType(Payment.PaymentType.BOOKING).provider(Payment.Provider.PAYME)
                 .status(Payment.Status.COMPLETED).build();
         when(paymentRepository.findById(PAYMENT_ID)).thenReturn(Optional.of(original));
@@ -177,6 +188,7 @@ class PaymentServiceTest {
     void createRefundWritesParseableJsonAuditDetails() {
         Booking booking = pendingBooking();
         Payment original = Payment.builder().id(PAYMENT_ID).booking(booking).user(player).amount(100_000L)
+                .ownerAmount(100_000L).platformAmount(0L).commissionPercent(0).method(Payment.Method.CARD)
                 .paymentType(Payment.PaymentType.BOOKING).provider(Payment.Provider.PAYME)
                 .status(Payment.Status.COMPLETED).build();
         when(paymentRepository.findById(PAYMENT_ID)).thenReturn(Optional.of(original));
@@ -206,9 +218,14 @@ class PaymentServiceTest {
         Payment result = service.recordCashPayment(BOOKING_ID, OWNER_ID);
 
         assertThat(result.getProvider()).isEqualTo(Payment.Provider.CASH);
-        assertThat(result.getStatus()).isEqualTo(Payment.Status.COMPLETED);
+        assertThat(result.getMethod()).isEqualTo(Payment.Method.CASH);
+        assertThat(result.getStatus()).isEqualTo(Payment.Status.PAID);
         assertThat(result.getAmount()).isEqualTo(70_000);
+        // Cash carries no commission: the owner already has the money.
+        assertThat(result.getOwnerAmount()).isEqualTo(70_000);
+        assertThat(result.getPlatformAmount()).isZero();
         assertThat(result.getUser()).isSameAs(owner);
         assertThat(booking.getStatus()).isEqualTo("confirmed");
+        assertThat(booking.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);
     }
 }

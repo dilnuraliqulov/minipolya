@@ -27,4 +27,12 @@ public class CreateBookingRequest {
     @NotNull
     @Min(value = 1, message = "durationHours must be at least 1")
     private Integer durationHours;
+
+    /** The saved card to charge. Must belong to the booking player and be active. */
+    @NotNull
+    private UUID cardId;
+
+    /** MINIMUM (the stadium's minimum) or FULL (the whole price). */
+    @NotNull
+    private PaymentOption paymentOption;
 }

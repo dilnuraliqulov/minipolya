@@ -9,9 +9,11 @@ import org.springframework.data.domain.Pageable;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.dto.request.CreateBookingRequest;
 import uz.minipolya.minipolya_backend.dto.request.CreateManualBookingRequest;
+import uz.minipolya.minipolya_backend.dto.request.PaymentOption;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
+import uz.minipolya.minipolya_backend.entity.SavedCard;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
@@ -55,6 +57,7 @@ class BookingServiceTest {
     private static final UUID FOREIGN_USER_ID = UUID.randomUUID();
     private static final UUID NON_OWNER_ID = UUID.randomUUID();
     private static final UUID MANUAL_BOOKING_ID = UUID.randomUUID();
+    private static final UUID CARD_ID = UUID.randomUUID();
 
     private BookingRepository bookingRepository;
     private StadiumRepository stadiumRepository;
@@ -66,6 +69,7 @@ class BookingServiceTest {
     private NotificationService notificationService;
     private AuditService auditService;
     private StadiumClosureService closureService;
+    private SavedCardService savedCardService;
     private BookingService service;
 
     private User player;
@@ -85,10 +89,14 @@ class BookingServiceTest {
         auditService = mock(AuditService.class);
         closureService = mock(StadiumClosureService.class);
 
+        savedCardService = mock(SavedCardService.class);
+        when(savedCardService.requireOwnedCard(eq(USER_ID), eq(CARD_ID))).thenReturn(
+                SavedCard.builder().id(CARD_ID).providerToken("tok-1").isActive(true).build());
+
         service = new BookingService(bookingRepository, stadiumRepository, userRepository,
                 bookingPriceCalculator, new RefundCalculator(), bookingMapper, new AppProperties(),
                 paymentService, gameService, notificationService, auditService,
-                new BookingWindowValidator(closureService));
+                new BookingWindowValidator(closureService), savedCardService);
 
         player = User.builder().id(USER_ID).name("Player").build();
         owner = User.builder().id(OWNER_ID).name("Owner").build();
@@ -121,7 +129,7 @@ class BookingServiceTest {
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(start).durationHours(2).build();
+                .stadiumId(STADIUM_ID).startsAt(start).durationHours(2).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         service.createBooking(USER_ID, req);
 
         ArgumentCaptor<Booking> captor = ArgumentCaptor.forClass(Booking.class);
@@ -148,7 +156,7 @@ class BookingServiceTest {
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(start).durationHours(3).build();
+                .stadiumId(STADIUM_ID).startsAt(start).durationHours(3).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         service.createBooking(USER_ID, req);
 
         ArgumentCaptor<Booking> captor = ArgumentCaptor.forClass(Booking.class);
@@ -164,7 +172,7 @@ class BookingServiceTest {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.empty());
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).build();
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(ResourceNotFoundException.class);
 
@@ -176,7 +184,7 @@ class BookingServiceTest {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).build();
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         assertThatThrownBy(() -> service.createBooking(OWNER_ID, req))
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining("manual booking");
@@ -194,7 +202,7 @@ class BookingServiceTest {
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).build();
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         service.createBooking(USER_ID, req);
 
         verify(bookingRepository).saveAndFlush(any(Booking.class));
@@ -206,7 +214,7 @@ class BookingServiceTest {
 
         OffsetDateTime start = LocalDate.now(TASHKENT).plusDays(2).atTime(18, 30).atZone(TASHKENT).toOffsetDateTime();
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(start).durationHours(1).build();
+                .stadiumId(STADIUM_ID).startsAt(start).durationHours(1).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessage("Booking must start on the hour");
@@ -219,7 +227,7 @@ class BookingServiceTest {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(0).build();
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(0).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessage("Duration must be at least 1 hour");
@@ -233,7 +241,7 @@ class BookingServiceTest {
 
         // 22:00 + 2h would end at 00:00 the next day, past the 23:00 close.
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(startAt(22, 2)).durationHours(2).build();
+                .stadiumId(STADIUM_ID).startsAt(startAt(22, 2)).durationHours(2).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessage("Booking must end by 23:00");
@@ -246,7 +254,7 @@ class BookingServiceTest {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(startAt(7, 2)).durationHours(1).build();
+                .stadiumId(STADIUM_ID).startsAt(startAt(7, 2)).durationHours(1).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessage("Booking must start at or after 08:00");
@@ -261,7 +269,7 @@ class BookingServiceTest {
         when(closureService.isClosedAt(eq(STADIUM_ID), eq(day), eq(LocalTime.of(18, 0)))).thenReturn(true);
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).build();
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessage("Stadium is closed on " + day);
@@ -274,7 +282,7 @@ class BookingServiceTest {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(startAt(18, 35)).durationHours(1).build(); // 5 weeks, default max is 4
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 35)).durationHours(1).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build(); // 5 weeks, default max is 4
         assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(BadRequestException.class);
 
@@ -291,7 +299,7 @@ class BookingServiceTest {
                 .thenThrow(new DataIntegrityViolationException("bookings_no_overlap"));
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).build();
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(1).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(SlotAlreadyBookedException.class)
                 .hasMessage("Slot is already booked");
@@ -307,7 +315,7 @@ class BookingServiceTest {
                 .thenThrow(new DataIntegrityViolationException("bookings_no_overlap"));
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(3).build();
+                .stadiumId(STADIUM_ID).startsAt(startAt(18, 2)).durationHours(3).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(SlotAlreadyBookedException.class)
                 .hasMessage("One or more of the selected hours is already booked");
@@ -324,7 +332,7 @@ class BookingServiceTest {
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
 
         CreateBookingRequest req = CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(start).durationHours(2).build();
+                .stadiumId(STADIUM_ID).startsAt(start).durationHours(2).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         service.createBooking(USER_ID, req);
 
         verify(gameService).cancelGamesOnSlot(STADIUM_ID, start, start.plusHours(2));

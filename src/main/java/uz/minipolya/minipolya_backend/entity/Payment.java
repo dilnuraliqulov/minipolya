@@ -63,6 +63,27 @@ public class Payment {
     @Column(nullable = false)
     private Long amount;
 
+    /**
+     * The part of {@link #amount} owed to the stadium owner. Together with
+     * {@link #platformAmount} it always adds up to {@code amount}, and neither
+     * ever changes once the row exists.
+     */
+    @Column(name = "owner_amount", nullable = false)
+    private Long ownerAmount;
+
+    /** The part of {@link #amount} the platform keeps. */
+    @Column(name = "platform_amount", nullable = false)
+    private Long platformAmount;
+
+    /** The booking commission in force when this payment was taken. */
+    @Column(name = "commission_percent", nullable = false)
+    private Integer commissionPercent;
+
+    /** How the money moved: by card through the provider, or cash to the owner. */
+    @Convert(converter = MethodConverter.class)
+    @Column(nullable = false, length = 20)
+    private Method method;
+
     @Convert(converter = PaymentTypeConverter.class)
     @Column(name = "payment_type", nullable = false, length = 20)
     private PaymentType paymentType;
@@ -111,7 +132,16 @@ public class Payment {
     // ---- Enums (stored lowercase to match the DB CHECK constraints) ----
 
     public enum PaymentType {
-        BOOKING, GAME_SHARE, SERVICE_FEE, REFUND;
+        /** First payment on a booking: the stadium minimum or the full price. */
+        BOOKING,
+        /** What was left of a booking price after its first payment. */
+        REMAINDER,
+        /** One team's share of a team-vs-team game. */
+        TEAM_GAME,
+        /** Legacy casual/open game share, via the hosted checkout. */
+        GAME_SHARE,
+        SERVICE_FEE,
+        REFUND;
 
         @JsonValue
         public String getValue() {
@@ -123,8 +153,26 @@ public class Payment {
         }
     }
 
+    public enum Method {
+        CARD, CASH;
+
+        @JsonValue
+        public String getValue() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+
+        public static Method fromValue(String value) {
+            return valueOf(value.trim().toUpperCase(Locale.ROOT));
+        }
+    }
+
     public enum Provider {
-        PAYME, CLICK, CASH;
+        /** The card provider for every current flow. */
+        ATMOS,
+        /** Legacy hosted checkout, kept until the team-vs-team work drops it. */
+        PAYME,
+        CLICK,
+        CASH;
 
         @JsonValue
         public String getValue() {
@@ -136,8 +184,16 @@ public class Payment {
         }
     }
 
+    /**
+     * A card charge lands on {@link #PAID}; a hold lands on {@link #HELD} and
+     * then moves forward exactly once, to {@link #CAPTURED} or
+     * {@link #RELEASED}. A status only ever moves forward.
+     *
+     * <p>{@link #PENDING} and {@link #COMPLETED} belong to the legacy hosted
+     * checkout and disappear with it.
+     */
     public enum Status {
-        PENDING, COMPLETED, FAILED, REFUNDED;
+        HELD, CAPTURED, RELEASED, PAID, REFUNDED, FAILED, PENDING, COMPLETED;
 
         @JsonValue
         public String getValue() {
@@ -161,6 +217,19 @@ public class Payment {
         @Override
         public PaymentType convertToEntityAttribute(String dbData) {
             return dbData == null ? null : PaymentType.fromValue(dbData);
+        }
+    }
+
+    @Converter
+    public static class MethodConverter implements AttributeConverter<Method, String> {
+        @Override
+        public String convertToDatabaseColumn(Method attribute) {
+            return attribute == null ? null : attribute.getValue();
+        }
+
+        @Override
+        public Method convertToEntityAttribute(String dbData) {
+            return dbData == null ? null : Method.fromValue(dbData);
         }
     }
 
