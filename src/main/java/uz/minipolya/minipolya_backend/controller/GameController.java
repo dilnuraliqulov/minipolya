@@ -13,7 +13,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.CreateGameRequest;
+import uz.minipolya.minipolya_backend.dto.request.GameCashRequest;
 import uz.minipolya.minipolya_backend.dto.request.JoinGameRequest;
+import uz.minipolya.minipolya_backend.dto.request.PayGameRemainderRequest;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameParticipantResponse;
@@ -75,6 +77,22 @@ public class GameController {
                                                 @PathVariable UUID id,
                                                 @RequestParam String provider) {
         return ApiResponse.ok(gameService.payForGame(id, userId, provider));
+    }
+
+    @PostMapping("/api/games/{id}/pay-remainder")
+    public ApiResponse<GameDetailResponse> payRemainder(@AuthenticationPrincipal UUID userId,
+                                                        @PathVariable UUID id,
+                                                        @Valid @RequestBody PayGameRemainderRequest request) {
+        gameService.payTeamRemainder(id, userId, request.getCardId());
+        return ApiResponse.ok(gameService.getGameDetail(id, userId), "Remainder paid");
+    }
+
+    @PostMapping("/api/games/{id}/cash")
+    public ApiResponse<GameDetailResponse> cash(@AuthenticationPrincipal UUID userId,
+                                                @PathVariable UUID id,
+                                                @Valid @RequestBody GameCashRequest request) {
+        gameService.recordTeamCashRemainder(id, userId, request.getSide());
+        return ApiResponse.ok(gameService.getGameDetail(id, userId), "Cash recorded");
     }
 
     @PostMapping("/api/games/{id}/leave")

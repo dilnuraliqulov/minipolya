@@ -228,6 +228,35 @@ public class PaymentService {
         return saved;
     }
 
+    /**
+     * The owner took one team's remainder in cash. Cash never passes through
+     * the provider, so it carries no commission and is never refunded through
+     * the platform — the owner settles that directly.
+     */
+    @Transactional
+    public Payment recordCashTeamRemainder(GameTeam gameTeam, User owner) {
+        long amount = gameTeam.getRemainderAmount();
+        Payment payment = paymentRepository.save(Payment.builder()
+                .game(gameTeam.getGame())
+                .gameTeam(gameTeam)
+                .user(owner)
+                .amount(amount)
+                .ownerAmount(amount)
+                .platformAmount(0L)
+                .commissionPercent(0)
+                .method(Payment.Method.CASH)
+                .paymentType(Payment.PaymentType.REMAINDER)
+                .provider(Payment.Provider.CASH)
+                .status(Payment.Status.PAID)
+                .build());
+
+        auditService.log(owner.getId(), "PAYMENT_COMPLETED", "payment", payment.getId(),
+                "{\"amount\":" + amount + ",\"method\":\"cash\",\"gameTeamId\":\""
+                        + gameTeam.getId() + "\"}");
+        log.info("Team remainder taken in cash: gameTeamId={} amount={}", gameTeam.getId(), amount);
+        return payment;
+    }
+
     /** Settles every hold one team placed on one game. */
     @Transactional
     public void captureAllHeldTeamPayments(UUID gameTeamId) {

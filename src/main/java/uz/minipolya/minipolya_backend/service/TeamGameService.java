@@ -6,6 +6,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.config.AppProperties;
+import uz.minipolya.minipolya_backend.dto.response.GameTeamResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameParticipant.Side;
@@ -30,6 +31,7 @@ import uz.minipolya.minipolya_backend.util.TeamGameSplit;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -282,6 +284,86 @@ public class TeamGameService {
         log.info("Team game ended: gameId={} status={} reason={}", game.getId(), cancelStatus, reason);
     }
 
+    /**
+     * A leader settles their own team's remainder from a saved card. Allowed
+     * before or after the game is played — paying late is still paying.
+     *
+     * @throws BadRequestException 400 "Already paid" when this team owes
+     *                             nothing, whether because it already settled
+     *                             or because its advance covered the pitch
+     */
+    @Transactional
+    public GameTeam payRemainder(UUID gameId, UUID userId, UUID cardId) {
+        Game game = requireGame(gameId);
+        GameTeam team = gameTeamRepository
+                .findByGameIdAndLeaderIdAndStatus(gameId, userId, GameTeam.Status.ACTIVE)
+                .orElseThrow(() -> new ForbiddenException("You do not lead a team in this game"));
+        requireOwing(team);
+
+        SavedCard card = savedCardService.requireOwnedCard(userId, cardId);
+        Payment payment = paymentService.chargeForTeamGame(team, card, Payment.PaymentType.REMAINDER);
+        if (payment.getStatus() == Payment.Status.FAILED) {
+            throw new BadRequestException("Card payment was declined; the remainder is still owed");
+        }
+
+        settleRemainder(game, team);
+        auditService.log(userId, "GAME_REMAINDER_PAID", "game", gameId,
+                "{\"side\":\"" + team.getSide().getValue() + "\",\"amount\":"
+                        + team.getRemainderAmount() + ",\"method\":\"card\"}");
+        log.info("Team remainder paid by card: gameId={} side={} amount={}",
+                gameId, team.getSide().getValue(), team.getRemainderAmount());
+        return team;
+    }
+
+    /**
+     * The owner marks one team's remainder as received in cash. The card and
+     * the cash race each other, and whichever lands first wins — the other gets
+     * 400 "Already paid".
+     */
+    @Transactional
+    public GameTeam recordCashRemainder(UUID gameId, UUID ownerUserId, Side side) {
+        Game game = requireGame(gameId);
+        if (!game.getStadium().getOwner().getId().equals(ownerUserId)) {
+            throw new ForbiddenException("You do not own this stadium");
+        }
+        GameTeam team = gameTeamRepository
+                .findByGameIdAndSideAndStatus(gameId, side, GameTeam.Status.ACTIVE)
+                .orElseThrow(() -> new ResourceNotFoundException("No team is on side " + side.getValue()));
+        requireOwing(team);
+
+        paymentService.recordCashTeamRemainder(team, game.getStadium().getOwner());
+        settleRemainder(game, team);
+        auditService.log(ownerUserId, "GAME_REMAINDER_PAID", "game", gameId,
+                "{\"side\":\"" + side.getValue() + "\",\"amount\":"
+                        + team.getRemainderAmount() + ",\"method\":\"cash\"}");
+        log.info("Team remainder taken in cash: gameId={} side={} amount={}",
+                gameId, side.getValue(), team.getRemainderAmount());
+        return team;
+    }
+
+    /** Each team's money, for the game response. */
+    @Transactional(readOnly = true)
+    public List<GameTeamResponse> teamsOf(Game game) {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        return gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE).stream()
+                .map(team -> GameTeamResponse.builder()
+                        .side(team.getSide())
+                        .teamId(team.getTeam().getId())
+                        .teamName(team.getTeam().getName())
+                        .leaderId(team.getLeader().getId())
+                        .leaderName(team.getLeader().getName())
+                        .feeAmount(team.getFeeAmount())
+                        .advanceAmount(team.getAdvanceAmount())
+                        .remainderAmount(team.getRemainderAmount())
+                        .remainderStatus(team.getRemainderStatus().getValue())
+                        .paidInApp(team.getFeeAmount() + team.paidTowardsPitch())
+                        .cancellationDeadline(cancellationPolicy.deadline(
+                                game.getStartsAt(), game.getStadium().getCancellationHours()))
+                        .refundIfCancelledNow(refundIfCancelledNow(game, team, now))
+                        .build())
+                .toList();
+    }
+
     /** The last moment a new opponent can still arrive in time to play. */
     public OffsetDateTime opponentDeadline(Game game) {
         return game.getStartsAt().minusHours(appProperties.getGame().getOpponentDeadlineHours());
@@ -452,6 +534,32 @@ public class TeamGameService {
     /** True once a game can no longer move: played, or already cancelled. */
     private boolean isOver(Game game) {
         return !STATUS_WAITING.equals(game.getStatus()) && !STATUS_CONFIRMED.equals(game.getStatus());
+    }
+
+    /**
+     * A team that owes nothing cannot pay — whether because it already settled
+     * or because its advance covered the whole pitch. Both answer the same way,
+     * which is also what the owner's cash call gets once the card has landed.
+     */
+    private void requireOwing(GameTeam team) {
+        if (!team.owesRemainder()) {
+            throw new BadRequestException("Already paid");
+        }
+    }
+
+    /** Marks this team settled and brings the booking's paid amount up to date. */
+    private void settleRemainder(Game game, GameTeam team) {
+        team.setRemainderStatus(GameTeam.RemainderStatus.PAID);
+        gameTeamRepository.save(team);
+        if (game.getBookingId() != null) {
+            bookingRepository.findById(game.getBookingId())
+                    .ifPresent(booking -> refreshBookingPayment(game, booking));
+        }
+    }
+
+    private Game requireGame(UUID gameId) {
+        return gameRepository.findById(gameId)
+                .orElseThrow(() -> new ResourceNotFoundException("Game not found"));
     }
 
     /** Takes a team out of the game, keeping its row so its payments stay explainable. */

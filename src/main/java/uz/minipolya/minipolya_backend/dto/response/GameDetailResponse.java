@@ -56,6 +56,9 @@ public class GameDetailResponse {
     /** Telegram deep link to invite friends: t.me/{bot}?start=game_{id}. */
     private String inviteLink;
 
+    /** team_vs_team only: each team's fee, advance, remainder and refund position. */
+    private List<GameTeamResponse> teams;
+
     private List<GameParticipantResponse> participants;
 
     private OffsetDateTime createdAt;

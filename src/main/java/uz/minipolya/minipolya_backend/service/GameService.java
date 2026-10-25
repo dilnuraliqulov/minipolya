@@ -189,6 +189,18 @@ public class GameService {
         return participantMapper.toResponse(participant);
     }
 
+    /** A team leader settles their own team's remainder from a saved card. */
+    @Transactional
+    public void payTeamRemainder(UUID gameId, UUID userId, UUID cardId) {
+        teamGameService.payRemainder(gameId, userId, cardId);
+    }
+
+    /** The stadium owner marks one team's remainder as received in cash. */
+    @Transactional
+    public void recordTeamCashRemainder(UUID gameId, UUID ownerUserId, String side) {
+        teamGameService.recordCashRemainder(gameId, ownerUserId, parseSide(side));
+    }
+
     /**
      * Casual games only — the hosted checkout. A team game is paid for when it
      * is created and when an opponent joins, from a saved card.
@@ -440,6 +452,9 @@ public class GameService {
         dto.setParticipants(participants.stream().map(participantMapper::toResponse).toList());
         dto.setCurrentPlayers(participants.size());
         dto.setInviteLink(inviteLink(game.getId()));
+        if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
+            dto.setTeams(teamGameService.teamsOf(game));
+        }
         return dto;
     }
 
