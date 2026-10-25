@@ -161,6 +161,86 @@ public class TeamGameService {
         return sideB;
     }
 
+    /**
+     * A leader pulls their team out. What happens depends on how close to
+     * kick-off it is, and the bands are checked in this order so they behave
+     * sensibly even on a stadium whose cancellation window is shorter than the
+     * opponent deadline:
+     *
+     * <ol>
+     *   <li><b>Past the 3-hour point</b> — nobody could replace them in time,
+     *       so the game is over. The team that stays gets everything back; the
+     *       one that walked gets nothing. For a game still waiting there is no
+     *       other team, and the timeout job would have refunded it anyway, so
+     *       beating the job by hand must not cost it its money.</li>
+     *   <li><b>Before the stadium's cancellation deadline</b> — everything
+     *       back.</li>
+     *   <li><b>After it</b> — nothing back.</li>
+     * </ol>
+     */
+    @Transactional
+    public void cancelByLeader(Game game, UUID userId) {
+        GameTeam leaving = gameTeamRepository
+                .findByGameIdAndLeaderIdAndStatus(game.getId(), userId, GameTeam.Status.ACTIVE)
+                .orElseThrow(() -> new ForbiddenException("Only a team leader in this game can cancel it"));
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        boolean waiting = STATUS_WAITING.equals(game.getStatus());
+
+        if (!waiting) {
+            throw new BadRequestException("Only a game that is looking for an opponent can be cancelled");
+        }
+        if (now.isAfter(opponentDeadline(game))) {
+            endWaitingGame(game, "cancelled_not_filled", "No opponent was found in time");
+            return;
+        }
+
+        boolean refundable = refundableNow(game, now);
+        if (refundable) {
+            paymentService.giveBackAllTeamPayments(leaving.getId(), "Team cancelled in time");
+        } else {
+            paymentService.keepAllTeamPayments(leaving.getId());
+        }
+        releaseTeam(leaving, now);
+
+        game.setStatus("cancelled_by_creator");
+        gameRepository.save(game);
+        notifyCancelled(game, "Игра отменена создателем.");
+        auditService.log(userId, "GAME_CANCELLED", "game", game.getId(),
+                "{\"reason\":\"cancelled_by_creator\",\"refunded\":" + refundable + "}");
+        log.info("Waiting team game cancelled by its leader: gameId={} refunded={}",
+                game.getId(), refundable);
+    }
+
+    /**
+     * What a cancellation right now would actually return to this team — the
+     * same bands {@link #cancelByLeader} applies, so the figure a leader is
+     * shown is the figure they get.
+     */
+    @Transactional(readOnly = true)
+    public long refundIfCancelledNow(Game game, GameTeam team, OffsetDateTime now) {
+        if (now.isAfter(opponentDeadline(game))) {
+            // Past this point the canceller forfeits, unless it is the lone
+            // waiting team, which the timeout job would refund anyway.
+            boolean lone = STATUS_WAITING.equals(game.getStatus());
+            return lone ? paymentService.refundableTeamTotal(team.getId()) : 0L;
+        }
+        return refundableNow(game, now) ? paymentService.refundableTeamTotal(team.getId()) : 0L;
+    }
+
+    /** The stadium's cancellation window, applied to a game rather than a booking. */
+    private boolean refundableNow(Game game, OffsetDateTime now) {
+        return cancellationPolicy.refundable(
+                game.getStartsAt(), game.getStadium().getCancellationHours(), now);
+    }
+
+    /** Ends a game nobody can play and gives every team still in it everything back. */
+    @Transactional
+    public void endWaitingGame(Game game, String cancelStatus, String reason) {
+        endGame(game, cancelStatus, reason);
+        notifyCancelled(game, reason);
+        log.info("Team game ended: gameId={} status={} reason={}", game.getId(), cancelStatus, reason);
+    }
+
     /** The last moment a new opponent can still arrive in time to play. */
     public OffsetDateTime opponentDeadline(Game game) {
         return game.getStartsAt().minusHours(appProperties.getGame().getOpponentDeadlineHours());
@@ -266,6 +346,24 @@ public class TeamGameService {
         }
         auditService.log(null, "GAME_CANCELLED", "game", game.getId(),
                 "{\"reason\":\"" + status + "\"}");
+    }
+
+    /** Takes a team out of the game, keeping its row so its payments stay explainable. */
+    private void releaseTeam(GameTeam entry, OffsetDateTime now) {
+        entry.setStatus(GameTeam.Status.CANCELLED);
+        entry.setLeftAt(now);
+        gameTeamRepository.save(entry);
+    }
+
+    private void notifyCancelled(Game game, String message) {
+        for (GameTeam entry : gameTeamRepository.findByGameId(game.getId())) {
+            if (entry.getLeader() == null) {
+                continue;
+            }
+            UUID leaderId = entry.getLeader().getId();
+            safeNotify(() -> notificationService.notify(leaderId, Notification.Type.GAME_CANCELLED,
+                    "Игра отменена", message, Notification.ReferenceType.GAME, game.getId()));
+        }
     }
 
     private void notifyConfirmed(Game game) {

@@ -239,6 +239,64 @@ class TeamGamePaymentTest {
         assertThat(returned).isEqualTo(FEE + ADVANCE + 7_500_000L);
     }
 
+    // ---- keepAllTeamPayments ----
+
+    @Test
+    void keepingATeamsMoneyCapturesItsHoldAndLeavesSettledPaymentsAlone() {
+        Payment held = heldPayment();
+        Payment settled = heldPayment();
+        settled.setStatus(Payment.Status.PAID);
+        settled.setProviderTxnId("txn-remainder-a");
+        when(paymentRepository.findByGameTeamId(gameTeam.getId())).thenReturn(List.of(held, settled));
+        when(paymentProvider.capture("txn-hold-a")).thenReturn(
+                new ProviderTransaction("txn-hold-a", ProviderTransactionStatus.CAPTURED));
+
+        long kept = service.keepAllTeamPayments(gameTeam.getId());
+
+        assertThat(held.getStatus()).isEqualTo(Payment.Status.CAPTURED);
+        assertThat(settled.getStatus()).isEqualTo(Payment.Status.PAID);
+        org.mockito.Mockito.verify(paymentProvider, org.mockito.Mockito.never()).refund(any());
+        assertThat(kept).isEqualTo(2 * (FEE + ADVANCE));
+    }
+
+    // ---- refundableTeamTotal ----
+
+    @Test
+    void theRefundablePreviewCountsHoldsAndSettledPaymentsAlike() {
+        Payment held = heldPayment();
+        Payment settled = heldPayment();
+        settled.setStatus(Payment.Status.CAPTURED);
+        Payment failed = heldPayment();
+        failed.setStatus(Payment.Status.FAILED);
+        when(paymentRepository.findByGameTeamId(gameTeam.getId())).thenReturn(List.of(held, settled, failed));
+
+        assertThat(service.refundableTeamTotal(gameTeam.getId())).isEqualTo(2 * (FEE + ADVANCE));
+    }
+
+    @Test
+    void theRefundablePreviewIsZeroOnceTheMoneyHasGoneBack() {
+        Payment refunded = heldPayment();
+        refunded.setStatus(Payment.Status.REFUNDED);
+        Payment released = heldPayment();
+        released.setStatus(Payment.Status.RELEASED);
+        when(paymentRepository.findByGameTeamId(gameTeam.getId())).thenReturn(List.of(refunded, released));
+
+        assertThat(service.refundableTeamTotal(gameTeam.getId())).isZero();
+    }
+
+    @Test
+    void thePreviewEqualsWhatGivingTheMoneyBackActuallyReturns() {
+        Payment held = heldPayment();
+        when(paymentRepository.findByGameTeamId(gameTeam.getId())).thenReturn(List.of(held));
+        when(paymentProvider.release("txn-hold-a")).thenReturn(
+                new ProviderTransaction("txn-hold-a", ProviderTransactionStatus.RELEASED));
+
+        long preview = service.refundableTeamTotal(gameTeam.getId());
+        long actual = service.giveBackAllTeamPayments(gameTeam.getId(), "Game cancelled");
+
+        assertThat(actual).isEqualTo(preview);
+    }
+
     private Payment heldPayment() {
         return Payment.builder()
                 .id(UUID.randomUUID())

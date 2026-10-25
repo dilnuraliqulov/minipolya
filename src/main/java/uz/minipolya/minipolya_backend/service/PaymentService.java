@@ -60,6 +60,10 @@ public class PaymentService {
     private static final Set<Payment.Status> REFUNDABLE_STATUSES =
             Set.of(Payment.Status.PAID, Payment.Status.CAPTURED, Payment.Status.COMPLETED);
 
+    /** Statuses that mean the money is the platform's and is not coming back. */
+    private static final Set<Payment.Status> KEPT_STATUSES =
+            Set.of(Payment.Status.PAID, Payment.Status.CAPTURED, Payment.Status.COMPLETED);
+
     private final PaymentRepository paymentRepository;
     private final BookingRepository bookingRepository;
     private final UserRepository userRepository;
@@ -283,6 +287,47 @@ public class PaymentService {
         }
         log.info("Team payments given back: gameTeamId={} amount={} reason={}", gameTeamId, returned, reason);
         return returned;
+    }
+
+    /**
+     * Keeps everything one team paid for a game — what a cancellation past the
+     * refund deadline does. A hold is captured, because the money was promised
+     * and is now owed; a payment that already settled simply stays.
+     *
+     * @return the tiyin the team does not get back
+     */
+    @Transactional
+    public long keepAllTeamPayments(UUID gameTeamId) {
+        long kept = 0;
+        for (Payment payment : paymentRepository.findByGameTeamId(gameTeamId)) {
+            if (payment.getAmount() == null || payment.getAmount() <= 0) {
+                continue;
+            }
+            if (payment.getStatus() == Payment.Status.HELD) {
+                captureHeld(payment);
+            }
+            if (KEPT_STATUSES.contains(payment.getStatus())) {
+                kept += payment.getAmount();
+            }
+        }
+        log.info("Team payments kept: gameTeamId={} amount={}", gameTeamId, kept);
+        return kept;
+    }
+
+    /**
+     * What {@link #giveBackAllTeamPayments} would return for this team, without
+     * moving anything — the figure behind {@code refundIfCancelledNow}. Both
+     * read the same rows, so a team is never shown a number it will not get.
+     */
+    @Transactional(readOnly = true)
+    public long refundableTeamTotal(UUID gameTeamId) {
+        return paymentRepository.findByGameTeamId(gameTeamId).stream()
+                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .filter(p -> p.getStatus() == Payment.Status.HELD
+                        || REFUNDABLE_STATUSES.contains(p.getStatus()))
+                .filter(p -> p.getMethod() != Payment.Method.CASH)
+                .mapToLong(Payment::getAmount)
+                .sum();
     }
 
     /** One team-game payment row. Amounts and split never change once written. */

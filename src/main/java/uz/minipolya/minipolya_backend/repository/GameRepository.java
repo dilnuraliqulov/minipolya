@@ -24,6 +24,15 @@ public interface GameRepository extends JpaRepository<Game, UUID> {
     /** Used by GameTimeoutJob to find games past their start time. */
     List<Game> findByStatusAndStartsAtBefore(String status, OffsetDateTime time);
 
+    /**
+     * Team games that have run out of time to find an opponent. Their cutoff is
+     * the 3-hour point, not kick-off: a team arriving later could not get there.
+     */
+    List<Game> findByStatusAndTypeAndStartsAtBefore(String status, String type, OffsetDateTime time);
+
+    /** Every other game type, which still times out at its start time. */
+    List<Game> findByStatusAndTypeNotAndStartsAtBefore(String status, String type, OffsetDateTime time);
+
     /** Public games discoverable in the app (the "open — find players" listing). */
     List<Game> findByIsPublicTrueAndStatus(String status);
 

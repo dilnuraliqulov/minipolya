@@ -274,24 +274,47 @@ public class GameService {
     @Transactional
     public void cancelGamesOnSlot(UUID stadiumId, OffsetDateTime startsAt, OffsetDateTime endsAt) {
         for (Game game : gameRepository.findByStadiumIdAndStatus(stadiumId, STATUS_OPEN)) {
-            if (overlaps(game.getStartsAt(), game.getEndsAt(), startsAt, endsAt)) {
-                game.setStatus("cancelled_slot_taken");
-                gameRepository.save(game);
-                refundPaidParticipants(game, "Slot taken by another booking");
-                notifyParticipants(game, Notification.Type.GAME_CANCELLED, "Игра отменена",
-                        "Слот игры в «" + game.getStadium().getName() + "» занят другим бронированием.");
-                auditService.log(null, "GAME_CANCELLED", "game", game.getId(), "{\"reason\":\"slot_taken\"}");
-                log.info("Game {} cancelled: slot taken on stadium {}", game.getId(), stadiumId);
+            if (!overlaps(game.getStartsAt(), game.getEndsAt(), startsAt, endsAt)) {
+                continue;
             }
+            if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
+                // A team's money hangs off game_teams, so the team flow has to
+                // give it back — the participant rows hold none of it.
+                teamGameService.endWaitingGame(game, "cancelled_slot_taken",
+                        "Slot taken by another booking");
+                continue;
+            }
+            game.setStatus("cancelled_slot_taken");
+            gameRepository.save(game);
+            refundPaidParticipants(game, "Slot taken by another booking");
+            notifyParticipants(game, Notification.Type.GAME_CANCELLED, "Игра отменена",
+                    "Слот игры в «" + game.getStadium().getName() + "» занят другим бронированием.");
+            auditService.log(null, "GAME_CANCELLED", "game", game.getId(), "{\"reason\":\"slot_taken\"}");
+            log.info("Game {} cancelled: slot taken on stadium {}", game.getId(), stadiumId);
         }
     }
 
-    /** Called by GameTimeoutJob: cancel open games whose start time has passed. */
+    /**
+     * Called by GameTimeoutJob. Two cutoffs, because the two kinds of game run
+     * out of time at different moments: a team game is over once no opponent
+     * could still arrive in time — the 3-hour point — while a casual game can
+     * fill right up to kick-off.
+     */
     @Transactional
     public int cancelUnfilledGames() {
-        List<Game> expired = gameRepository.findByStatusAndStartsAtBefore(
-                STATUS_OPEN, OffsetDateTime.now(ZoneOffset.UTC));
-        for (Game game : expired) {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+
+        List<Game> teamGames = gameRepository.findByStatusAndTypeAndStartsAtBefore(
+                STATUS_OPEN, TYPE_TEAM_VS_TEAM,
+                now.plusHours(appProperties.getGame().getOpponentDeadlineHours()));
+        for (Game game : teamGames) {
+            teamGameService.endWaitingGame(game, "cancelled_not_filled",
+                    "No opponent was found in time");
+        }
+
+        List<Game> others = gameRepository.findByStatusAndTypeNotAndStartsAtBefore(
+                STATUS_OPEN, TYPE_TEAM_VS_TEAM, now);
+        for (Game game : others) {
             game.setStatus("cancelled_not_filled");
             gameRepository.save(game);
             refundPaidParticipants(game, "Game did not fill in time");
@@ -299,10 +322,12 @@ public class GameService {
                     "Игра в «" + game.getStadium().getName() + "» не набрала игроков вовремя.");
             auditService.log(null, "GAME_CANCELLED", "game", game.getId(), "{\"reason\":\"not_filled\"}");
         }
-        if (!expired.isEmpty()) {
-            log.info("Cancelled {} unfilled game(s)", expired.size());
+
+        int cancelled = teamGames.size() + others.size();
+        if (cancelled > 0) {
+            log.info("Cancelled {} unfilled game(s)", cancelled);
         }
-        return expired.size();
+        return cancelled;
     }
 
     // ---- Helpers ----

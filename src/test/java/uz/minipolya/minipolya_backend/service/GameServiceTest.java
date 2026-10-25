@@ -27,6 +27,7 @@ import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
@@ -40,6 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -493,13 +495,15 @@ class GameServiceTest {
     @Test
     void cancelUnfilledGamesCancelsExpiredOpenGames() {
         OffsetDateTime pastStart = inHours(-1);
-        Game game = Game.builder().id(GAME_ID).status("open").stadium(stadium)
+        Game game = Game.builder().id(GAME_ID).type("casual").status("open").stadium(stadium)
                 .startsAt(pastStart).endsAt(pastStart.plusHours(1)).build();
         Payment payment = Payment.builder().id(PAYMENT_ID).build();
         GameParticipant paid = GameParticipant.builder().id(UUID.randomUUID()).game(game).user(creator)
                 .status(GameParticipant.Status.PAID).payment(payment).build();
-        when(gameRepository.findByStatusAndStartsAtBefore(eq("open"), any(OffsetDateTime.class)))
-                .thenReturn(List.of(game));
+        when(gameRepository.findByStatusAndTypeAndStartsAtBefore(
+                eq("open"), eq("team_vs_team"), any(OffsetDateTime.class))).thenReturn(List.of());
+        when(gameRepository.findByStatusAndTypeNotAndStartsAtBefore(
+                eq("open"), eq("team_vs_team"), any(OffsetDateTime.class))).thenReturn(List.of(game));
         when(participantRepository.findByGameId(GAME_ID)).thenReturn(List.of(paid));
         when(participantRepository.save(any(GameParticipant.class))).thenAnswer(inv -> inv.getArgument(0));
         when(gameRepository.save(any(Game.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -510,5 +514,53 @@ class GameServiceTest {
         assertThat(game.getStatus()).isEqualTo("cancelled_not_filled");
         assertThat(paid.getStatus()).isEqualTo(GameParticipant.Status.REFUNDED);
         verify(paymentService).refundInFull(paid.getPayment(), "Game did not fill in time");
+    }
+
+    @Test
+    void aWaitingTeamGameOnATakenSlotIsEndedByTheTeamFlow() {
+        OffsetDateTime start = inHours(24);
+        Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("open").stadium(stadium)
+                .startsAt(start).endsAt(start.plusHours(1)).build();
+        when(gameRepository.findByStadiumIdAndStatus(STADIUM_ID, "open")).thenReturn(List.of(game));
+
+        service.cancelGamesOnSlot(STADIUM_ID, start, start.plusHours(2));
+
+        // A team's money hangs off game_teams, not off participants, so the
+        // participant refund path must not be used for it.
+        verify(teamGameService).endWaitingGame(eq(game), eq("cancelled_slot_taken"), anyString());
+        verify(paymentService, never()).refundInFull(any(), anyString());
+    }
+
+    @Test
+    void aWaitingTeamGameIsCancelledThreeHoursBeforeKickOffNotAtIt() {
+        OffsetDateTime start = inHours(2);
+        Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("open").stadium(stadium)
+                .startsAt(start).endsAt(start.plusHours(1)).build();
+        when(gameRepository.findByStatusAndTypeAndStartsAtBefore(
+                eq("open"), eq("team_vs_team"), any(OffsetDateTime.class))).thenReturn(List.of(game));
+        when(gameRepository.findByStatusAndTypeNotAndStartsAtBefore(
+                eq("open"), eq("team_vs_team"), any(OffsetDateTime.class))).thenReturn(List.of());
+
+        assertThat(service.cancelUnfilledGames()).isEqualTo(1);
+
+        verify(teamGameService).endWaitingGame(eq(game), eq("cancelled_not_filled"), anyString());
+    }
+
+    @Test
+    void theTeamGameCutoffIsThreeHoursAheadOfNow() {
+        when(gameRepository.findByStatusAndTypeAndStartsAtBefore(any(), any(), any())).thenReturn(List.of());
+        when(gameRepository.findByStatusAndTypeNotAndStartsAtBefore(any(), any(), any())).thenReturn(List.of());
+
+        service.cancelUnfilledGames();
+
+        ArgumentCaptor<OffsetDateTime> teamCutoff = ArgumentCaptor.forClass(OffsetDateTime.class);
+        ArgumentCaptor<OffsetDateTime> otherCutoff = ArgumentCaptor.forClass(OffsetDateTime.class);
+        verify(gameRepository).findByStatusAndTypeAndStartsAtBefore(
+                eq("open"), eq("team_vs_team"), teamCutoff.capture());
+        verify(gameRepository).findByStatusAndTypeNotAndStartsAtBefore(
+                eq("open"), eq("team_vs_team"), otherCutoff.capture());
+
+        // Casual games still time out at their start; team games three hours earlier.
+        assertThat(Duration.between(otherCutoff.getValue(), teamCutoff.getValue()).toHours()).isEqualTo(3);
     }
 }

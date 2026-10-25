@@ -22,12 +22,26 @@ public class CancellationPolicy {
 
     /** The last moment a cancellation still earns a refund. */
     public OffsetDateTime deadline(Booking booking) {
-        return booking.getStartsAt().minusHours(booking.getStadium().getCancellationHours());
+        return deadline(booking.getStartsAt(), booking.getStadium().getCancellationHours());
+    }
+
+    /**
+     * The same window for something that is not a booking — a waiting team
+     * game holds no slot, so it has no booking to ask, but the stadium's rule
+     * applies to it just the same.
+     */
+    public OffsetDateTime deadline(OffsetDateTime startsAt, int cancellationHours) {
+        return startsAt.minusHours(cancellationHours);
     }
 
     /** Whether cancelling at {@code now} earns a refund. */
     public boolean refundable(Booking booking, OffsetDateTime now) {
         return !now.isAfter(deadline(booking));
+    }
+
+    /** Whether cancelling at {@code now} earns a refund, for a start time and window. */
+    public boolean refundable(OffsetDateTime startsAt, int cancellationHours, OffsetDateTime now) {
+        return !now.isAfter(deadline(startsAt, cancellationHours));
     }
 
     /** Whether cancelling right now earns a refund. */
