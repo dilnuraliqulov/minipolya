@@ -303,6 +303,9 @@ else                 → the booking is still cancelled, but nothing is refunded
   is shown is the figure they get. `BookingResponseFactory` fills them in.
 - `cancellationPolicy` on a booking or stadium response is just
   `{ "cancellationHours": 24 }`.
+- The default of **24 lives in exactly two places that agree**: the
+  `stadiums.cancellation_hours` column default and the `Stadium` entity field.
+  There is no `app.cancellation.*` config — don't reintroduce one.
 
 Players MUST see the stadium's cancellation policy before confirming a booking.
 

@@ -14,7 +14,6 @@ public class AppProperties {
     private Jwt jwt = new Jwt();
     private Bot bot = new Bot();
     private Booking booking = new Booking();
-    private Cancellation cancellation = new Cancellation();
     private Game game = new Game();
     private Payments payments = new Payments();
 
@@ -38,13 +37,6 @@ public class AppProperties {
     public static class Booking {
         private int maxWeeksAhead = 4;
         private int holdExpiryMinutes = 10;
-    }
-
-    @Getter
-    @Setter
-    public static class Cancellation {
-        /** Window used for a stadium that does not set its own. */
-        private int defaultCancellationHours = 24;
     }
 
     @Getter

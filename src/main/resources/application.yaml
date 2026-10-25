@@ -29,8 +29,6 @@ app:
   bot:
     token: ${BOT_TOKEN}
     username: ${BOT_USERNAME:}
-  cancellation:
-    default-cancellation-hours: 24
   booking:
     max-weeks-ahead: 4
     hold-expiry-minutes: 10
