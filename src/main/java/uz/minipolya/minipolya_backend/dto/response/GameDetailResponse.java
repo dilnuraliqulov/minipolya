@@ -42,7 +42,6 @@ public class GameDetailResponse {
 
     private Long totalPrice;
     private Long serviceFeePerPerson;
-    private Integer creatorSharePct;
 
     private UUID teamAId;
     private String teamAName;

@@ -42,7 +42,13 @@ public class AppProperties {
     @Getter
     @Setter
     public static class Game {
-        private int defaultCreatorSharePct = 50;
+        /**
+         * How many hours before kick-off a team game stops accepting an
+         * opponent: after this point a new team could not get there in time,
+         * so nobody may join and a game still without an opponent is over.
+         * team_vs_team only.
+         */
+        private int opponentDeadlineHours = 3;
     }
 
     @Getter

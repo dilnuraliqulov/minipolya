@@ -62,6 +62,7 @@ class GameServiceTest {
     private AuditService auditService;
     private StadiumClosureService closureService;
     private PlatformSettingsService platformSettingsService;
+    private TeamGameService teamGameService;
     private GameService service;
 
     private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
@@ -95,12 +96,13 @@ class GameServiceTest {
         auditService = mock(AuditService.class);
         closureService = mock(StadiumClosureService.class);
         platformSettingsService = mock(PlatformSettingsService.class);
+        teamGameService = mock(TeamGameService.class);
         when(platformSettingsService.current()).thenReturn(PlatformSettings.builder().build());
 
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, bookingPriceCalculator, bookingRepository,
                 gameMapper, participantMapper, new AppProperties(), paymentService, notificationService,
-                auditService, new BookingWindowValidator(closureService), platformSettingsService);
+                auditService, new BookingWindowValidator(closureService), platformSettingsService, teamGameService);
 
         creator = User.builder().id(CREATOR_ID).name("Creator").build();
         stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000L)
@@ -248,7 +250,7 @@ class GameServiceTest {
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, bookingPriceCalculator, bookingRepository,
                 gameMapper, participantMapper, props, paymentService, notificationService,
-                auditService, new BookingWindowValidator(closureService), platformSettingsService);
+                auditService, new BookingWindowValidator(closureService), platformSettingsService, teamGameService);
         stubCreate();
         CreateGameRequest req = CreateGameRequest.builder()
                 .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(18, 1)).duration(1).build();
@@ -543,35 +545,6 @@ class GameServiceTest {
         verify(bookingRepository).saveAndFlush(bookingCaptor.capture());
         assertThat(bookingCaptor.getValue().getSource()).isEqualTo("game");
         assertThat(bookingCaptor.getValue().getStatus()).isEqualTo("confirmed");
-    }
-
-    @Test
-    void bothLeadersPaidConfirmsTeamVsTeamGame() {
-        OffsetDateTime start = inHours(24);
-        User leaderB = User.builder().id(LEADER_B_ID).name("Leader B").build();
-        Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("open").creatorSharePct(50)
-                .creator(creator).stadium(stadium).startsAt(start).endsAt(start.plusHours(1)).totalPrice(100_000L).build();
-        GameParticipant leaderBPart = GameParticipant.builder().id(UUID.randomUUID()).game(game).user(leaderB)
-                .side(GameParticipant.Side.B).status(GameParticipant.Status.JOINED).build();
-        GameParticipant leaderAPart = GameParticipant.builder().id(UUID.randomUUID()).game(game).user(creator)
-                .side(GameParticipant.Side.A).status(GameParticipant.Status.PAID).build();
-        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game));
-        when(participantRepository.findByGameIdAndUserId(GAME_ID, LEADER_B_ID)).thenReturn(Optional.of(leaderBPart));
-        when(participantRepository.save(any(GameParticipant.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(participantRepository.findByGameIdAndSide(GAME_ID, GameParticipant.Side.A)).thenReturn(List.of(leaderAPart));
-        when(participantRepository.findByGameIdAndSide(GAME_ID, GameParticipant.Side.B)).thenReturn(List.of(leaderBPart));
-        when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> {
-            Booking b = inv.getArgument(0);
-            b.setId(BOOKING_ID);
-            return b;
-        });
-        when(gameRepository.save(any(Game.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        service.handleGamePaymentConfirmed(GAME_ID, LEADER_B_ID);
-
-        assertThat(leaderBPart.getStatus()).isEqualTo(GameParticipant.Status.PAID);
-        assertThat(game.getStatus()).isEqualTo("confirmed");
-        assertThat(game.getBookingId()).isEqualTo(BOOKING_ID);
     }
 
     // ---- cancelGamesOnSlot ----

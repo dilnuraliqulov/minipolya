@@ -55,6 +55,15 @@ public class Payment {
     @JoinColumn(name = "game_id")
     private Game game;
 
+    /**
+     * For a team-vs-team game: which team of which game this money belongs to.
+     * A game's booking is replaced whenever an opponent leaves and another
+     * joins, so the booking cannot own a team's payments — this can.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "game_team_id")
+    private GameTeam gameTeam;
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;

@@ -75,6 +75,7 @@ public class GameService {
     private final AuditService auditService;
     private final BookingWindowValidator bookingWindowValidator;
     private final PlatformSettingsService platformSettingsService;
+    private final TeamGameService teamGameService;
 
     @Transactional
     public GameDetailResponse createGame(CreateGameRequest request, UUID creatorUserId) {
@@ -112,16 +113,16 @@ public class GameService {
                 // Fees are platform settings, not static config: a team game is charged the
                 // per-team platform fee, any other game the per-player service fee.
                 .serviceFeePerPerson(serviceFeeFor(type))
-                .creatorSharePct(appProperties.getGame().getDefaultCreatorSharePct())
                 .isPublic(TYPE_OPEN.equals(type))
                 .build();
 
         GameParticipant.Side creatorSide = null;
+        Team teamA = null;
         if (TYPE_TEAM_VS_TEAM.equals(type)) {
             if (request.getTeamAId() == null) {
                 throw new BadRequestException("teamAId is required for a team_vs_team game");
             }
-            Team teamA = teamRepository.findById(request.getTeamAId())
+            teamA = teamRepository.findById(request.getTeamAId())
                     .orElseThrow(() -> new ResourceNotFoundException("Team not found"));
             if (!teamA.getLeader().getId().equals(creatorUserId)) {
                 throw new ForbiddenException("Only the team leader can create a team game");
@@ -133,6 +134,12 @@ public class GameService {
         Game saved = gameRepository.save(game);
         participantRepository.save(GameParticipant.builder()
                 .game(saved).user(creator).side(creatorSide).status(GameParticipant.Status.JOINED).build());
+
+        // A team game is paid for as it is created: the creating team's fee and
+        // advance go on hold. A declined card throws, rolling the game back.
+        if (TYPE_TEAM_VS_TEAM.equals(type)) {
+            teamGameService.createWaitingGame(saved, teamA, creator, request.getCardId());
+        }
 
         auditService.log(creatorUserId, "GAME_CREATED", "game", saved.getId(), "{\"type\":\"" + type + "\"}");
         log.info("Game created: id={} type={} stadiumId={} creatorId={}",
@@ -176,6 +183,10 @@ public class GameService {
         return participantMapper.toResponse(participant);
     }
 
+    /**
+     * Casual games only — the hosted checkout. A team game is paid for when it
+     * is created and when an opponent joins, from a saved card.
+     */
     @Transactional
     public PaymentInitResponse payForGame(UUID gameId, UUID userId, String provider) {
         return paymentService.initiateGamePayment(gameId, provider, userId);
@@ -328,18 +339,10 @@ public class GameService {
                 : settings.getCasualGameServiceFee();
     }
 
+    /** Casual games only: a team game is funded per team, by TeamGameService. */
     private boolean isFullyFunded(Game game) {
-        if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
-            return sideHasPaid(game.getId(), GameParticipant.Side.A)
-                    && sideHasPaid(game.getId(), GameParticipant.Side.B);
-        }
         return participantRepository.countByGameIdAndStatus(game.getId(), GameParticipant.Status.PAID)
                 >= game.getMaxPlayers();
-    }
-
-    private boolean sideHasPaid(UUID gameId, GameParticipant.Side side) {
-        return participantRepository.findByGameIdAndSide(gameId, side).stream()
-                .anyMatch(p -> p.getStatus() == GameParticipant.Status.PAID);
     }
 
     private void assignSides(Game game) {

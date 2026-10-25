@@ -92,11 +92,6 @@ public class Game {
     @Column(name = "service_fee_per_person", nullable = false)
     private Long serviceFeePerPerson = 500_000L;
 
-    /** Share of the pitch price the creator's team pays in team_vs_team (1..100). */
-    @Builder.Default
-    @Column(name = "creator_share_pct", nullable = false)
-    private Integer creatorSharePct = 50;
-
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "team_a_id")
     private Team teamA;

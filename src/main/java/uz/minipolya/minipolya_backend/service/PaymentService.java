@@ -12,6 +12,7 @@ import uz.minipolya.minipolya_backend.dto.response.PaymentResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
+import uz.minipolya.minipolya_backend.entity.GameTeam;
 import uz.minipolya.minipolya_backend.entity.Notification;
 import uz.minipolya.minipolya_backend.entity.SavedCard;
 import uz.minipolya.minipolya_backend.entity.Payment;
@@ -150,6 +151,57 @@ public class PaymentService {
                 "PAYMENT_COMPLETED", "payment", payment.getId(),
                 "{\"amount\":" + amount + ",\"method\":\"card\",\"type\":\"" + type.getValue() + "\"}");
         return applySuccessfulBookingPayment(booking, payment);
+    }
+
+    /**
+     * Reserves one team's fee and owner advance on its leader's card when the
+     * team takes a side of a team-vs-team game.
+     *
+     * <p>A hold, not a charge: a waiting game holds no slot, so the money is
+     * only taken once an opponent turns up and the booking actually exists.
+     * The ATMOS split carries the two parts apart — the advance is the owner's,
+     * the fee is the platform's — and no booking commission is added on top,
+     * because on a team game the fee <em>is</em> the platform's cut.
+     *
+     * <p>A declined card comes back as a {@code FAILED} row, not an exception.
+     */
+    @Transactional
+    public Payment holdForTeamGame(GameTeam gameTeam, SavedCard card) {
+        long advance = gameTeam.getAdvanceAmount();
+        long fee = gameTeam.getFeeAmount();
+        ProviderTransaction txn = paymentProvider.hold(new ChargeCommand(
+                card.getProviderToken(), advance + fee, advance, fee, UUID.randomUUID().toString()));
+
+        Payment payment = paymentRepository.save(teamGameRow(gameTeam, advance, fee, txn,
+                Payment.PaymentType.TEAM_GAME,
+                txn.failed() ? Payment.Status.FAILED : Payment.Status.HELD));
+
+        if (txn.failed()) {
+            log.info("Team game hold declined: gameTeamId={} amount={}", gameTeam.getId(), advance + fee);
+        } else {
+            log.info("Team game hold placed: gameTeamId={} amount={} txn={}",
+                    gameTeam.getId(), advance + fee, txn.providerTxnId());
+        }
+        return payment;
+    }
+
+    /** One team-game payment row. Amounts and split never change once written. */
+    private Payment teamGameRow(GameTeam gameTeam, long ownerAmount, long platformAmount,
+                                ProviderTransaction txn, Payment.PaymentType type, Payment.Status status) {
+        return Payment.builder()
+                .game(gameTeam.getGame())
+                .gameTeam(gameTeam)
+                .user(gameTeam.getLeader())
+                .amount(ownerAmount + platformAmount)
+                .ownerAmount(ownerAmount)
+                .platformAmount(platformAmount)
+                .commissionPercent(0)
+                .method(Payment.Method.CARD)
+                .paymentType(type)
+                .provider(Payment.Provider.ATMOS)
+                .providerTxnId(txn.providerTxnId())
+                .status(status)
+                .build();
     }
 
     /**
@@ -298,13 +350,17 @@ public class PaymentService {
 
         Game game = gameRepository.findById(gameId)
                 .orElseThrow(() -> new ResourceNotFoundException("Game not found"));
+        if ("team_vs_team".equals(game.getType())) {
+            throw new BadRequestException(
+                    "A team game is paid when creating or joining it, not through a checkout");
+        }
         GameParticipant participant = gameParticipantRepository.findByGameIdAndUserId(gameId, userId)
                 .orElseThrow(() -> new BadRequestException("Join the game before paying"));
 
         Payment payment = Payment.builder()
                 .game(game)
                 .user(participant.getUser())
-                .amount(gameShareAmount(game, participant))
+                .amount(gameShareAmount(game))
                 .paymentType(Payment.PaymentType.GAME_SHARE)
                 .provider(provider)
                 .status(Payment.Status.PENDING)
@@ -510,17 +566,15 @@ public class PaymentService {
         return paymentRepository.save(saved);
     }
 
-    private long gameShareAmount(Game game, GameParticipant participant) {
+    /**
+     * One player's share of a casual game. Team games never reach here — their
+     * money is held on creation and charged on joining, per team rather than
+     * per player, by {@code TeamGameService}.
+     */
+    private long gameShareAmount(Game game) {
         long fee = game.getServiceFeePerPerson() == null ? 0 : game.getServiceFeePerPerson();
-        long total = game.getTotalPrice();
-        if ("team_vs_team".equals(game.getType())) {
-            int pct = participant.getSide() == GameParticipant.Side.B
-                    ? 100 - game.getCreatorSharePct()
-                    : game.getCreatorSharePct();
-            return total * pct / 100 + fee;
-        }
         int players = game.getMaxPlayers() == null || game.getMaxPlayers() < 1 ? 1 : game.getMaxPlayers();
-        return total / players + fee;
+        return game.getTotalPrice() / players + fee;
     }
 
     private PaymentInitResponse initResponse(Payment saved, Payment.Provider provider, String checkoutUrl) {
