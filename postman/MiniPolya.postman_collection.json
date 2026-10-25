@@ -4401,10 +4401,12 @@
                   "        pm.expect(raw.toLowerCase()).to.not.include(bad.toLowerCase());",
                   "    });",
                   "});",
-                  "pm.test('held as pending with an expiry', function () {",
+                  "pm.test('a paid card confirms the booking straight away', function () {",
                   "    var d = pm.response.json().data;",
-                  "    pm.expect(d.status).to.eql('pending');",
-                  "    pm.expect(d.expiresAt).to.be.a('string');",
+                  "    pm.expect(d.status).to.eql('confirmed');",
+                  "    pm.expect(d.paymentStatus).to.eql('paid');",
+                  "    pm.expect(d.paidAmount).to.eql(d.price);",
+                  "    pm.expect(d.remainingAmount).to.eql(0);",
                   "    pm.expect(d.source).to.eql('app');",
                   "});"
                 ]
@@ -4982,6 +4984,128 @@
               ]
             },
             "description": "Regression guard: this used to answer 500."
+          }
+        },
+        {
+          "name": "200 pay the remainder from a saved card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('the booking is now paid in full', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.paymentStatus).to.eql('paid');",
+                  "    pm.expect(d.remainingAmount).to.eql(0);",
+                  "    pm.expect(d.paidAmount).to.eql(d.price);",
+                  "});",
+                  "pm.test('money stays whole tiyin', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    [d.price, d.paidAmount, d.remainingAmount].forEach(function (v) {",
+                  "        pm.expect(v).to.be.a('number');",
+                  "        pm.expect(v % 1).to.eql(0);",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/{{partialBookingId}}/pay-remainder",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings",
+                "{{partialBookingId}}",
+                "pay-remainder"
+              ]
+            },
+            "description": "Pays off what is still owed on a partially paid booking. Works before or after the game; a booking paid off after the game stays 'completed'. Create the booking with paymentOption=MINIMUM first and capture its id into partialBookingId.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardId\": \"{{cardId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "400 pay the remainder twice",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('says it is already paid', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.success).to.eql(false);",
+                  "    pm.expect(b.message).to.eql('Already paid');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/{{partialBookingId}}/pay-remainder",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings",
+                "{{partialBookingId}}",
+                "pay-remainder"
+              ]
+            },
+            "description": "Run straight after the call above: the booking is already paid, whether by card or by the owner's cash entry.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardId\": \"{{cardId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {

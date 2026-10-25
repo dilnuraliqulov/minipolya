@@ -15,6 +15,7 @@ import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Notification;
+import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.SavedCard;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
@@ -155,6 +156,40 @@ public class BookingService {
                     "The stadium minimum is not below this booking's price, so full payment is required");
         }
         return minimum;
+    }
+
+    /**
+     * Pays off what is still owed on a partially paid booking from a saved
+     * card. Allowed at any time while the booking is partially paid — before or
+     * after the game — but never twice: the owner may have taken the same money
+     * in cash, and whichever lands first wins.
+     */
+    @Transactional
+    public BookingResponse payRemainder(UUID userId, UUID bookingId, UUID cardId) {
+        Booking booking = requireBooking(bookingId);
+        if (booking.getUser() == null || !booking.getUser().getId().equals(userId)) {
+            throw new ForbiddenException("This booking does not belong to you");
+        }
+        if (booking.getPaymentStatus() == Booking.PaymentStatus.PAID) {
+            throw new BadRequestException("Already paid");
+        }
+        if (booking.getPaymentStatus() != Booking.PaymentStatus.PARTIALLY_PAID) {
+            throw new BadRequestException("This booking has no part payment to complete");
+        }
+        if (!"confirmed".equals(booking.getStatus()) && !"completed".equals(booking.getStatus())) {
+            throw new BadRequestException("Only a live booking can be paid off");
+        }
+
+        long remainder = booking.getRemainingAmount();
+        SavedCard card = savedCardService.requireOwnedCard(userId, cardId);
+        paymentService.chargeForBooking(booking, card, remainder, Payment.PaymentType.REMAINDER);
+
+        auditService.log(userId, "BOOKING_REMAINDER_PAID", "booking", bookingId,
+                "{\"amount\":" + remainder + ",\"paymentStatus\":\""
+                        + booking.getPaymentStatus().getValue() + "\"}");
+        log.info("Booking remainder charged: id={} userId={} amount={} status={}",
+                bookingId, userId, remainder, booking.getPaymentStatus().getValue());
+        return bookingMapper.toResponse(booking);
     }
 
     /** Owner adds a walk-in/phone booking: confirmed immediately, no hold. */

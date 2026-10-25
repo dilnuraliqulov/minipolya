@@ -11,6 +11,7 @@ import uz.minipolya.minipolya_backend.entity.PlatformSettings;
 import uz.minipolya.minipolya_backend.entity.SavedCard;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
+import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
 import uz.minipolya.minipolya_backend.provider.ProviderTransaction;
 import uz.minipolya.minipolya_backend.provider.ProviderTransactionStatus;
@@ -28,6 +29,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -46,11 +48,13 @@ class BookingConfirmationTest {
     private static final UUID STADIUM_ID = UUID.randomUUID();
     private static final UUID BOOKING_ID = UUID.randomUUID();
     private static final UUID CARD_ID = UUID.randomUUID();
+    private static final UUID OWNER_ID = UUID.randomUUID();
     private static final long PRICE = 10_000_000L;
     private static final long MINIMUM = 3_000_000L;
 
     private PaymentRepository paymentRepository;
     private BookingRepository bookingRepository;
+    private UserRepository userRepository;
     private NotificationService notificationService;
     private AuditService auditService;
     private PaymentProvider paymentProvider;
@@ -58,6 +62,7 @@ class BookingConfirmationTest {
     private PaymentService service;
 
     private User player;
+    private User owner;
     private Stadium stadium;
     private SavedCard card;
 
@@ -65,18 +70,20 @@ class BookingConfirmationTest {
     void setUp() {
         paymentRepository = mock(PaymentRepository.class);
         bookingRepository = mock(BookingRepository.class);
+        userRepository = mock(UserRepository.class);
         notificationService = mock(NotificationService.class);
         auditService = mock(AuditService.class);
         paymentProvider = mock(PaymentProvider.class);
         platformSettingsService = mock(PlatformSettingsService.class);
 
-        service = new PaymentService(paymentRepository, bookingRepository, mock(UserRepository.class),
+        service = new PaymentService(paymentRepository, bookingRepository, userRepository,
                 mock(GameRepository.class), mock(GameParticipantRepository.class), mock(PaymentMapper.class),
                 List.of(), mock(GameService.class), notificationService, auditService,
                 paymentProvider, platformSettingsService);
 
         player = User.builder().id(USER_ID).name("Player").build();
-        stadium = Stadium.builder().id(STADIUM_ID).name("Arena").build();
+        owner = User.builder().id(OWNER_ID).name("Owner").build();
+        stadium = Stadium.builder().id(STADIUM_ID).name("Arena").owner(owner).build();
         card = SavedCard.builder().id(CARD_ID).user(player).providerToken("tok-1").isActive(true).build();
 
         when(platformSettingsService.current()).thenReturn(PlatformSettings.builder().build());
@@ -239,5 +246,63 @@ class BookingConfirmationTest {
 
         assertThat(payment.getStatus()).isEqualTo(Payment.Status.REFUNDED);
         verify(paymentProvider).refund("txn-1");
+    }
+
+    // ---- paying off the rest ----
+
+    @Test
+    void aRemainderPaymentOnAPlayedBookingLeavesItCompleted() {
+        providerCharges();
+        Booking played = booking("completed");
+        played.setPaidAmount(MINIMUM);
+        played.setPaymentStatus(Booking.PaymentStatus.PARTIALLY_PAID);
+
+        service.chargeForBooking(played, card, PRICE - MINIMUM, Payment.PaymentType.REMAINDER);
+
+        assertThat(played.getStatus()).isEqualTo("completed");
+        assertThat(played.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);
+        assertThat(played.getPaidAmount()).isEqualTo(PRICE);
+    }
+
+    @Test
+    void aRemainderPaymentOnAConfirmedBookingCompletesThePrice() {
+        providerCharges();
+        Booking confirmed = booking("confirmed");
+        confirmed.setPaidAmount(MINIMUM);
+        confirmed.setPaymentStatus(Booking.PaymentStatus.PARTIALLY_PAID);
+
+        service.chargeForBooking(confirmed, card, PRICE - MINIMUM, Payment.PaymentType.REMAINDER);
+
+        assertThat(confirmed.getStatus()).isEqualTo("confirmed");
+        assertThat(confirmed.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);
+    }
+
+    @Test
+    void cashIsRefusedOnceTheBookingIsFullyPaid() {
+        Booking paid = booking("confirmed");
+        paid.setPaidAmount(PRICE);
+        paid.setPaymentStatus(Booking.PaymentStatus.PAID);
+        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(paid));
+
+        assertThatThrownBy(() -> service.recordCashPayment(BOOKING_ID, OWNER_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Already paid");
+
+        verify(paymentRepository, never()).save(any(Payment.class));
+    }
+
+    @Test
+    void cashTakesOnlyWhatIsStillOwed() {
+        Booking partly = booking("confirmed");
+        partly.setPaidAmount(MINIMUM);
+        partly.setPaymentStatus(Booking.PaymentStatus.PARTIALLY_PAID);
+        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(partly));
+        when(userRepository.findById(OWNER_ID)).thenReturn(Optional.of(owner));
+
+        Payment cash = service.recordCashPayment(BOOKING_ID, OWNER_ID);
+
+        assertThat(cash.getAmount()).isEqualTo(PRICE - MINIMUM);
+        assertThat(cash.getMethod()).isEqualTo(Payment.Method.CASH);
+        assertThat(partly.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);
     }
 }

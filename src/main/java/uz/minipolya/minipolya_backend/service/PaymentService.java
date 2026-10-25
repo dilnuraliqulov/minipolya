@@ -169,7 +169,11 @@ public class PaymentService {
         booking.setPaymentStatus(paid >= booking.getPrice()
                 ? Booking.PaymentStatus.PAID
                 : Booking.PaymentStatus.PARTIALLY_PAID);
-        booking.setStatus("confirmed");
+        // A remainder can arrive after the game was played: paying it must not
+        // drag a completed booking back to confirmed.
+        if (!"completed".equals(previousStatus)) {
+            booking.setStatus("confirmed");
+        }
         booking.setExpiresAt(null);
 
         try {
@@ -390,6 +394,11 @@ public class PaymentService {
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
         if (!booking.getStadium().getOwner().getId().equals(ownerUserId)) {
             throw new ForbiddenException("You do not own this stadium");
+        }
+        // The player may have paid the rest from a saved card first; whichever
+        // got there first wins and the other is refused.
+        if (booking.getPaymentStatus() == Booking.PaymentStatus.PAID) {
+            throw new BadRequestException("Already paid");
         }
         User owner = userRepository.findById(ownerUserId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));

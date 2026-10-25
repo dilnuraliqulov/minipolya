@@ -253,6 +253,20 @@ smallest payment ATMOS takes).
   `pending` with a `failed` payment row, so the usual hold timeout expires it;
   the create call still answers 200 with `paymentStatus: unpaid`, and the
   message says the payment failed.
+**Paying off the rest.** While a booking is `partially_paid` the remainder can be
+settled two ways, and whichever lands first wins:
+
+- `POST /api/bookings/{id}/pay-remainder` with a `cardId` — the player charges
+  the whole remainder to a saved card, at any time, **before or after the game**.
+  Paying after the game leaves the booking `completed`; it is never dragged back
+  to `confirmed`.
+- `POST /api/bookings/{id}/cash` — the owner marks the same money as received in
+  cash (it takes `remainingAmount`, not the full price).
+
+Once `payment_status` is `paid`, the other one answers **400 "Already paid"**.
+The remainder is charged as a `remainder` payment row, and a declined card
+leaves the booking `partially_paid` with a `failed` row.
+
 - **`PaymentService.applySuccessfulBookingPayment` is the only path from "money
   arrived" to "booking confirmed"** — the synchronous charge uses it today and a
   provider webhook will use the same method. If the hold already expired when

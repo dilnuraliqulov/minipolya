@@ -13,9 +13,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.CreateBookingRequest;
 import uz.minipolya.minipolya_backend.dto.request.CreateManualBookingRequest;
+import uz.minipolya.minipolya_backend.dto.request.PayRemainderRequest;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
+import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.service.BookingService;
 
 import java.time.LocalDate;
@@ -42,6 +44,21 @@ public class BookingController {
             case PARTIALLY_PAID -> "Booking confirmed; the remainder is still due";
             case UNPAID -> "Payment failed — the booking is held until it expires; try paying again";
         });
+    }
+
+    /**
+     * Pays off the rest of a partially paid booking from a saved card, before
+     * or after the game. Returns 400 "Already paid" if the owner has already
+     * taken that money in cash.
+     */
+    @PostMapping("/api/bookings/{id}/pay-remainder")
+    public ApiResponse<BookingResponse> payRemainder(@AuthenticationPrincipal UUID userId,
+                                                     @PathVariable UUID id,
+                                                     @Valid @RequestBody PayRemainderRequest request) {
+        BookingResponse booking = bookingService.payRemainder(userId, id, request.getCardId());
+        return ApiResponse.ok(booking, booking.getPaymentStatus() == Booking.PaymentStatus.PAID
+                ? "Booking paid in full"
+                : "Payment failed — the remainder is still due");
     }
 
     @GetMapping("/api/bookings")
