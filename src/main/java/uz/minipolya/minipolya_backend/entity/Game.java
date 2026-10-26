@@ -88,9 +88,16 @@ public class Game {
     @Column(name = "total_price", nullable = false)
     private Long totalPrice;
 
-    @Builder.Default
+    /**
+     * What the platform charges on this game: per team for {@code team_vs_team},
+     * per player otherwise. Copied from {@code platform_settings} when the game
+     * is created, so a later change of the setting leaves existing games alone.
+     *
+     * <p>No default on purpose — the old 5 000 so'm one outlived the config it
+     * came from, and a stale default is worse than a missing value.
+     */
     @Column(name = "service_fee_per_person", nullable = false)
-    private Long serviceFeePerPerson = 500_000L;
+    private Long serviceFeePerPerson;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "team_a_id")
