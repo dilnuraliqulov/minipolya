@@ -17,6 +17,14 @@ public interface GameMessageRepository extends JpaRepository<GameMessage, UUID> 
 
     Page<GameMessage> findByGameIdOrderByCreatedAtDesc(UUID gameId, Pageable pageable);
 
+    /**
+     * The chat as a team that joined partway through should see it. When an
+     * opponent walks out and another takes its place, what the previous one
+     * said is not the newcomer's business.
+     */
+    Page<GameMessage> findByGameIdAndCreatedAtAfterOrderByCreatedAtDesc(UUID gameId, OffsetDateTime since,
+                                                                        Pageable pageable);
+
     /** Unread count: messages posted since the user last looked. */
     int countByGameIdAndCreatedAtAfter(UUID gameId, OffsetDateTime since);
 }
