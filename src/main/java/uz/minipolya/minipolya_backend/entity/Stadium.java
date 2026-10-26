@@ -41,6 +41,9 @@ import java.util.List;
 @AllArgsConstructor
 public class Stadium {
 
+    /** 50 000 tiyin = 500 so'm, the smallest payment ATMOS accepts. */
+    public static final long MIN_BOOKING_AMOUNT_FLOOR = 50_000L;
+
     @Id
     @UuidGenerator(style = UuidGenerator.Style.VERSION_7)
     private UUID id;
@@ -83,24 +86,30 @@ public class Stadium {
 
     /** Integer so'm — never floating point for money. */
     @Column(name = "price_per_hour", nullable = false)
-    private Integer pricePerHour;
+    private Long pricePerHour;
+
+    /**
+     * Smallest amount, in tiyin, a player may pay up front to hold a booking
+     * here. {@code null} means the whole price is due immediately. The floor is
+     * {@link #MIN_BOOKING_AMOUNT_FLOOR} — below that ATMOS will not take the
+     * payment at all.
+     */
+    @Column(name = "min_booking_amount")
+    private Long minBookingAmount;
 
     /** One of: pending, approved, blocked. */
     @Builder.Default
     @Column(nullable = false, length = 20)
     private String status = "pending";
 
+    /**
+     * How many hours before kick-off a player may still cancel and get their
+     * money back. Cancelling at or beyond this refunds every card payment in
+     * full; later cancels the booking but refunds nothing.
+     */
     @Builder.Default
-    @Column(name = "full_refund_hours", nullable = false)
-    private int fullRefundHours = 24;
-
-    @Builder.Default
-    @Column(name = "partial_refund_hours", nullable = false)
-    private int partialRefundHours = 12;
-
-    @Builder.Default
-    @Column(name = "partial_refund_percent", nullable = false)
-    private int partialRefundPercent = 50;
+    @Column(name = "cancellation_hours", nullable = false)
+    private int cancellationHours = 24;
 
     @Builder.Default
     @Column(name = "is_active", nullable = false)

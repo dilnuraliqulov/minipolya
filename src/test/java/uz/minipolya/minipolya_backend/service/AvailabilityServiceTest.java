@@ -20,6 +20,7 @@ import uz.minipolya.minipolya_backend.repository.PricingRuleRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.util.PriceCalculator;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
@@ -62,13 +63,22 @@ class AvailabilityServiceTest {
         promotionService = mock(PromotionService.class);
         closureService = mock(StadiumClosureService.class);
 
-        service = new AvailabilityService(stadiumRepository, bookingRepository, pricingRuleRepository,
-                gameRepository, participantRepository, new PriceCalculator(), promotionService,
-                closureService, new AppProperties());
+        service = newServiceWithClock(Clock.systemUTC());
 
         stadium = Stadium.builder().id(STADIUM_ID).name("Arena").status("approved").isActive(true)
-                .pricePerHour(50_000).openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).build();
+                .pricePerHour(50_000L).openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).build();
         date = LocalDate.now(TASHKENT).plusDays(1);
+    }
+
+    private AvailabilityService newServiceWithClock(Clock clock) {
+        return new AvailabilityService(stadiumRepository, bookingRepository, pricingRuleRepository,
+                gameRepository, participantRepository, new PriceCalculator(), promotionService,
+                closureService, new AppProperties(), clock);
+    }
+
+    /** A clock fixed at the given Tashkent-local date and time. */
+    private Clock clockAt(LocalDate day, LocalTime time) {
+        return Clock.fixed(day.atTime(time).atZone(TASHKENT).toInstant(), TASHKENT);
     }
 
     private void stubStadium() {
@@ -83,6 +93,73 @@ class AvailabilityServiceTest {
         return response.getSlots().stream()
                 .filter(s -> s.getStartTime().equals(start))
                 .findFirst().orElseThrow();
+    }
+
+    // ---- an hour that has already started is no longer offered ----
+
+    @Test
+    void todayHidesHoursThatHaveAlreadyStarted() {
+        stubStadium();
+        LocalDate today = LocalDate.of(2026, 10, 27);
+        AvailabilityService atTwentyPast = newServiceWithClock(clockAt(today, LocalTime.of(14, 20)));
+
+        AvailabilityResponse response = atTwentyPast.getAvailability(STADIUM_ID, today);
+
+        List<LocalTime> starts = response.getSlots().stream().map(TimeSlot::getStartTime).toList();
+        // 14:00 has already started at 14:20, so it is gone; 15:00 onwards remain.
+        assertThat(starts).doesNotContain(LocalTime.of(8, 0), LocalTime.of(13, 0), LocalTime.of(14, 0));
+        assertThat(starts).contains(LocalTime.of(15, 0), LocalTime.of(22, 0));
+        assertThat(starts).startsWith(LocalTime.of(15, 0));
+        assertThat(response.getSlots()).hasSize(8); // 15:00-23:00
+        assertThat(response.getSlots()).allMatch(TimeSlot::isAvailable);
+    }
+
+    @Test
+    void anHourStartingExactlyNowIsAlreadyGone() {
+        stubStadium();
+        LocalDate today = LocalDate.of(2026, 10, 27);
+        AvailabilityService atFourteenSharp = newServiceWithClock(clockAt(today, LocalTime.of(14, 0)));
+
+        AvailabilityResponse response = atFourteenSharp.getAvailability(STADIUM_ID, today);
+
+        List<LocalTime> starts = response.getSlots().stream().map(TimeSlot::getStartTime).toList();
+        assertThat(starts).doesNotContain(LocalTime.of(14, 0));
+        assertThat(starts).startsWith(LocalTime.of(15, 0));
+    }
+
+    @Test
+    void beforeOpeningTimeTodayStillOffersEveryHour() {
+        stubStadium();
+        LocalDate today = LocalDate.of(2026, 10, 27);
+        AvailabilityService atDawn = newServiceWithClock(clockAt(today, LocalTime.of(6, 30)));
+
+        AvailabilityResponse response = atDawn.getAvailability(STADIUM_ID, today);
+
+        assertThat(response.getSlots()).hasSize(15);
+        assertThat(response.getSlots().get(0).getStartTime()).isEqualTo(LocalTime.of(8, 0));
+    }
+
+    @Test
+    void afterClosingTimeTodayOffersNothing() {
+        stubStadium();
+        LocalDate today = LocalDate.of(2026, 10, 27);
+        AvailabilityService atNight = newServiceWithClock(clockAt(today, LocalTime.of(23, 30)));
+
+        AvailabilityResponse response = atNight.getAvailability(STADIUM_ID, today);
+
+        assertThat(response.getSlots()).isEmpty();
+    }
+
+    @Test
+    void aFutureDateIsUnaffectedByTheTimeOfDay() {
+        stubStadium();
+        LocalDate today = LocalDate.of(2026, 10, 27);
+        AvailabilityService atTwentyPast = newServiceWithClock(clockAt(today, LocalTime.of(14, 20)));
+
+        AvailabilityResponse response = atTwentyPast.getAvailability(STADIUM_ID, today.plusDays(1));
+
+        assertThat(response.getSlots()).hasSize(15);
+        assertThat(response.getSlots().get(0).getStartTime()).isEqualTo(LocalTime.of(8, 0));
     }
 
     @Test
@@ -139,7 +216,7 @@ class AvailabilityServiceTest {
         stubStadium();
         int dow = date.getDayOfWeek().getValue() - 1;
         PricingRule rule = PricingRule.builder().dayOfWeek(dow)
-                .startTime(LocalTime.of(18, 0)).endTime(LocalTime.of(22, 0)).pricePerHour(80_000).isActive(true).build();
+                .startTime(LocalTime.of(18, 0)).endTime(LocalTime.of(22, 0)).pricePerHour(80_000L).isActive(true).build();
         when(pricingRuleRepository.findByStadiumIdAndIsActiveTrue(STADIUM_ID)).thenReturn(List.of(rule));
 
         AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
@@ -173,10 +250,10 @@ class AvailabilityServiceTest {
     }
 
     @Test
-    void waitingOpenGameIsSurfacedOnSlot() {
+    void aTeamLookingForAnOpponentIsSurfacedOnItsSlot() {
         stubStadium();
         UUID gameId = UUID.randomUUID();
-        Game game = Game.builder().id(gameId).type("open").status("open").maxPlayers(10)
+        Game game = Game.builder().id(gameId).type("team_vs_team").status("open").maxPlayers(10)
                 .startsAt(at(LocalTime.of(14, 0))).endsAt(at(LocalTime.of(15, 0))).build();
         when(gameRepository.findByStadiumIdAndStatus(STADIUM_ID, "open")).thenReturn(List.of(game));
         when(participantRepository.findByGameId(gameId)).thenReturn(List.of(
@@ -187,10 +264,28 @@ class AvailabilityServiceTest {
         TimeSlot slot = slotAt(response, LocalTime.of(14, 0));
         assertThat(slot.isHasWaitingGame()).isTrue();
         assertThat(slot.getWaitingGameId()).isEqualTo(gameId);
-        assertThat(slot.getWaitingGameType()).isEqualTo("open");
+        assertThat(slot.getWaitingGameType()).isEqualTo("team_vs_team");
         assertThat(slot.getPlayersJoined()).isEqualTo(3);
         assertThat(slot.getPlayersNeeded()).isEqualTo(10);
+        // The slot is genuinely free: a waiting game holds no booking.
         assertThat(slot.isAvailable()).isTrue();
+    }
+
+    @Test
+    void aWaitingCasualGameIsNotMarkedOnTheSlot() {
+        stubStadium();
+        UUID gameId = UUID.randomUUID();
+        Game game = Game.builder().id(gameId).type("casual").status("open").maxPlayers(10)
+                .startsAt(at(LocalTime.of(14, 0))).endsAt(at(LocalTime.of(15, 0))).build();
+        when(gameRepository.findByStadiumIdAndStatus(STADIUM_ID, "open")).thenReturn(List.of(game));
+
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
+
+        // "A team is looking for an opponent" is a team-vs-team thing only;
+        // a casual game is private to whoever was invited.
+        TimeSlot slot = slotAt(response, LocalTime.of(14, 0));
+        assertThat(slot.isHasWaitingGame()).isFalse();
+        assertThat(slot.getWaitingGameId()).isNull();
     }
 
     @Test

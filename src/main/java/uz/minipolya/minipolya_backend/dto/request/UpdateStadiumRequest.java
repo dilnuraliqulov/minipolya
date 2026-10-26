@@ -56,16 +56,15 @@ public class UpdateStadiumRequest {
     private LocalTime closeTime;
 
     @PositiveOrZero
-    private Integer pricePerHour;
+    private Long pricePerHour;
 
+    /** Tiyin; null means the player must pay in full. At least 50 000 (500 so.m). */
     @PositiveOrZero
-    private Integer fullRefundHours;
+    private Long minBookingAmount;
 
+    /** Hours before kick-off up to which a player can cancel and be refunded in full. */
     @PositiveOrZero
-    private Integer partialRefundHours;
-
-    @PositiveOrZero
-    private Integer partialRefundPercent;
+    private Integer cancellationHours;
 
     private Boolean isActive;
 

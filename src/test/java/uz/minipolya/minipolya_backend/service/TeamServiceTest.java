@@ -16,6 +16,7 @@ import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.TeamMapper;
+import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.TeamMemberRepository;
 import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
@@ -40,6 +41,8 @@ class TeamServiceTest {
     private TeamMemberRepository teamMemberRepository;
     @Mock
     private UserRepository userRepository;
+    @Mock
+    private GameRepository gameRepository;
     @Mock
     private TeamMapper teamMapper;
 
@@ -197,10 +200,24 @@ class TeamServiceTest {
     void deleteRemovesTeamWhenLeaderRequests() {
         Team team = Team.builder().id(TEAM_ID).leader(user(LEADER_ID, "Leader")).build();
         when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
+        when(gameRepository.existsByTeamAIdOrTeamBId(TEAM_ID, TEAM_ID)).thenReturn(false);
 
         teamService.delete(LEADER_ID, TEAM_ID);
 
         verify(teamRepository).delete(team);
+    }
+
+    @Test
+    void deleteRejectsATeamThatIsTakingPartInAGame() {
+        Team team = Team.builder().id(TEAM_ID).leader(user(LEADER_ID, "Leader")).build();
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
+        when(gameRepository.existsByTeamAIdOrTeamBId(TEAM_ID, TEAM_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> teamService.delete(LEADER_ID, TEAM_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("taking part in a game");
+
+        verify(teamRepository, never()).delete(any());
     }
 
     @Test

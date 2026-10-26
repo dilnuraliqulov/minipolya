@@ -27,6 +27,6 @@ public class AdminStadiumResponse {
     private double averageRating;
     private int reviewCount;
     private int totalBookings;
-    private int totalRevenue;
+    private long totalRevenue;
     private OffsetDateTime createdAt;
 }

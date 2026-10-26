@@ -1,8 +1,8 @@
 package uz.minipolya.minipolya_backend.service;
 
+import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -16,6 +16,7 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.StadiumAmenities;
 import uz.minipolya.minipolya_backend.entity.StadiumPhoto;
 import uz.minipolya.minipolya_backend.entity.User;
+import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.StadiumMapper;
@@ -23,6 +24,7 @@ import uz.minipolya.minipolya_backend.repository.FavoriteRepository;
 import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
+import uz.minipolya.minipolya_backend.util.Pagination;
 
 import java.util.List;
 import java.util.UUID;
@@ -41,19 +43,21 @@ public class StadiumService {
     private final ReviewRepository reviewRepository;
     private final FavoriteRepository favoriteRepository;
     private final AuditService auditService;
+    private final EntityManager entityManager;
 
     // ---- Owner operations ----
 
     @Transactional
     public StadiumDetailResponse create(UUID ownerId, CreateStadiumRequest request) {
+        requireValidMinBookingAmount(request.getMinBookingAmount());
+
         User owner = userRepository.findById(ownerId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         Stadium stadium = stadiumMapper.toEntity(request);
         stadium.setOwner(owner);
         stadium.setStatus(STATUS_PENDING);
-        applyRefundOverrides(stadium, request.getFullRefundHours(),
-                request.getPartialRefundHours(), request.getPartialRefundPercent());
+        applyCancellationHours(stadium, request.getCancellationHours());
 
         StadiumAmenities amenities = request.getAmenities() != null
                 ? stadiumMapper.toAmenities(request.getAmenities())
@@ -76,6 +80,8 @@ public class StadiumService {
             throw new ForbiddenException("You do not own this stadium");
         }
 
+        requireValidMinBookingAmount(request.getMinBookingAmount());
+
         stadiumMapper.updateStadiumFromRequest(request, stadium);
 
         if (request.getAmenities() != null) {
@@ -89,7 +95,11 @@ public class StadiumService {
             replacePhotos(stadium, request.getPhotos());
         }
 
-        Stadium saved = stadiumRepository.save(stadium);
+        // The stadiums updated_at trigger sets the new timestamp in the database, so
+        // flush and refresh to report what was actually stored rather than the value
+        // the entity was loaded with.
+        Stadium saved = stadiumRepository.saveAndFlush(stadium);
+        entityManager.refresh(saved);
         auditService.log(ownerId, "STADIUM_UPDATED", "stadium", saved.getId());
         log.info("Stadium updated: id={} ownerId={}", saved.getId(), ownerId);
         return stadiumMapper.toDetailResponse(saved);
@@ -105,8 +115,8 @@ public class StadiumService {
     // ---- Public operations ----
 
     @Transactional(readOnly = true)
-    public PageResponse<StadiumResponse> searchPublic(String q, String format, Integer maxPrice, int page, int size) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "createdAt"));
+    public PageResponse<StadiumResponse> searchPublic(String q, String format, Long maxPrice, int page, int size) {
+        Pageable pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "createdAt"));
         return PageResponse.from(
                 stadiumRepository.search(blankToNull(q), blankToNull(format), maxPrice, pageable),
                 this::toResponseWithRatings);
@@ -135,15 +145,21 @@ public class StadiumService {
         return response;
     }
 
-    private void applyRefundOverrides(Stadium stadium, Integer fullHours, Integer partialHours, Integer partialPercent) {
-        if (fullHours != null) {
-            stadium.setFullRefundHours(fullHours);
+    /**
+     * A null minimum is fine — it means the player pays in full. A non-null one
+     * must be something ATMOS will actually accept.
+     */
+    private void requireValidMinBookingAmount(Long minBookingAmount) {
+        if (minBookingAmount != null && minBookingAmount < Stadium.MIN_BOOKING_AMOUNT_FLOOR) {
+            throw new BadRequestException("minBookingAmount must be at least "
+                    + Stadium.MIN_BOOKING_AMOUNT_FLOOR + " tiyin (500 so'm)");
         }
-        if (partialHours != null) {
-            stadium.setPartialRefundHours(partialHours);
-        }
-        if (partialPercent != null) {
-            stadium.setPartialRefundPercent(partialPercent);
+    }
+
+    /** Leaves the stadium's own default in place when the owner sends nothing. */
+    private void applyCancellationHours(Stadium stadium, Integer cancellationHours) {
+        if (cancellationHours != null) {
+            stadium.setCancellationHours(cancellationHours);
         }
     }
 

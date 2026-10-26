@@ -31,6 +31,7 @@ public interface GameMapper {
     @Mapping(source = "teamB.name", target = "teamBName")
     @Mapping(target = "currentPlayers", ignore = true)
     @Mapping(target = "participants", ignore = true)
+    @Mapping(target = "teams", ignore = true)
     @Mapping(target = "inviteLink", ignore = true)
     GameDetailResponse toDetailResponse(Game game);
 }

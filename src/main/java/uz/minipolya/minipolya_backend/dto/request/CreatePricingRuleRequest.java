@@ -30,5 +30,5 @@ public class CreatePricingRuleRequest {
 
     @NotNull
     @Positive
-    private Integer pricePerHour;
+    private Long pricePerHour;
 }

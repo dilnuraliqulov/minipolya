@@ -7,6 +7,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import uz.minipolya.minipolya_backend.entity.Booking;
+
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -33,7 +35,12 @@ public class BookingResponse {
     private OffsetDateTime startsAt;
     private OffsetDateTime endsAt;
     private Integer durationHours;
-    private Integer price;
+
+    /** All three in tiyin: the total, what has been paid, and what is still owed. */
+    private Long price;
+    private Long paidAmount;
+    private Long remainingAmount;
+    private Booking.PaymentStatus paymentStatus;
 
     private String clientName;
     private String clientPhone;
@@ -47,8 +54,18 @@ public class BookingResponse {
 
     private CancellationPolicyResponse cancellationPolicy;
 
-    /** Only set on a cancellation response: the refund due, in so'm. */
-    private Integer refundAmount;
+    /** The last moment a cancellation still earns a refund. */
+    private OffsetDateTime cancellationDeadline;
+
+    /**
+     * Tiyin that would come back if the player cancelled right now — the sum of
+     * this booking's card payments inside the window, 0 past it. Computed by the
+     * same code that performs the cancellation, so it is what they will get.
+     */
+    private Long refundIfCancelledNow;
+
+    /** Only set on a cancellation response: the refund actually issued, in tiyin. */
+    private Long refundAmount;
 
     private OffsetDateTime createdAt;
 }

@@ -40,9 +40,8 @@ public class GameDetailResponse {
     private OffsetDateTime startsAt;
     private OffsetDateTime endsAt;
 
-    private Integer totalPrice;
-    private Integer serviceFeePerPerson;
-    private Integer creatorSharePct;
+    private Long totalPrice;
+    private Long serviceFeePerPerson;
 
     private UUID teamAId;
     private String teamAName;
@@ -56,6 +55,9 @@ public class GameDetailResponse {
 
     /** Telegram deep link to invite friends: t.me/{bot}?start=game_{id}. */
     private String inviteLink;
+
+    /** team_vs_team only: each team's fee, advance, remainder and refund position. */
+    private List<GameTeamResponse> teams;
 
     private List<GameParticipantResponse> participants;
 

@@ -1,16 +1,20 @@
 package uz.minipolya.minipolya_backend.dto.response;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+/**
+ * The documented envelope for every endpoint: {@code { success, data, message }}.
+ * All three keys are always present — {@code data} is null on an error and
+ * {@code message} is null on a plain success — so clients can read them without
+ * checking whether the field exists.
+ */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@JsonInclude(JsonInclude.Include.NON_NULL)
 public class ApiResponse<T> {
 
     private boolean success;

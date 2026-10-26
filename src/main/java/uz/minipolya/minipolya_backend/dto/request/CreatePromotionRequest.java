@@ -19,7 +19,7 @@ import java.util.UUID;
 @AllArgsConstructor
 public class CreatePromotionRequest {
 
-    @NotNull
+    /** Supplied by the {stadiumId} path variable; a value sent in the body is overwritten. */
     private UUID stadiumId;
 
     @NotBlank

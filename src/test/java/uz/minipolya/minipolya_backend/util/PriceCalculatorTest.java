@@ -33,7 +33,7 @@ class PriceCalculatorTest {
 
     @Test
     void fallsBackToDefaultWhenNoRuleMatches() {
-        int total = calculator.calculateTotalPrice(List.of(), DATE, LocalTime.of(10, 0), 2, DEFAULT_PRICE);
+        long total = calculator.calculateTotalPrice(List.of(), DATE, LocalTime.of(10, 0), 2, DEFAULT_PRICE);
         assertThat(total).isEqualTo(160_000);
     }
 
@@ -41,7 +41,7 @@ class PriceCalculatorTest {
     void usesMatchingRulePriceForOneHour() {
         PricingRule rule = rule(dayOfWeek, LocalTime.of(18, 0), LocalTime.of(22, 0), 120_000, true);
 
-        int total = calculator.calculateTotalPrice(List.of(rule), DATE, LocalTime.of(18, 0), 1, DEFAULT_PRICE);
+        long total = calculator.calculateTotalPrice(List.of(rule), DATE, LocalTime.of(18, 0), 1, DEFAULT_PRICE);
 
         assertThat(total).isEqualTo(120_000);
     }
@@ -52,7 +52,7 @@ class PriceCalculatorTest {
         PricingRule lateNight = rule(dayOfWeek, LocalTime.of(22, 0), LocalTime.of(23, 59), 150_000, true);
 
         // 21:00-23:00 -> hour 21:00 (evening) + hour 22:00 (lateNight)
-        int total = calculator.calculateTotalPrice(List.of(evening, lateNight), DATE, LocalTime.of(21, 0), 2, DEFAULT_PRICE);
+        long total = calculator.calculateTotalPrice(List.of(evening, lateNight), DATE, LocalTime.of(21, 0), 2, DEFAULT_PRICE);
 
         assertThat(total).isEqualTo(250_000);
     }
@@ -62,7 +62,7 @@ class PriceCalculatorTest {
         PricingRule evening = rule(dayOfWeek, LocalTime.of(18, 0), LocalTime.of(22, 0), 100_000, true);
 
         // 21:00-23:00 -> hour 21:00 (rule=100k) + hour 22:00 (no rule -> default 80k)
-        int total = calculator.calculateTotalPrice(List.of(evening), DATE, LocalTime.of(21, 0), 2, DEFAULT_PRICE);
+        long total = calculator.calculateTotalPrice(List.of(evening), DATE, LocalTime.of(21, 0), 2, DEFAULT_PRICE);
 
         assertThat(total).isEqualTo(180_000);
     }
@@ -76,7 +76,7 @@ class PriceCalculatorTest {
         PricingRule mondayEarly = rule(mondayDow, LocalTime.of(0, 0), LocalTime.of(6, 0), 90_000, true);
 
         // 23:00 Sunday for 2h -> hour 23:00 (Sunday rule) + hour 00:00 (Monday rule)
-        int total = calculator.calculateTotalPrice(
+        long total = calculator.calculateTotalPrice(
                 List.of(sundayLate, mondayEarly), sunday, LocalTime.of(23, 0), 2, DEFAULT_PRICE);
 
         assertThat(total).isEqualTo(290_000);
@@ -86,7 +86,7 @@ class PriceCalculatorTest {
     void ignoresRulesForOtherDays() {
         PricingRule otherDay = rule((dayOfWeek + 1) % 7, LocalTime.of(18, 0), LocalTime.of(22, 0), 500_000, true);
 
-        int total = calculator.calculateTotalPrice(List.of(otherDay), DATE, LocalTime.of(18, 0), 1, DEFAULT_PRICE);
+        long total = calculator.calculateTotalPrice(List.of(otherDay), DATE, LocalTime.of(18, 0), 1, DEFAULT_PRICE);
 
         assertThat(total).isEqualTo(DEFAULT_PRICE);
     }
@@ -95,12 +95,21 @@ class PriceCalculatorTest {
     void ignoresInactiveRules() {
         PricingRule inactive = rule(dayOfWeek, LocalTime.of(18, 0), LocalTime.of(22, 0), 500_000, false);
 
-        int total = calculator.calculateTotalPrice(List.of(inactive), DATE, LocalTime.of(18, 0), 1, DEFAULT_PRICE);
+        long total = calculator.calculateTotalPrice(List.of(inactive), DATE, LocalTime.of(18, 0), 1, DEFAULT_PRICE);
 
         assertThat(total).isEqualTo(DEFAULT_PRICE);
     }
 
-    private PricingRule rule(int dow, LocalTime start, LocalTime end, int price, boolean active) {
+    @Test
+    void totalPriceAboveIntRangeIsExact() {
+        // 24 h at 100 000 000 tiyin (1 000 000 so'm) an hour = 2 400 000 000 tiyin,
+        // which does not fit in an int.
+        long total = calculator.calculateTotalPrice(List.of(), DATE, LocalTime.of(0, 0), 24, 100_000_000L);
+
+        assertThat(total).isEqualTo(2_400_000_000L);
+    }
+
+    private PricingRule rule(int dow, LocalTime start, LocalTime end, long price, boolean active) {
         return PricingRule.builder()
                 .dayOfWeek(dow)
                 .startTime(start)

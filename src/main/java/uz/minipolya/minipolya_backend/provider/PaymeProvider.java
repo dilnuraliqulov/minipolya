@@ -7,7 +7,7 @@ import java.util.UUID;
 
 /** Mock Payme integration. */
 @Component
-public class PaymeProvider implements PaymentProvider {
+public class PaymeProvider implements LegacyCheckoutProvider {
 
     @Override
     public Payment.Provider provider() {

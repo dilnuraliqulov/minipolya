@@ -23,7 +23,7 @@ public class PricingRuleResponse {
     private Integer dayOfWeek;
     private LocalTime startTime;
     private LocalTime endTime;
-    private Integer pricePerHour;
+    private Long pricePerHour;
 
     @JsonProperty("isActive")
     private boolean isActive;

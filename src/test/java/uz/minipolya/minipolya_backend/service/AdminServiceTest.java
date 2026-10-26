@@ -6,6 +6,8 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateStadiumStatusRequest;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateUserRequest;
+import uz.minipolya.minipolya_backend.dto.response.AdminStadiumResponse;
+import uz.minipolya.minipolya_backend.dto.response.AdminUserResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminPlatformStatsResponse;
 import uz.minipolya.minipolya_backend.dto.response.OwnerRevenueResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
@@ -36,6 +38,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -61,6 +64,7 @@ class AdminServiceTest {
     private PaymentService paymentService;
     private NotificationService notificationService;
     private AuditService auditService;
+    private GameService gameService;
     private AdminService service;
 
     @BeforeEach
@@ -76,9 +80,10 @@ class AdminServiceTest {
         notificationService = mock(NotificationService.class);
         auditService = mock(AuditService.class);
 
+        gameService = mock(GameService.class);
         service = new AdminService(userRepository, stadiumRepository, bookingRepository, paymentRepository,
                 gameRepository, reviewRepository, ownerApplicationRepository, paymentService,
-                notificationService, auditService);
+                notificationService, auditService, gameService);
     }
 
     private Stadium stadium(String status) {
@@ -156,6 +161,71 @@ class AdminServiceTest {
     }
 
     @Test
+    void blockingAUserPersistsTheFlagAndAudits() {
+        User user = User.builder().id(TARGET_USER_ID).name("U").isBlocked(false).build();
+        when(userRepository.findById(TARGET_USER_ID)).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AdminUserResponse response = service.updateUser(
+                TARGET_USER_ID, AdminUpdateUserRequest.builder().isBlocked(true).build(), ADMIN_ID);
+
+        assertThat(user.isBlocked()).isTrue();
+        assertThat(response.isBlocked()).isTrue();
+        verify(userRepository).save(user);
+        verify(auditService).log(ADMIN_ID, "USER_BLOCKED", "user", TARGET_USER_ID, "{\"isBlocked\":true}");
+    }
+
+    @Test
+    void unblockingAUserPersistsTheFlagAndAudits() {
+        User user = User.builder().id(TARGET_USER_ID).name("U").isBlocked(true).build();
+        when(userRepository.findById(TARGET_USER_ID)).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AdminUserResponse response = service.updateUser(
+                TARGET_USER_ID, AdminUpdateUserRequest.builder().isBlocked(false).build(), ADMIN_ID);
+
+        assertThat(user.isBlocked()).isFalse();
+        assertThat(response.isBlocked()).isFalse();
+        verify(auditService).log(ADMIN_ID, "USER_UNBLOCKED", "user", TARGET_USER_ID, "{\"isBlocked\":false}");
+    }
+
+    @Test
+    void anUnchangedBlockedFlagIsNotAudited() {
+        User user = User.builder().id(TARGET_USER_ID).name("U").isBlocked(true).build();
+        when(userRepository.findById(TARGET_USER_ID)).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateUser(TARGET_USER_ID, AdminUpdateUserRequest.builder().isBlocked(true).build(), ADMIN_ID);
+
+        verify(auditService, never()).log(any(), eq("USER_BLOCKED"), any(), any(), anyString());
+    }
+
+    @Test
+    void adminCannotBlockThemselves() {
+        User admin = User.builder().id(ADMIN_ID).isAdmin(true).isBlocked(false).build();
+        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
+
+        assertThatThrownBy(() -> service.updateUser(
+                ADMIN_ID, AdminUpdateUserRequest.builder().isBlocked(true).build(), ADMIN_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("You cannot block yourself");
+
+        assertThat(admin.isBlocked()).isFalse();
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void adminCanUnblockThemselvesIfSomehowBlocked() {
+        User admin = User.builder().id(ADMIN_ID).isAdmin(true).isBlocked(true).build();
+        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateUser(ADMIN_ID, AdminUpdateUserRequest.builder().isBlocked(false).build(), ADMIN_ID);
+
+        assertThat(admin.isBlocked()).isFalse();
+    }
+
+    @Test
     void getStadiumsFilteredByStatus() {
         when(stadiumRepository.findByStatus(eq("pending"), any()))
                 .thenReturn(new PageImpl<>(List.of(stadium("pending"))));
@@ -195,7 +265,7 @@ class AdminServiceTest {
         Stadium stadium = stadium("approved");
         when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
         when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
-        Booking future = Booking.builder().id(BOOKING_ID).status("confirmed").price(100_000)
+        Booking future = Booking.builder().id(BOOKING_ID).status("confirmed").price(100_000L)
                 .user(User.builder().id(BOOKING_USER_ID).build()).startsAt(OffsetDateTime.now().plusDays(3)).build();
         when(bookingRepository.findByStadiumIdAndStartsAtBetween(eq(STADIUM_ID), any(), any())).thenReturn(List.of(future));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -205,7 +275,31 @@ class AdminServiceTest {
 
         assertThat(stadium.getStatus()).isEqualTo("blocked");
         assertThat(future.getStatus()).isEqualTo("cancelled_by_owner");
-        verify(paymentService).refundBookingPayment(BOOKING_ID, 100_000, "fraud");
+        verify(paymentService).refundAllCardPayments(BOOKING_ID, "fraud");
+    }
+
+    @Test
+    void blockStadiumRefundsAGameBookingThroughTheGameNotTheBooking() {
+        Stadium stadium = stadium("approved");
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+        UUID gameId = UUID.randomUUID();
+        Booking gameBooking = Booking.builder().id(BOOKING_ID).status("confirmed").price(100_000L)
+                .source("game").gameId(gameId)
+                .user(User.builder().id(BOOKING_USER_ID).build())
+                .startsAt(OffsetDateTime.now().plusDays(3)).build();
+        when(bookingRepository.findByStadiumIdAndStartsAtBetween(eq(STADIUM_ID), any(), any()))
+                .thenReturn(List.of(gameBooking));
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(gameService.cancelGameForBooking(eq(gameId), anyString())).thenReturn(80_000L);
+
+        service.updateStadiumStatus(STADIUM_ID,
+                AdminUpdateStadiumStatusRequest.builder().status("blocked").reason("fraud").build(), ADMIN_ID);
+
+        // The teams' money hangs off game_teams, so refunding the booking's own
+        // payments would give back nothing and hide the real refund.
+        verify(gameService).cancelGameForBooking(eq(gameId), anyString());
+        verify(paymentService, never()).refundAllCardPayments(eq(BOOKING_ID), anyString());
     }
 
     @Test
@@ -213,12 +307,34 @@ class AdminServiceTest {
         OffsetDateTime d1 = LocalDate.now(TASHKENT).minusDays(1).atTime(12, 0).atZone(TASHKENT).toOffsetDateTime();
         OffsetDateTime d2 = LocalDate.now(TASHKENT).atTime(10, 0).atZone(TASHKENT).toOffsetDateTime();
         when(paymentRepository.findPositiveCompletedSince(any(), any())).thenReturn(List.of(
-                Payment.builder().amount(100_000).createdAt(d1).build(),
-                Payment.builder().amount(70_000).createdAt(d2).build()));
+                Payment.builder().amount(100_000L).createdAt(d1).build(),
+                Payment.builder().amount(70_000L).createdAt(d2).build()));
 
         OwnerRevenueResponse revenue = service.getPlatformRevenue();
 
         assertThat(revenue.getDailyRevenue()).hasSize(2);
         assertThat(revenue.getDailyRevenue().get(0).getRevenue()).isEqualTo(100_000);
+    }
+
+    @Test
+    void stadiumTotalRevenueAboveIntRangeIsNotTruncated() {
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium("approved")));
+        when(paymentRepository.sumRevenueByStadium(eq(STADIUM_ID), any(), any())).thenReturn(3_000_000_000L);
+
+        AdminStadiumResponse response = service.getStadium(STADIUM_ID);
+
+        assertThat(response.getTotalRevenue()).isEqualTo(3_000_000_000L);
+    }
+
+    @Test
+    void platformDailyRevenueAboveIntRangeIsNotTruncated() {
+        OffsetDateTime day = LocalDate.now(TASHKENT).atTime(12, 0).atZone(TASHKENT).toOffsetDateTime();
+        when(paymentRepository.findPositiveCompletedSince(any(), any())).thenReturn(List.of(
+                Payment.builder().amount(2_000_000_000L).createdAt(day).build(),
+                Payment.builder().amount(2_000_000_000L).createdAt(day).build()));
+
+        OwnerRevenueResponse revenue = service.getPlatformRevenue();
+
+        assertThat(revenue.getDailyRevenue().get(0).getRevenue()).isEqualTo(4_000_000_000L);
     }
 }

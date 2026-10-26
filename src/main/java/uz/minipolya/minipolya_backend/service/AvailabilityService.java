@@ -20,10 +20,12 @@ import uz.minipolya.minipolya_backend.repository.PricingRuleRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.util.PriceCalculator;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -50,6 +52,7 @@ public class AvailabilityService {
     private final PromotionService promotionService;
     private final StadiumClosureService closureService;
     private final AppProperties appProperties;
+    private final Clock clock;
 
     @Transactional(readOnly = true)
     public AvailabilityResponse getAvailability(UUID stadiumId, LocalDate date) {
@@ -57,8 +60,9 @@ public class AvailabilityService {
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
 
-        LocalDate queryDate = date != null ? date : LocalDate.now(TASHKENT);
-        LocalDate today = LocalDate.now(TASHKENT);
+        ZonedDateTime nowLocal = ZonedDateTime.now(clock.withZone(TASHKENT));
+        LocalDate today = nowLocal.toLocalDate();
+        LocalDate queryDate = date != null ? date : today;
         if (queryDate.isBefore(today)) {
             throw new BadRequestException("date cannot be in the past");
         }
@@ -72,9 +76,18 @@ public class AvailabilityService {
 
         List<Booking> bookings = bookingRepository.findActiveForStadiumBetween(stadiumId, dayStart, dayEnd);
         List<PricingRule> rules = pricingRuleRepository.findByStadiumIdAndIsActiveTrue(stadiumId);
+        // Only a team game waiting for an opponent is advertised on a free slot:
+        // "a team is looking for an opponent" is an invitation anyone can take
+        // up, whereas a casual game is private to whoever was invited to it.
         List<Game> waitingGames = gameRepository.findByStadiumIdAndStatus(stadiumId, "open").stream()
+                .filter(g -> "team_vs_team".equals(g.getType()))
                 .filter(g -> !g.getStartsAt().isBefore(dayStart) && g.getStartsAt().isBefore(dayEnd))
                 .toList();
+
+        // On today's date an hour that has already started can no longer be booked,
+        // so it is left out entirely rather than offered as free.
+        boolean isToday = queryDate.equals(today);
+        LocalTime localNow = nowLocal.toLocalTime();
 
         List<TimeSlot> slots = new ArrayList<>();
         LocalTime slotStart = stadium.getOpenTime();
@@ -83,7 +96,9 @@ public class AvailabilityService {
             if (slotEnd.isAfter(stadium.getCloseTime())) {
                 break; // no room for a full hour before closing
             }
-            slots.add(buildSlot(stadium, queryDate, slotStart, slotEnd, bookings, rules, waitingGames));
+            if (!(isToday && !slotStart.isAfter(localNow))) {
+                slots.add(buildSlot(stadium, queryDate, slotStart, slotEnd, bookings, rules, waitingGames));
+            }
             slotStart = slotEnd;
         }
 
@@ -111,7 +126,7 @@ public class AvailabilityService {
                 .available(available);
 
         if (available) {
-            int base = priceCalculator.calculateTotalPrice(rules, date, slotStart, 1, stadium.getPricePerHour());
+            long base = priceCalculator.calculateTotalPrice(rules, date, slotStart, 1, stadium.getPricePerHour());
             Optional<Promotion> promo = promotionService.getBestPromotion(stadium.getId(), slotStartUtc);
             if (promo.isPresent()) {
                 int percent = promo.get().getDiscountPercent();

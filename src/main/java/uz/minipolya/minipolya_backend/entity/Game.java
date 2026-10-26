@@ -86,16 +86,18 @@ public class Game {
 
     /** Integer so'm — never floating point for money. */
     @Column(name = "total_price", nullable = false)
-    private Integer totalPrice;
+    private Long totalPrice;
 
-    @Builder.Default
+    /**
+     * What the platform charges on this game: per team for {@code team_vs_team},
+     * per player otherwise. Copied from {@code platform_settings} when the game
+     * is created, so a later change of the setting leaves existing games alone.
+     *
+     * <p>No default on purpose — the old 5 000 so'm one outlived the config it
+     * came from, and a stale default is worse than a missing value.
+     */
     @Column(name = "service_fee_per_person", nullable = false)
-    private Integer serviceFeePerPerson = 5000;
-
-    /** Share of the pitch price the creator's team pays in team_vs_team (1..100). */
-    @Builder.Default
-    @Column(name = "creator_share_pct", nullable = false)
-    private Integer creatorSharePct = 50;
+    private Long serviceFeePerPerson;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "team_a_id")

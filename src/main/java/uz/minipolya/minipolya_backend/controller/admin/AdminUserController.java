@@ -16,6 +16,7 @@ import uz.minipolya.minipolya_backend.dto.response.AdminUserResponse;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.service.AdminService;
+import uz.minipolya.minipolya_backend.util.Pagination;
 
 import java.util.UUID;
 import java.util.function.Function;
@@ -30,7 +31,7 @@ public class AdminUserController {
     public ApiResponse<PageResponse<AdminUserResponse>> list(@RequestParam(required = false) String search,
                                                              @RequestParam(defaultValue = "0") int page,
                                                              @RequestParam(defaultValue = "20") int size) {
-        PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         return ApiResponse.ok(PageResponse.from(adminService.getUsers(search, pageable), Function.identity()));
     }
 

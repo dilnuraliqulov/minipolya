@@ -53,7 +53,7 @@ public class PricingRule {
 
     /** Integer so'm — never floating point for money. */
     @Column(name = "price_per_hour", nullable = false)
-    private Integer pricePerHour;
+    private Long pricePerHour;
 
     @Builder.Default
     @Column(name = "is_active", nullable = false)

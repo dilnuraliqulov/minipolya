@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.dto.response.PromotionResponse;
 import uz.minipolya.minipolya_backend.service.PromotionService;
+import uz.minipolya.minipolya_backend.util.Pagination;
 
 import java.util.List;
 import java.util.UUID;
@@ -43,7 +44,7 @@ public class PromotionController {
                                                              @PathVariable UUID stadiumId,
                                                              @RequestParam(defaultValue = "0") int page,
                                                              @RequestParam(defaultValue = "20") int size) {
-        PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         return ApiResponse.ok(PageResponse.from(
                 promotionService.getPromotions(stadiumId, ownerId, pageable), Function.identity()));
     }

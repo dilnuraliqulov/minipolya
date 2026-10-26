@@ -41,6 +41,7 @@ src/main/java/uz/minipolya/minipolya_backend/
 │   ├── StadiumService.java
 │   ├── BookingService.java
 │   ├── GameService.java
+│   ├── TeamGameService.java        # The team_vs_team flow: holds, joins, the deadline bands, remainders
 │   ├── TeamService.java
 │   ├── PaymentService.java
 │   ├── ReviewService.java
@@ -70,6 +71,7 @@ src/main/java/uz/minipolya/minipolya_backend/
 │   ├── TeamMember.java
 │   ├── Game.java
 │   ├── GameParticipant.java
+│   ├── GameTeam.java               # One team on one side of a team game: its fee, advance, remainder
 │   ├── GameMessage.java
 │   ├── Review.java
 │   ├── Favorite.java
@@ -106,7 +108,7 @@ src/main/java/uz/minipolya/minipolya_backend/
 │   └── GlobalExceptionHandler.java  # @RestControllerAdvice
 ├── scheduler/               # @Scheduled cron jobs
 │   ├── BookingExpiryJob.java        # Expire unpaid bookings every minute
-│   ├── GameTimeoutJob.java          # Cancel unfilled games at start time
+│   ├── GameTimeoutJob.java          # Cancel unfilled games (team: 3h before start; others: at start)
 │   ├── ReminderJob.java             # Send reminders 2h before game
 │   ├── BookingSeriesJob.java        # Generate next week's recurring bookings
 │   └── PromotionExpiryJob.java      # Mark expired promotions
@@ -120,7 +122,8 @@ src/main/java/uz/minipolya/minipolya_backend/
 │   ├── GameMapper.java
 │   └── ...
 └── util/                    # Pure helper functions
-    ├── RefundCalculator.java
+    ├── CancellationPolicy.java
+    ├── TeamGameSplit.java          # Fee / advance / remainder arithmetic for a team game
     ├── PriceCalculator.java
     ├── TelegramAuthValidator.java
     └── TimeUtils.java
@@ -138,7 +141,7 @@ src/main/java/uz/minipolya/minipolya_backend/
     - One-time exception, already taken: changesets 001–017 were edited in place once to convert all ids from BIGINT to UUID, before the first deployment, and the local dev database was dropped and recreated. The "never edit an applied changeset" rule applies again from now on — any further schema change is a new changeset (018+).
 - Hibernate: `ddl-auto: validate` — Hibernate validates against existing schema, NEVER creates or alters tables
 - **All primary keys are UUID** (PostgreSQL `UUID` type). UUIDs are generated application-side by Hibernate as **UUID v7** (`@UuidGenerator(style = UuidGenerator.Style.VERSION_7)` on each entity's `@Id private UUID id;`), with a DB-side `DEFAULT gen_random_uuid()` as a fallback. All foreign-key and raw entity-id columns are `UUID` too. The only non-UUID id is `users.telegram_id` (Telegram's own id, stays `BIGINT`); `payments.provider_txn_id` stays `VARCHAR`.
-- All money: integer so'm (never use float/double for money)
+- All money: BIGINT tiyin (1 so'm = 100 tiyin), in the database, backend and API (never use float/double for money). One unit everywhere — the frontend formats so'm for display.
 - All timestamps: TIMESTAMPTZ stored in UTC, convert to `Asia/Tashkent` only for display/response
 - Double-booking prevention: PostgreSQL `EXCLUDE USING gist` constraint on bookings table — the database itself rejects overlapping bookings on the same stadium
 - 1 stadium = 1 pitch (no separate pitches table)
@@ -167,7 +170,10 @@ db/changelog/
     ├── 014-create-notifications.sql
     ├── 015-create-owner-applications.sql
     ├── 016-create-audit-log.sql
-    └── 017-create-triggers.sql       # set_updated_at() function + triggers
+    ├── 017-create-triggers.sql       # set_updated_at() function + triggers
+    ├── ...                           # 018–024: duration, blocking, tiyin, settings, cards, payments, cancellation
+    ├── 025-game-teams.sql            # game_teams + payments.game_team_id; drops games.creator_share_pct
+    └── 026-opponent-left.sql         # bookings status cancelled_opponent_left + notification game_opponent_left
 ```
 
 ### Adding New Migrations
@@ -232,18 +238,84 @@ When you need to change the schema (add column, new table, alter constraint):
   - `confirmed` → `cancelled_by_user`
   - `confirmed` → `cancelled_by_owner` (always 100% refund)
 
+#### Paying for a booking
+
+`POST /api/bookings` takes a `cardId` (a saved card of the booking player) and a
+`paymentOption`, and charges that card straight away:
+
+| `paymentOption` | Charged | Allowed when |
+|---|---|---|
+| `FULL` | the whole price | always |
+| `MINIMUM` | `stadium.min_booking_amount` | the stadium has one **and** it is below this booking's price |
+
+There are no other amounts. `min_booking_amount` is nullable — null means full
+payment is required — and when set must be at least 50 000 tiyin (500 so'm, the
+smallest payment ATMOS takes).
+
+- `bookings.payment_status` is `unpaid` / `partially_paid` / `paid`, and
+  `paid_amount` is the running total of successful payments. Responses carry
+  `price`, `paidAmount` and `remainingAmount` (all tiyin).
+- A successful charge confirms the booking. A **declined** card leaves it
+  `pending` with a `failed` payment row, so the usual hold timeout expires it;
+  the create call still answers 200 with `paymentStatus: unpaid`, and the
+  message says the payment failed.
+**Paying off the rest.** While a booking is `partially_paid` the remainder can be
+settled two ways, and whichever lands first wins:
+
+- `POST /api/bookings/{id}/pay-remainder` with a `cardId` — the player charges
+  the whole remainder to a saved card, at any time, **before or after the game**.
+  Paying after the game leaves the booking `completed`; it is never dragged back
+  to `confirmed`.
+- `POST /api/bookings/{id}/cash` — the owner marks the same money as received in
+  cash (it takes `remainingAmount`, not the full price).
+
+Once `payment_status` is `paid`, the other one answers **400 "Already paid"**.
+The remainder is charged as a `remainder` payment row, and a declined card
+leaves the booking `partially_paid` with a `failed` row.
+
+- **`PaymentService.applySuccessfulBookingPayment` is the only path from "money
+  arrived" to "booking confirmed"** — the synchronous charge uses it today and a
+  provider webhook will use the same method. If the hold already expired when
+  the money lands, it confirms the booking only when nothing else has taken the
+  slot; otherwise it refunds that payment in full and notifies the player. The
+  EXCLUDE constraint is the final arbiter and a violation is caught and refunded
+  there too, so **an overlap error never travels back to the payment provider**.
+  This is about an *ordinary* booking. A **team game** books its own slot in
+  `TeamGameService.join`, which sets `paid_amount` from the teams' advances and
+  confirms the booking itself, because the money arrived before the booking
+  existed and belongs to the teams rather than to the booking.
+
 ### Cancellation Policy (configurable per stadium)
 
+Cancellation is **all or nothing** — there are no partial refunds, because ATMOS
+cannot refund part of a transaction. Each stadium has one setting,
+`cancellation_hours` (default 24):
+
 ```java
-// Each stadium has: full_refund_hours (default 24), partial_refund_hours (default 12), partial_refund_percent (default 50)
-long hoursLeft = hours between now and booking.startsAt;
+deadline = booking.startsAt - stadium.cancellationHours;
 
-if (hoursLeft >= stadium.fullRefundHours)    → 100% refund
-if (hoursLeft >= stadium.partialRefundHours) → stadium.partialRefundPercent% refund
-else                                         → 0% refund
+if (now <= deadline) → every card payment of the booking refunded in full
+else                 → the booking is still cancelled, but nothing is refunded
 
-// Owner cancels → ALWAYS 100% refund, regardless of time left
+// Owner cancels → ALWAYS every card payment back, whatever the time left
+// Admin blocks the stadium → same as an owner cancellation
+// Cash is NEVER refunded through the platform; the owner settles that directly
 ```
+
+- **One method does every refund**: `PaymentService.refundInFull(payment, reason)`,
+  driven for a whole booking by `refundAllCardPayments(bookingId, reason)`. There
+  is no method that refunds an arbitrary amount, so a partial refund cannot be
+  written by accident. A failed row, a cash row and an already-refunded row are
+  all skipped.
+- Booking responses carry **`cancellationDeadline`** and
+  **`refundIfCancelledNow`** (tiyin). Both come from `CancellationPolicy` and the
+  same refundable payments that a real cancellation uses, so the figure a player
+  is shown is the figure they get. `BookingResponseFactory` fills them in.
+- `cancellationPolicy` on a booking or stadium response is just
+  `{ "cancellationHours": 24 }`.
+- The default of **24 lives in exactly two places that agree**: the
+  `stadiums.cancellation_hours` column default and the `Stadium` entity field.
+  There is no `app.cancellation.*` config — don't reintroduce one.
 
 Players MUST see the stadium's cancellation policy before confirming a booking.
 
@@ -272,26 +344,224 @@ Players MUST see the stadium's cancellation policy before confirming a booking.
 - System assigns sides (a/b) when game confirms
 
 **team_vs_team — team vs team:**
-- Team A leader creates game, pays `creator_share_pct`% of pitch price (configurable, default 50%)
-- Team B leader finds the game, pays remaining `(100 - creator_share_pct)`%
-- When both leaders paid → booking created
-- Leaders invite team members via link (members do NOT pay for the pitch)
-- Chat available between teams for each game
-- Service fee: `service_fee_per_person` (default 5000 so'm) charged to both leaders
+
+All of this lives in `service/TeamGameService.java`, not in `GameService`, which
+only keeps the shared create/join/cancel entry points and delegates when
+`type = team_vs_team`. `creator_share_pct` is gone — the column was dropped in
+changeset 025 and there is no percentage split any more.
+
+*States.* Three of them, and the first is persisted as the existing
+`games.status = 'open'` — the value was deliberately **not** renamed, because
+casual games share the column:
+
+| State | `games.status` | The slot |
+|---|---|---|
+| WAITING | `open` | **not booked** — free for everyone, the one team's money only on hold |
+| CONFIRMED | `confirmed` | a `source = game` booking exists |
+| CANCELLED | `cancelled_slot_taken` / `cancelled_by_creator` / `cancelled_not_filled` | free |
+
+A CONFIRMED game can go **back to WAITING** when one team leaves. Its booking is
+cancelled and a new one is created when the next opponent joins.
+
+*Money.* For stadium price `P`, stadium `min_booking_amount` `M` and
+`platform_settings.team_game_platform_fee` `fee`, with `base = min(M, P)` (or `P`
+when the stadium has no minimum) — all tiyin, see `util/TeamGameSplit.java`:
+
+| Each team pays | Amount | When |
+|---|---|---|
+| platform fee | `fee` (25 000 so'm) | in the app, on joining |
+| owner advance | `base / 2` | in the app, on joining |
+| remainder | `(P − base) / 2` | later, in the app or in cash |
+
+Where a halving is odd the extra tiyin goes to the **second** team, so the two
+advances add up to exactly `base` and the two remainders to exactly `P − base`.
+The ATMOS split of a joining payment is `ownerAmount = advance`,
+`platformAmount = fee`; **no booking commission is applied to a team game**,
+because the fee *is* the platform's cut, and a remainder is therefore all the
+owner's (`platformAmount = 0`).
+
+*The two deadlines.*
+- **the deadline** — `starts_at − stadium.cancellation_hours` (default 24).
+- **the 3-hour point** — `starts_at − app.game.opponent-deadline-hours`
+  (default 3). After it nobody may join and a game still without an opponent is
+  over. **team_vs_team only** — casual games still fill right up to kick-off.
+
+*Creating (WAITING).* The creating leader picks a saved card; fee + advance go on
+**HOLD** (`payments.status = held`, type `team_game`). No slot is booked. A
+declined card means no game at all.
+
+*Joining (→ CONFIRMED).* Order matters, and every failure leaves nobody paying
+for a game that will not happen:
+1. record the joining team — the partial unique index on `(game_id, side)`
+   rejects a second opponent before any card is touched;
+2. after the 3-hour point → 400 `O'yin boshlanishiga 3 soatdan kam qoldi, qo'shilib bo'lmaydi`;
+3. book the slot (pending) — if the EXCLUDE constraint rejects it the joining
+   team is **not** charged and nothing is compensated here on purpose: this
+   transaction rolls back and a provider call would not, so whoever took the
+   slot cancels this game and refunds its waiting team from their own
+   committed transaction (`cancelGamesOnSlot`), with `GameTimeoutJob` as the
+   backstop;
+4. charge the joining team — a declined card removes the booking and the game
+   goes on waiting;
+5. capture the waiting team's hold, last, being the only step that cannot be
+   undone cheaply; if it fails, both teams are made whole and the game ends;
+6. confirm the booking and the game.
+
+The joining team takes whichever side is **free**, not always B: when the
+creating team walks out of a confirmed game the team left behind is on side B,
+so the next opponent takes A. Confirming also clears any **other** team still
+waiting on that hour, the same rule an ordinary booking follows — otherwise
+their money would sit on hold for a pitch that is already gone.
+
+`bookings.paid_amount` is the sum of the **advances** of the teams currently in
+the game (plus any remainder already settled) — the fee is not money for the
+pitch. So a confirmed game's booking is `partially_paid`, or `paid` outright when
+the stadium has no minimum.
+
+*Everything back / nothing back.* "Everything back" releases a `held` payment
+(no refund row — no money ever moved) and refunds a settled one in full;
+"nothing back" captures a `held` payment and keeps the rest. One pair of methods:
+`PaymentService.giveBackAllTeamPayments` / `keepAllTeamPayments`, previewed
+without moving anything by `refundableTeamTotal`.
+
+*A WAITING game ends without an opponent* — the waiting team gets everything back
+in all three cases:
+
+| Trigger | Status |
+|---|---|
+| someone books the slot (app or manual) | `cancelled_slot_taken` |
+| the 3-hour point passes (`GameTimeoutJob`) | `cancelled_not_filled` |
+| its leader cancels **before the deadline** | `cancelled_by_creator` |
+| its leader cancels **after the deadline** | `cancelled_by_creator`, **nothing back** |
+| its leader cancels **past the 3-hour point** | `cancelled_not_filled`, everything back — the job would have refunded them within the minute, so racing it must not cost them |
+
+*A CONFIRMED game: either leader may cancel* (not just the creator), and the
+booking is released as **`cancelled_opponent_left`** so the owner's schedule
+says why the pitch is free again rather than blaming a player or the owner.
+
+**Nothing is cancellable once kick-off has passed**, waiting or confirmed. The
+pitch was there to be used, and nothing sets `games.status = 'completed'` yet, so
+without that guard a played game stays `confirmed` and the losing leader could
+reverse its booking and have the opponent refunded for a game they actually got.
+
+| When | The canceller | The other team | The game |
+|---|---|---|---|
+| before the deadline | everything back, remainder included | keeps its payments, stays in | back to **WAITING** |
+| after the deadline, before the 3-hour point | nothing back | keeps its payments, stays in | back to **WAITING** |
+| past the 3-hour point | nothing back | **everything back** | `cancelled_not_filled` |
+
+The bands are evaluated with the 3-hour rule **first**, so they still behave on a
+stadium whose `cancellation_hours` is under 3, where the two would otherwise
+overlap and contradict each other.
+
+The owner cancelling the game's booking (`BookingService.cancelByOwner`), or an
+admin blocking the stadium, goes through `GameService.cancelGameForBooking` →
+`TeamGameService.cancelForBookingCancelled`: **both** teams get everything back
+whatever the window says, and the game ends. Refunding the booking's own payments
+would hand back nothing, because a team game's money never sits on the booking.
+
+*Remainder, per team.* Two separate debts. Each leader settles their own from a
+saved card at `POST /api/games/{id}/pay-remainder` (before or after the game);
+the owner marks either team's as cash at `POST /api/games/{id}/cash` with
+`{"side":"a"}`. Whichever lands first wins and the other answers **400 "Already
+paid"** — the same answer a team gets when its advance already covered the pitch.
+The booking reaches `paid` only once **both** teams currently in the game have
+settled.
+
+*What a team sees.* `GameDetailResponse.teams` carries, per team: `feeAmount`,
+`advanceAmount`, `remainderAmount`, `remainderStatus`, `paidInApp`,
+`cancellationDeadline` and `refundIfCancelledNow` (tiyin, 0 when nothing would
+come back). The last one is computed by the same code that performs the
+cancellation, so the figure shown is the figure paid. Note the asymmetry it
+answers: past the 3-hour point a team's own figure is 0 because cancelling
+forfeits, yet that same team is made whole if its *opponent* cancels.
+
+*Finding opponents.* `GET /api/games/challenges` (filters `date`, `format`,
+`stadiumId`; paged) lists WAITING team games before their 3-hour point, excluding
+any the caller's own team is waiting on (membership and leadership both count).
+Each item carries `amountToPayNow` = fee + the free side's advance. A team game
+stays `is_public = false`; this endpoint queries by type and status instead.
+Availability and the owner's schedule mark a slot where a team is looking for an
+opponent — **only** team_vs_team, never casual.
+
+*Chat* is open exactly while the game is CONFIRMED, for reading as well as
+sending. A leader whose team joined partway through sees only messages sent
+after they joined. A team that **left** loses the chat entirely: its players are
+marked `cancelled` with it, so a departed leader cannot read what the teams
+still playing say afterwards. An invited member leads no team, so they keep
+their side's whole history.
+
+*Members.* Leaders still invite team members via the link, and members do **not**
+pay for the pitch.
 
 **Common game rules:**
-- `GameTimeoutJob` cancels `open` games where `starts_at <= now` and status is still `open`
-- When a regular booking takes the slot, find any `open` game on that stadium/time → cancel it, refund all participants
+- `GameTimeoutJob` runs two cutoffs: team games whose **3-hour point** has
+  passed, and every other type whose `starts_at` has passed
+- When a regular booking takes the slot, find any waiting game on that
+  stadium/time → cancel it `cancelled_slot_taken` and give everyone their money
+  back (team games through `TeamGameService`, casual through participants)
 - Game statuses: `open` → `confirmed` → `completed`
 - Cancel statuses: `cancelled_slot_taken`, `cancelled_by_creator`, `cancelled_not_filled`
+- `POST /api/games/{id}/pay` is the **casual** hosted checkout and refuses a team
+  game: a team pays when creating or joining, from a saved card
+
+### Platform Settings
+
+Platform-wide money rules live in the single-row `platform_settings` table, not in
+config. Admins read and change them at `GET` / `PUT /api/admin/settings`.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `booking_commission_percent` | 0 | Percent of a booking price the platform keeps |
+| `team_game_platform_fee` | 2 500 000 tiyin (25 000 so'm) | Charged per team on a team game |
+| `casual_game_service_fee` | 0 | Charged per player on a casual game |
+
+- The row is seeded by changeset 021; `singleton` is UNIQUE and CHECKed true, so a
+  second row is impossible.
+- Validation: commission 0–50, fees not negative. A rejected value writes nothing.
+- Every change writes one `PLATFORM_SETTINGS_UPDATED` audit entry naming each
+  changed field with its old and new value.
 
 ### Payments
 
-- Providers: Payme, Click, cash (for manual bookings)
+**Provider.** ATMOS is the card provider. Every new flow goes through the
+`PaymentProvider` interface in `provider/`: bind a card once
+(`startCardBinding` → `confirmCardBinding` with the SMS code), then `charge`,
+`hold`, `capture`, `release` and `refund` it by token. Amounts are tiyin.
+
+- `FakePaymentProvider` stands in until the ATMOS docs land. It is active only
+  when `app.payments.provider=fake` and **refuses to start under the `prod`
+  profile**. Its SMS code is always `111111`, and a card number ending in `0002`
+  is always declined so failure paths can be tested.
+- A declined card comes back as a `FAILED` `ProviderTransaction`, not an
+  exception. Malformed input (unknown binding or transaction, wrong SMS code,
+  a hold settled twice) throws.
+- **Refunds are always for the whole transaction** — ATMOS cannot refund part of
+  one.
+- `LegacyCheckoutProvider` (Payme/Click hosted checkout) is **legacy**. It now
+  survives only for the casual game payment path (`POST /api/games/{id}/pay`),
+  which refuses team games. Never use it in a new flow.
+
+**Saved cards** (`saved_cards`): the provider token, a masked number
+(`8600 •••• 1234`), card type and an active flag. The full card number is passed
+straight to the provider and is **never stored or logged**; `AddCardRequest`
+overrides `toString` to keep it out of stray log lines, and `SavedCardResponse`
+has no token field at all. Deleting a card sets `is_active = false` so past
+payments stay explainable. Endpoints: `POST /api/cards`,
+`POST /api/cards/confirm`, `GET /api/cards`, `DELETE /api/cards/{id}`.
+
+**Payment rows**
+
 - `provider_txn_id` is UNIQUE — handles duplicate webhook calls (idempotent)
-- Payment types: `booking`, `game_share`, `service_fee`, `refund`
-- Refunds create a NEW payment row with negative amount and refund_reason
-- Never mutate an existing payment row's amount
+- Payment types: `booking`, `remainder`, `team_game`, `game_share`, `service_fee`, `refund`
+  (`team_game` is one team's fee + advance; `remainder` is either a booking's or a
+  team's outstanding balance; `game_share` is the legacy casual flow)
+- `game_team_id` ties a team game's payments to the (game, team) that made them,
+  so they survive the booking being cancelled and recreated when an opponent changes
+- Amounts and the owner/platform split never change after a row is created
+- Status only moves forward (`held` → `captured` or `released`)
+- Refunds create a NEW payment row with negative amount and refund_reason; the
+  original may be marked refunded but is never otherwise rewritten
 
 ### Availability Calculation
 
@@ -301,7 +571,7 @@ To show free slots for a stadium on a given date:
 3. Remove slots that overlap any `pending` or `confirmed` booking
 4. Remove slots that fall within a `stadium_closure`
 5. For each remaining slot, calculate price from `pricing_rules` (match day_of_week + time range)
-6. Mark slots that have a `waiting` game (show "Game looking for players" in UI)
+6. Mark slots that have a WAITING **team_vs_team** game (show "a team is looking for an opponent" in UI). Casual games are private to whoever was invited and are never marked
 7. Apply any active promotion discount
 
 ## Auth
@@ -387,6 +657,8 @@ For paginated lists:
 - Use `@Transactional` on service methods that perform multiple writes
 - Validate all incoming requests with `@Valid` on controller parameters
 - Use `@ConfigurationProperties` for custom config (app.jwt.*, app.booking.*, etc.)
+  - `app.game.opponent-deadline-hours` (default 3) is the team-game joining
+    cutoff. Money rules live in `platform_settings`, not here — only timing does.
 - Use constructor injection (Lombok `@RequiredArgsConstructor`), never `@Autowired` on fields
 - Log important actions: booking created, payment received, game confirmed, errors
 - Write unit tests for service layer, integration tests for controllers
@@ -521,3 +793,24 @@ Implement in this order. Each step should be working and tested before moving to
 - Owner's manual bookings and app bookings share the same `bookings` table and the same overlap constraint. This guarantees a unified, conflict-free schedule.
 - Liquibase runs automatically on application startup. If a migration fails, the app won't start — fix the changeset and restart.
 - Never modify an already-applied changeset. Liquibase checksums will catch it and refuse to start. Always create a new changeset file for changes.
+
+## Deferred until the payment model is final
+
+These were found during endpoint testing and left untouched on purpose — each one
+depends on how payments, payouts and the platform's cut are finally modelled.
+
+- **Owner revenue is defined two different ways.** `GET /api/owner/dashboard/stadiums/{id}/stats`
+  sums only payments with `payment_type = booking`, so a confirmed game contributes 0 even though
+  it produced a `source = game` booking on the pitch. `GET /api/owner/dashboard/stadiums/{id}/schedule`
+  sums booking prices instead and therefore does include it. The same stadium reports two different
+  revenue figures; the definition has to be decided before either is trusted.
+- **Casual game share rounding loses so'm.** Each participant pays `total_price / max_players` with
+  integer division, so the shares do not add up to the pitch price: 3 players on 130 000 collect
+  129 999. `team_vs_team` no longer has this exposure — `TeamGameSplit` gives the odd tiyin to the
+  second team, so its advances and remainders add up exactly.
+- **Payment, webhook, refund and payout endpoints were not re-tested.** `POST /api/payments/initiate`,
+  `GET /api/payments/my`, `GET /api/payments/{id}`, `POST /webhooks/payme`, `POST /webhooks/click` and
+  the refund paths are still the mock implementations (`PaymeProvider` / `ClickProvider` return a fake
+  checkout URL and the webhook trusts the body without verifying a provider signature).
+
+

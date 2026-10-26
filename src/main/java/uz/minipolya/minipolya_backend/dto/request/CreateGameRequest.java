@@ -44,4 +44,11 @@ public class CreateGameRequest {
 
     /** Only used for team_vs_team: the creating team. */
     private UUID teamAId;
+
+    /**
+     * The saved card to put the platform fee and owner advance on hold. Required
+     * for team_vs_team, where creating the game is also paying for it; ignored
+     * for casual games, which still pay per player afterwards.
+     */
+    private UUID cardId;
 }

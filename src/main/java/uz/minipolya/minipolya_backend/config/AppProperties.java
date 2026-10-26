@@ -14,8 +14,8 @@ public class AppProperties {
     private Jwt jwt = new Jwt();
     private Bot bot = new Bot();
     private Booking booking = new Booking();
-    private Cancellation cancellation = new Cancellation();
     private Game game = new Game();
+    private Payments payments = new Payments();
 
     @Getter
     @Setter
@@ -41,16 +41,24 @@ public class AppProperties {
 
     @Getter
     @Setter
-    public static class Cancellation {
-        private int defaultFullRefundHours = 24;
-        private int defaultPartialRefundHours = 12;
-        private int defaultPartialRefundPercent = 50;
+    public static class Game {
+        /**
+         * How many hours before kick-off a team game stops accepting an
+         * opponent: after this point a new team could not get there in time,
+         * so nobody may join and a game still without an opponent is over.
+         * team_vs_team only.
+         */
+        private int opponentDeadlineHours = 3;
     }
 
     @Getter
     @Setter
-    public static class Game {
-        private int defaultServiceFeePerPerson = 5000;
-        private int defaultCreatorSharePct = 50;
+    public static class Payments {
+        /**
+         * Which card provider to wire up. {@code fake} selects
+         * FakePaymentProvider, which refuses to start under the prod profile;
+         * the real ATMOS client will register itself under its own value.
+         */
+        private String provider = "fake";
     }
 }

@@ -31,7 +31,7 @@ public class GameResponse {
     private Integer currentPlayers;
     private OffsetDateTime startsAt;
     private OffsetDateTime endsAt;
-    private Integer totalPrice;
+    private Long totalPrice;
 
     @JsonProperty("isPublic")
     private boolean isPublic;

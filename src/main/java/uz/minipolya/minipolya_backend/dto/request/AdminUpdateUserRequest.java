@@ -14,6 +14,6 @@ public class AdminUpdateUserRequest {
 
     private Boolean isOwner;
     private Boolean isAdmin;
-    /** Accepted but not yet persisted — the users table has no blocked flag. */
+    /** Blocks the user from the platform. An admin cannot block themselves. */
     private Boolean isBlocked;
 }

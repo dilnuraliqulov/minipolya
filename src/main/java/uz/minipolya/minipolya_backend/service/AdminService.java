@@ -64,6 +64,7 @@ public class AdminService {
     private final PaymentService paymentService;
     private final NotificationService notificationService;
     private final AuditService auditService;
+    private final GameService gameService;
 
     @Transactional(readOnly = true)
     public AdminPlatformStatsResponse getPlatformStats() {
@@ -106,17 +107,17 @@ public class AdminService {
     public OwnerRevenueResponse getPlatformRevenue() {
         LocalDate today = LocalDate.now(TASHKENT);
         OffsetDateTime from = startOfDay(today.minusDays(29));
-        Map<LocalDate, int[]> byDate = new LinkedHashMap<>();
+        Map<LocalDate, long[]> byDate = new LinkedHashMap<>(); // [revenue in tiyin, count]
         for (Payment payment : paymentRepository.findPositiveCompletedSince(Payment.Status.COMPLETED, from)) {
             LocalDate date = payment.getCreatedAt().atZoneSameInstant(TASHKENT).toLocalDate();
-            int[] agg = byDate.computeIfAbsent(date, d -> new int[2]);
+            long[] agg = byDate.computeIfAbsent(date, d -> new long[2]);
             agg[0] += payment.getAmount();
             agg[1] += 1;
         }
         List<DailyRevenue> daily = byDate.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
                 .map(e -> DailyRevenue.builder()
-                        .date(e.getKey()).revenue(e.getValue()[0]).bookingCount(e.getValue()[1]).build())
+                        .date(e.getKey()).revenue(e.getValue()[0]).bookingCount((int) e.getValue()[1]).build())
                 .toList();
         return OwnerRevenueResponse.builder().stadiumId(null).dailyRevenue(daily).build();
     }
@@ -145,16 +146,22 @@ public class AdminService {
         if (Boolean.FALSE.equals(request.getIsAdmin()) && userId.equals(adminUserId)) {
             throw new BadRequestException("You cannot remove your own admin access");
         }
+        if (Boolean.TRUE.equals(request.getIsBlocked()) && userId.equals(adminUserId)) {
+            throw new BadRequestException("You cannot block yourself");
+        }
 
         boolean ownerChanged = request.getIsOwner() != null && request.getIsOwner() != user.isOwner();
         boolean adminChanged = request.getIsAdmin() != null && request.getIsAdmin() != user.isAdmin();
+        boolean blockedChanged = request.getIsBlocked() != null && request.getIsBlocked() != user.isBlocked();
         if (request.getIsOwner() != null) {
             user.setOwner(request.getIsOwner());
         }
         if (request.getIsAdmin() != null) {
             user.setAdmin(request.getIsAdmin());
         }
-        // isBlocked is accepted but not persisted — the users table has no blocked flag.
+        if (request.getIsBlocked() != null) {
+            user.setBlocked(request.getIsBlocked());
+        }
         userRepository.save(user);
 
         if (ownerChanged) {
@@ -163,7 +170,12 @@ public class AdminService {
         if (adminChanged) {
             auditService.log(adminUserId, "USER_ROLE_CHANGED", "user", userId, "{\"isAdmin\":" + user.isAdmin() + "}");
         }
-        log.info("Admin {} updated user {}: owner={} admin={}", adminUserId, userId, user.isOwner(), user.isAdmin());
+        if (blockedChanged) {
+            auditService.log(adminUserId, user.isBlocked() ? "USER_BLOCKED" : "USER_UNBLOCKED", "user", userId,
+                    "{\"isBlocked\":" + user.isBlocked() + "}");
+        }
+        log.info("Admin {} updated user {}: owner={} admin={} blocked={}",
+                adminUserId, userId, user.isOwner(), user.isAdmin(), user.isBlocked());
         return buildUser(user);
     }
 
@@ -244,7 +256,16 @@ public class AdminService {
             booking.setCancelledAt(now);
             booking.setCancellationReason(cancelReason);
             bookingRepository.save(booking);
-            paymentService.refundBookingPayment(booking.getId(), booking.getPrice(), cancelReason);
+            // Blocking a stadium is the platform's doing, so it follows the
+            // owner rule: every card payment back in full, whatever the window.
+            // A game booking holds none of its teams' money, so the game gives
+            // that back instead.
+            Long refundedByGame = "game".equals(booking.getSource()) && booking.getGameId() != null
+                    ? gameService.cancelGameForBooking(booking.getGameId(), cancelReason)
+                    : null;
+            if (refundedByGame == null) {
+                paymentService.refundAllCardPayments(booking.getId(), cancelReason);
+            }
             if (booking.getUser() != null) {
                 notify(booking.getUser().getId(), Notification.Type.BOOKING_CANCELLED, "Бронь отменена",
                         "Стадион заблокирован — ваша бронь отменена, возврат средств оформлен.",
@@ -262,7 +283,7 @@ public class AdminService {
                 .language(user.getLanguage())
                 .isOwner(user.isOwner())
                 .isAdmin(user.isAdmin())
-                .isBlocked(false)
+                .isBlocked(user.isBlocked())
                 .bookingCount((int) bookingRepository.countByUserId(user.getId()))
                 .stadiumCount(user.isOwner() ? (int) stadiumRepository.countByOwnerId(user.getId()) : 0)
                 .createdAt(user.getCreatedAt())
@@ -283,7 +304,7 @@ public class AdminService {
                 .averageRating(avg == null ? 0.0 : avg)
                 .reviewCount(reviewRepository.countByStadiumId(stadium.getId()))
                 .totalBookings((int) bookingRepository.countByStadiumIdAndStatusIn(stadium.getId(), COUNTED_STATUSES))
-                .totalRevenue((int) paymentRepository.sumRevenueByStadium(
+                .totalRevenue(paymentRepository.sumRevenueByStadium(
                         stadium.getId(), Payment.Status.COMPLETED, Payment.PaymentType.BOOKING))
                 .createdAt(stadium.getCreatedAt())
                 .build();

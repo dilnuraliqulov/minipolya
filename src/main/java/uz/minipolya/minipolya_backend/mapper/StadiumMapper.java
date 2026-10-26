@@ -29,9 +29,7 @@ public interface StadiumMapper {
     @Mapping(target = "owner", ignore = true)
     @Mapping(target = "status", ignore = true)
     @Mapping(target = "active", ignore = true)
-    @Mapping(target = "fullRefundHours", ignore = true)
-    @Mapping(target = "partialRefundHours", ignore = true)
-    @Mapping(target = "partialRefundPercent", ignore = true)
+    @Mapping(target = "cancellationHours", ignore = true)
     @Mapping(target = "photos", ignore = true)
     @Mapping(target = "amenities", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
@@ -49,9 +47,7 @@ public interface StadiumMapper {
     @Mapping(source = "owner.id", target = "ownerId")
     @Mapping(source = "owner.name", target = "ownerName")
     @Mapping(source = "owner.phone", target = "ownerPhone")
-    @Mapping(source = "fullRefundHours", target = "cancellationPolicy.fullRefundHours")
-    @Mapping(source = "partialRefundHours", target = "cancellationPolicy.partialRefundHours")
-    @Mapping(source = "partialRefundPercent", target = "cancellationPolicy.partialRefundPercent")
+    @Mapping(source = "cancellationHours", target = "cancellationPolicy.cancellationHours")
     StadiumDetailResponse toDetailResponse(Stadium stadium);
 
     AmenitiesResponse toAmenitiesResponse(StadiumAmenities amenities);

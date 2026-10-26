@@ -38,7 +38,11 @@ public class StadiumDetailResponse {
     private String surfaceType;
     private LocalTime openTime;
     private LocalTime closeTime;
-    private Integer pricePerHour;
+    private Long pricePerHour;
+
+    /** Tiyin; null means the player must pay the whole price up front. */
+    private Long minBookingAmount;
+
     private String status;
 
     @JsonProperty("isActive")

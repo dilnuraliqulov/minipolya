@@ -20,6 +20,9 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
 
     List<Payment> findByGameId(UUID gameId);
 
+    /** Everything one team has paid on one game — the unit team-game refunds work on. */
+    List<Payment> findByGameTeamId(UUID gameTeamId);
+
     Page<Payment> findByUserId(UUID userId, Pageable pageable);
 
     /** Looks up a payment by its provider transaction id — the webhook idempotency key. */

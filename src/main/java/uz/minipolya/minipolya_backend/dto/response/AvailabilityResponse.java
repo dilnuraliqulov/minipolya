@@ -33,8 +33,8 @@ public class AvailabilityResponse {
         private LocalTime startTime;
         private LocalTime endTime;
         private boolean available;
-        private Integer pricePerHour;    // null if not available
-        private Integer originalPrice;   // before discount, null if no promotion
+        private Long pricePerHour;      // null if not available
+        private Long originalPrice;     // before discount, null if no promotion
         private Integer discountPercent; // null if no promotion
         private String promotionName;    // null if no promotion
         private boolean hasWaitingGame;

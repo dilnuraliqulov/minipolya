@@ -57,6 +57,11 @@ public class User {
     @Column(name = "is_admin", nullable = false)
     private boolean isAdmin = false;
 
+    /** Blocked by an admin: cannot sign in, and an existing JWT stops working at once. */
+    @Builder.Default
+    @Column(name = "is_blocked", nullable = false)
+    private boolean isBlocked = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 

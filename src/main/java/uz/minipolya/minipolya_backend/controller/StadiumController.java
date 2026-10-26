@@ -38,7 +38,7 @@ public class StadiumController {
     public ApiResponse<PageResponse<StadiumResponse>> list(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String format,
-            @RequestParam(required = false) Integer maxPrice,
+            @RequestParam(required = false) Long maxPrice,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         return ApiResponse.ok(stadiumService.searchPublic(q, format, maxPrice, page, size));

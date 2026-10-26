@@ -29,5 +29,5 @@ public class UpdatePricingRuleRequest {
     private LocalTime endTime;
 
     @Positive
-    private Integer pricePerHour;
+    private Long pricePerHour;
 }

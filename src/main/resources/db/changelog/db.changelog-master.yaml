@@ -35,3 +35,19 @@ databaseChangeLog:
       file: db/changelog/changes/017-create-triggers.sql
   - include:
       file: db/changelog/changes/018-booking-duration-unbounded.sql
+  - include:
+      file: db/changelog/changes/019-users-is-blocked.sql
+  - include:
+      file: db/changelog/changes/020-money-in-tiyin.sql
+  - include:
+      file: db/changelog/changes/021-create-platform-settings.sql
+  - include:
+      file: db/changelog/changes/022-create-saved-cards.sql
+  - include:
+      file: db/changelog/changes/023-booking-payments.sql
+  - include:
+      file: db/changelog/changes/024-cancellation-policy.sql
+  - include:
+      file: db/changelog/changes/025-game-teams.sql
+  - include:
+      file: db/changelog/changes/026-opponent-left.sql

@@ -14,6 +14,7 @@ import uz.minipolya.minipolya_backend.dto.response.NotificationResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.dto.response.UnreadCountResponse;
 import uz.minipolya.minipolya_backend.service.NotificationService;
+import uz.minipolya.minipolya_backend.util.Pagination;
 
 import java.util.UUID;
 import java.util.function.Function;
@@ -28,7 +29,7 @@ public class NotificationController {
     public ApiResponse<PageResponse<NotificationResponse>> myNotifications(@AuthenticationPrincipal UUID userId,
                                                                            @RequestParam(defaultValue = "0") int page,
                                                                            @RequestParam(defaultValue = "20") int size) {
-        PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         return ApiResponse.ok(PageResponse.from(
                 notificationService.getNotifications(userId, pageable), Function.identity()));
     }

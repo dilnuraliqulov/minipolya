@@ -34,11 +34,11 @@ public class BookingPriceCalculator {
     private final PricingRuleRepository pricingRuleRepository;
     private final PromotionService promotionService;
 
-    /** Total price for a booking: the sum of each hour's promotion-adjusted price. */
-    public int totalPrice(Stadium stadium, OffsetDateTime startsAt, int durationHours) {
+    /** Total price for a booking, in tiyin: the sum of each hour's promotion-adjusted price. */
+    public long totalPrice(Stadium stadium, OffsetDateTime startsAt, int durationHours) {
         List<PricingRule> rules = pricingRuleRepository.findByStadiumIdAndIsActiveTrue(stadium.getId());
         ZonedDateTime start = startsAt.atZoneSameInstant(TASHKENT);
-        int total = 0;
+        long total = 0;
         for (int hour = 0; hour < durationHours; hour++) {
             ZonedDateTime slot = start.plusHours(hour);
             total += finalHourPrice(stadium, rules, slot.toLocalDate(), slot.toLocalTime(), slot.toOffsetDateTime());
@@ -46,17 +46,17 @@ public class BookingPriceCalculator {
         return total;
     }
 
-    /** Final price for one hour: base rule/fallback price minus the best promotion covering it. */
-    public int finalHourPrice(Stadium stadium, List<PricingRule> rules,
-                              LocalDate date, LocalTime slotStart, OffsetDateTime slotStartUtc) {
-        int base = priceCalculator.calculateTotalPrice(rules, date, slotStart, 1, stadium.getPricePerHour());
+    /** Final price for one hour, in tiyin: base rule/fallback price minus the best promotion covering it. */
+    public long finalHourPrice(Stadium stadium, List<PricingRule> rules,
+                               LocalDate date, LocalTime slotStart, OffsetDateTime slotStartUtc) {
+        long base = priceCalculator.calculateTotalPrice(rules, date, slotStart, 1, stadium.getPricePerHour());
         return promotionService.getBestPromotion(stadium.getId(), slotStartUtc)
                 .map(promo -> applyDiscount(base, promo.getDiscountPercent()))
                 .orElse(base);
     }
 
-    /** Integer-so'm discount: percent off the base price, rounded down. */
-    public static int applyDiscount(int base, int discountPercent) {
-        return base - (int) ((long) base * discountPercent / 100);
+    /** Tiyin discount: percent off the base price, rounded down. */
+    public static long applyDiscount(long base, int discountPercent) {
+        return base - (base * discountPercent / 100);
     }
 }

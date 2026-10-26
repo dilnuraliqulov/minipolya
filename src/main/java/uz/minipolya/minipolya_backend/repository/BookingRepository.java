@@ -29,6 +29,9 @@ public interface BookingRepository extends JpaRepository<Booking, UUID> {
     /** Used by ReminderJob to find bookings starting within a window. */
     List<Booking> findByStatusAndStartsAtBetween(String status, OffsetDateTime from, OffsetDateTime to);
 
+    /** Used by BookingCompletionJob to find played bookings awaiting completion. */
+    List<Booking> findByStatusAndEndsAtBefore(String status, OffsetDateTime time);
+
     Page<Booking> findByUserId(UUID userId, Pageable pageable);
 
     Page<Booking> findByStadiumId(UUID stadiumId, Pageable pageable);

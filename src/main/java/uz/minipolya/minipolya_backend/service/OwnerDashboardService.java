@@ -13,13 +13,17 @@ import uz.minipolya.minipolya_backend.dto.response.OwnerScheduleResponse;
 import uz.minipolya.minipolya_backend.dto.response.ReviewResponse;
 import uz.minipolya.minipolya_backend.dto.response.StadiumResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
+import uz.minipolya.minipolya_backend.entity.Game;
+import uz.minipolya.minipolya_backend.entity.GameTeam;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
-import uz.minipolya.minipolya_backend.mapper.BookingMapper;
+
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
+import uz.minipolya.minipolya_backend.repository.GameRepository;
+import uz.minipolya.minipolya_backend.repository.GameTeamRepository;
 import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 
@@ -53,9 +57,11 @@ public class OwnerDashboardService {
     private final BookingRepository bookingRepository;
     private final PaymentRepository paymentRepository;
     private final ReviewRepository reviewRepository;
-    private final BookingMapper bookingMapper;
+    private final BookingResponseFactory bookingResponseFactory;
     private final StadiumService stadiumService;
     private final ReviewService reviewService;
+    private final GameRepository gameRepository;
+    private final GameTeamRepository gameTeamRepository;
 
     @Transactional(readOnly = true)
     public List<StadiumResponse> getMyStadiums(UUID ownerUserId) {
@@ -90,13 +96,13 @@ public class OwnerDashboardService {
                 .stadiumId(stadiumId)
                 .stadiumName(stadium.getName())
                 .todayBookings((int) bookingRepository.countByStadiumAndDateRange(stadiumId, todayStart, todayEnd, COUNTED_STATUSES))
-                .todayRevenue((int) revenue(stadiumId, todayStart, todayEnd))
+                .todayRevenue(revenue(stadiumId, todayStart, todayEnd))
                 .weekBookings((int) bookingRepository.countByStadiumAndDateRange(stadiumId, weekStartUtc, weekEndUtc, COUNTED_STATUSES))
-                .weekRevenue((int) revenue(stadiumId, weekStartUtc, weekEndUtc))
+                .weekRevenue(revenue(stadiumId, weekStartUtc, weekEndUtc))
                 .monthBookings((int) bookingRepository.countByStadiumAndDateRange(stadiumId, monthStartUtc, monthEndUtc, COUNTED_STATUSES))
-                .monthRevenue((int) revenue(stadiumId, monthStartUtc, monthEndUtc))
+                .monthRevenue(revenue(stadiumId, monthStartUtc, monthEndUtc))
                 .totalBookings((int) bookingRepository.countByStadiumIdAndStatusIn(stadiumId, COUNTED_STATUSES))
-                .totalRevenue((int) paymentRepository.sumRevenueByStadium(stadiumId, Payment.Status.COMPLETED, Payment.PaymentType.BOOKING))
+                .totalRevenue(paymentRepository.sumRevenueByStadium(stadiumId, Payment.Status.COMPLETED, Payment.PaymentType.BOOKING))
                 .averageRating(avg == null ? 0.0 : avg)
                 .reviewCount(reviewRepository.countByStadiumId(stadiumId))
                 .occupancyPercent(occupancy)
@@ -110,11 +116,11 @@ public class OwnerDashboardService {
         OffsetDateTime from = startOfDay(today.minusDays(29));
         OffsetDateTime to = startOfDay(today.plusDays(1));
 
-        Map<LocalDate, int[]> byDate = new LinkedHashMap<>(); // [revenue, count]
+        Map<LocalDate, long[]> byDate = new LinkedHashMap<>(); // [revenue in tiyin, count]
         for (Payment payment : paymentRepository.findStadiumBookingPayments(
                 stadiumId, Payment.Status.COMPLETED, Payment.PaymentType.BOOKING, from, to)) {
             LocalDate date = payment.getCreatedAt().atZoneSameInstant(TASHKENT).toLocalDate();
-            int[] agg = byDate.computeIfAbsent(date, d -> new int[2]);
+            long[] agg = byDate.computeIfAbsent(date, d -> new long[2]);
             agg[0] += payment.getAmount();
             agg[1] += 1;
         }
@@ -122,7 +128,7 @@ public class OwnerDashboardService {
         List<DailyRevenue> daily = byDate.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
                 .map(e -> DailyRevenue.builder()
-                        .date(e.getKey()).revenue(e.getValue()[0]).bookingCount(e.getValue()[1]).build())
+                        .date(e.getKey()).revenue(e.getValue()[0]).bookingCount((int) e.getValue()[1]).build())
                 .toList();
 
         return OwnerRevenueResponse.builder().stadiumId(stadiumId).dailyRevenue(daily).build();
@@ -145,6 +151,27 @@ public class OwnerDashboardService {
             byDate.computeIfAbsent(date, d -> new ArrayList<>()).add(booking);
         }
 
+        // Slots with no booking but a team already after them. Only team games:
+        // a casual game is private to whoever was invited, so it is not an
+        // offer the owner or anyone else can act on.
+        Map<LocalDate, List<OwnerScheduleResponse.WaitingGame>> waitingByDate = new LinkedHashMap<>();
+        for (Game game : gameRepository.findByStadiumIdAndStatus(stadiumId, "open")) {
+            if (!"team_vs_team".equals(game.getType())) {
+                continue;
+            }
+            LocalDate date = game.getStartsAt().atZoneSameInstant(TASHKENT).toLocalDate();
+            if (date.isBefore(rangeFrom) || date.isAfter(rangeTo)) {
+                continue;
+            }
+            waitingByDate.computeIfAbsent(date, d -> new ArrayList<>())
+                    .add(OwnerScheduleResponse.WaitingGame.builder()
+                            .gameId(game.getId())
+                            .teamName(waitingTeamName(game))
+                            .startsAt(game.getStartsAt())
+                            .endsAt(game.getEndsAt())
+                            .build());
+        }
+
         List<OwnerScheduleResponse> schedule = new ArrayList<>();
         for (LocalDate date = rangeFrom; !date.isAfter(rangeTo); date = date.plusDays(1)) {
             List<Booking> dayBookings = byDate.getOrDefault(date, List.of()).stream()
@@ -154,13 +181,14 @@ public class OwnerDashboardService {
                     .filter(b -> OCCUPIED_STATUSES.contains(b.getStatus()))
                     .mapToInt(b -> b.getDurationHours() == null ? 0 : b.getDurationHours())
                     .sum();
-            int revenue = dayBookings.stream()
+            long revenue = dayBookings.stream()
                     .filter(b -> COUNTED_STATUSES.contains(b.getStatus()))
-                    .mapToInt(b -> b.getPrice() == null ? 0 : b.getPrice())
+                    .mapToLong(b -> b.getPrice() == null ? 0 : b.getPrice())
                     .sum();
             schedule.add(OwnerScheduleResponse.builder()
                     .date(date)
-                    .bookings(dayBookings.stream().map(bookingMapper::toResponse).toList())
+                    .bookings(bookingResponseFactory.of(dayBookings))
+                    .waitingGames(waitingByDate.getOrDefault(date, List.of()))
                     .totalSlots(slotsPerDay)
                     .bookedSlots(bookedSlots)
                     .revenue(revenue)
@@ -176,6 +204,18 @@ public class OwnerDashboardService {
     }
 
     // ---- Helpers ----
+
+    /**
+     * The team actually waiting on a slot. Not {@code games.team_a_id}: once a
+     * confirmed game falls back to waiting, the team left behind can be the one
+     * on side B, and team A is empty.
+     */
+    private String waitingTeamName(Game game) {
+        return gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE).stream()
+                .findFirst()
+                .map(entry -> entry.getTeam().getName())
+                .orElse(null);
+    }
 
     private long revenue(UUID stadiumId, OffsetDateTime from, OffsetDateTime to) {
         return paymentRepository.sumRevenueByStadiumAndDateRange(

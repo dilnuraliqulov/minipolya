@@ -19,6 +19,7 @@ import uz.minipolya.minipolya_backend.dto.response.ReviewResponse;
 import uz.minipolya.minipolya_backend.dto.response.StadiumResponse;
 import uz.minipolya.minipolya_backend.service.BookingService;
 import uz.minipolya.minipolya_backend.service.OwnerDashboardService;
+import uz.minipolya.minipolya_backend.util.Pagination;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -63,7 +64,7 @@ public class OwnerDashboardController {
                                                              @PathVariable UUID stadiumId,
                                                              @RequestParam(defaultValue = "0") int page,
                                                              @RequestParam(defaultValue = "20") int size) {
-        PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         return ApiResponse.ok(PageResponse.from(
                 dashboardService.getStadiumReviews(stadiumId, ownerId, pageable), Function.identity()));
     }

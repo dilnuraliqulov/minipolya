@@ -28,14 +28,16 @@ app:
     expiration-ms: 86400000
   bot:
     token: ${BOT_TOKEN}
-  cancellation:
-    default-full-refund-hours: 24
-    default-partial-refund-hours: 12
-    default-partial-refund-percent: 50
+    username: ${BOT_USERNAME:}
   booking:
     max-weeks-ahead: 4
     hold-expiry-minutes: 10
   game:
-    default-service-fee-per-person: 5000
-
-
+    # How many hours before kick-off a team-vs-team game stops accepting an
+    # opponent. Past this point nobody can join and a game still looking for
+    # one is cancelled. Does not apply to casual games.
+    opponent-deadline-hours: 3
+  payments:
+    # `fake` wires up FakePaymentProvider, which refuses to start under the prod
+    # profile. The real ATMOS client replaces this once its API docs land.
+    provider: ${PAYMENTS_PROVIDER:fake}

@@ -13,15 +13,20 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.CreateGameRequest;
+import uz.minipolya.minipolya_backend.dto.request.GameCashRequest;
 import uz.minipolya.minipolya_backend.dto.request.JoinGameRequest;
+import uz.minipolya.minipolya_backend.dto.request.PayGameRemainderRequest;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
+import uz.minipolya.minipolya_backend.dto.response.GameChallengeResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameParticipantResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.service.GameService;
+import uz.minipolya.minipolya_backend.util.Pagination;
 
+import java.time.LocalDate;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -47,15 +52,32 @@ public class GameController {
     public ApiResponse<PageResponse<GameResponse>> openGames(@RequestParam(required = false) UUID stadiumId,
                                                              @RequestParam(defaultValue = "0") int page,
                                                              @RequestParam(defaultValue = "20") int size) {
-        PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"));
+        PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"));
         return ApiResponse.ok(PageResponse.from(gameService.getOpenGames(stadiumId, pageable), Function.identity()));
+    }
+
+    /**
+     * Open challenges: waiting team-vs-team games an opponent could still join.
+     * Casual games are not challenges and are never listed here.
+     */
+    @GetMapping("/api/games/challenges")
+    public ApiResponse<PageResponse<GameChallengeResponse>> challenges(
+            @AuthenticationPrincipal UUID userId,
+            @RequestParam(required = false) LocalDate date,
+            @RequestParam(required = false) String format,
+            @RequestParam(required = false) UUID stadiumId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"));
+        return ApiResponse.ok(PageResponse.from(
+                gameService.getChallenges(userId, date, format, stadiumId, pageable), Function.identity()));
     }
 
     @GetMapping("/api/games/my")
     public ApiResponse<PageResponse<GameResponse>> myGames(@AuthenticationPrincipal UUID userId,
                                                            @RequestParam(defaultValue = "0") int page,
                                                            @RequestParam(defaultValue = "20") int size) {
-        PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"));
+        PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"));
         return ApiResponse.ok(PageResponse.from(gameService.getMyGames(userId, pageable), Function.identity()));
     }
 
@@ -64,7 +86,9 @@ public class GameController {
                                                      @PathVariable UUID id,
                                                      @Valid @RequestBody(required = false) JoinGameRequest request) {
         String side = request == null ? null : request.getSide();
-        return ApiResponse.ok(gameService.joinGame(id, userId, side), "Joined game");
+        UUID teamId = request == null ? null : request.getTeamId();
+        UUID cardId = request == null ? null : request.getCardId();
+        return ApiResponse.ok(gameService.joinGame(id, userId, side, teamId, cardId), "Joined game");
     }
 
     @PostMapping("/api/games/{id}/pay")
@@ -72,6 +96,22 @@ public class GameController {
                                                 @PathVariable UUID id,
                                                 @RequestParam String provider) {
         return ApiResponse.ok(gameService.payForGame(id, userId, provider));
+    }
+
+    @PostMapping("/api/games/{id}/pay-remainder")
+    public ApiResponse<GameDetailResponse> payRemainder(@AuthenticationPrincipal UUID userId,
+                                                        @PathVariable UUID id,
+                                                        @Valid @RequestBody PayGameRemainderRequest request) {
+        gameService.payTeamRemainder(id, userId, request.getCardId());
+        return ApiResponse.ok(gameService.getGameDetail(id, userId), "Remainder paid");
+    }
+
+    @PostMapping("/api/games/{id}/cash")
+    public ApiResponse<GameDetailResponse> cash(@AuthenticationPrincipal UUID userId,
+                                                @PathVariable UUID id,
+                                                @Valid @RequestBody GameCashRequest request) {
+        gameService.recordTeamCashRemainder(id, userId, request.getSide());
+        return ApiResponse.ok(gameService.getGameDetail(id, userId), "Cash recorded");
     }
 
     @PostMapping("/api/games/{id}/leave")

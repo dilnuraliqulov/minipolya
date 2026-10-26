@@ -9,6 +9,7 @@ import uz.minipolya.minipolya_backend.config.JwtProvider;
 import uz.minipolya.minipolya_backend.dto.response.AuthResponse;
 import uz.minipolya.minipolya_backend.dto.response.UserResponse;
 import uz.minipolya.minipolya_backend.entity.User;
+import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.mapper.UserMapper;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.TelegramAuthValidator;
@@ -18,6 +19,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -73,5 +75,31 @@ class AuthServiceTest {
 
         assertThat(result.getToken()).isEqualTo("jwt-token");
         verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void blockedUserCannotSignIn() {
+        TelegramUserData data = new TelegramUserData(777L, "Ali", null, "ali", "uz");
+        when(telegramAuthValidator.validate("init")).thenReturn(data);
+        User blocked = User.builder().id(USER_ID_5).telegramId(777L).name("Ali").isBlocked(true).build();
+        when(userRepository.findByTelegramId(777L)).thenReturn(Optional.of(blocked));
+
+        assertThatThrownBy(() -> authService.authenticateTelegram("init"))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessage("Account is blocked");
+
+        verify(jwtProvider, never()).generateToken(any(User.class));
+    }
+
+    @Test
+    void unblockedUserCanSignInAgain() {
+        TelegramUserData data = new TelegramUserData(777L, "Ali", null, "ali", "uz");
+        when(telegramAuthValidator.validate("init")).thenReturn(data);
+        User user = User.builder().id(USER_ID_5).telegramId(777L).name("Ali").isBlocked(false).build();
+        when(userRepository.findByTelegramId(777L)).thenReturn(Optional.of(user));
+        when(jwtProvider.generateToken(user)).thenReturn("jwt-token");
+        when(userMapper.toResponse(user)).thenReturn(UserResponse.builder().id(USER_ID_5).build());
+
+        assertThat(authService.authenticateTelegram("init").getToken()).isEqualTo("jwt-token");
     }
 }
