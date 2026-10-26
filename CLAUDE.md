@@ -395,14 +395,23 @@ for a game that will not happen:
 1. record the joining team — the partial unique index on `(game_id, side)`
    rejects a second opponent before any card is touched;
 2. after the 3-hour point → 400 `O'yin boshlanishiga 3 soatdan kam qoldi, qo'shilib bo'lmaydi`;
-3. book the slot (pending) — if the EXCLUDE constraint rejects it, the game is
-   cancelled `cancelled_slot_taken`, the waiting team gets everything back, and
-   the joining team is **not** charged;
+3. book the slot (pending) — if the EXCLUDE constraint rejects it the joining
+   team is **not** charged and nothing is compensated here on purpose: this
+   transaction rolls back and a provider call would not, so whoever took the
+   slot cancels this game and refunds its waiting team from their own
+   committed transaction (`cancelGamesOnSlot`), with `GameTimeoutJob` as the
+   backstop;
 4. charge the joining team — a declined card removes the booking and the game
    goes on waiting;
 5. capture the waiting team's hold, last, being the only step that cannot be
    undone cheaply; if it fails, both teams are made whole and the game ends;
 6. confirm the booking and the game.
+
+The joining team takes whichever side is **free**, not always B: when the
+creating team walks out of a confirmed game the team left behind is on side B,
+so the next opponent takes A. Confirming also clears any **other** team still
+waiting on that hour, the same rule an ordinary booking follows — otherwise
+their money would sit on hold for a pitch that is already gone.
 
 `bookings.paid_amount` is the sum of the **advances** of the teams currently in
 the game (plus any remainder already settled) — the fee is not money for the
@@ -426,9 +435,14 @@ in all three cases:
 | its leader cancels **after the deadline** | `cancelled_by_creator`, **nothing back** |
 | its leader cancels **past the 3-hour point** | `cancelled_not_filled`, everything back — the job would have refunded them within the minute, so racing it must not cost them |
 
-*A CONFIRMED game: either leader may cancel* (not just the creator). The booking
-is always released as **`cancelled_opponent_left`** so the owner's schedule says
-why the pitch is free again rather than blaming a player or the owner.
+*A CONFIRMED game: either leader may cancel* (not just the creator), and the
+booking is released as **`cancelled_opponent_left`** so the owner's schedule
+says why the pitch is free again rather than blaming a player or the owner.
+
+**Nothing is cancellable once kick-off has passed**, waiting or confirmed. The
+pitch was there to be used, and nothing sets `games.status = 'completed'` yet, so
+without that guard a played game stays `confirmed` and the losing leader could
+reverse its booking and have the opponent refunded for a game they actually got.
 
 | When | The canceller | The other team | The game |
 |---|---|---|---|
@@ -471,9 +485,11 @@ Availability and the owner's schedule mark a slot where a team is looking for an
 opponent — **only** team_vs_team, never casual.
 
 *Chat* is open exactly while the game is CONFIRMED, for reading as well as
-sending. A leader whose team joined partway through sees only messages sent after
-they joined; an invited member leads no team, so they keep their side's whole
-history.
+sending. A leader whose team joined partway through sees only messages sent
+after they joined. A team that **left** loses the chat entirely: its players are
+marked `cancelled` with it, so a departed leader cannot read what the teams
+still playing say afterwards. An invited member leads no team, so they keep
+their side's whole history.
 
 *Members.* Leaders still invite team members via the link, and members do **not**
 pay for the pitch.
