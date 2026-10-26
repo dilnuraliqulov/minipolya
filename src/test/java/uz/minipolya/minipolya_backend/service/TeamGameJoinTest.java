@@ -24,6 +24,8 @@ import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.GameTeamRepository;
+import uz.minipolya.minipolya_backend.repository.TeamMemberRepository;
+import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.util.CancellationPolicy;
 
 import java.time.Duration;
@@ -96,7 +98,8 @@ class TeamGameJoinTest {
         service = new TeamGameService(gameRepository, gameTeamRepository, participantRepository,
                 bookingRepository, paymentService, savedCardService, platformSettingsService,
                 mock(NotificationService.class), mock(AuditService.class),
-                new CancellationPolicy(), new AppProperties());
+                new CancellationPolicy(), new AppProperties(),
+                mock(TeamMemberRepository.class), mock(TeamRepository.class));
 
         User leaderA = User.builder().id(LEADER_A_ID).name("Leader A").build();
         leaderB = User.builder().id(LEADER_B_ID).name("Leader B").build();

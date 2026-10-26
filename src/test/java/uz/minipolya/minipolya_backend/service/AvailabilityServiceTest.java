@@ -250,10 +250,10 @@ class AvailabilityServiceTest {
     }
 
     @Test
-    void waitingOpenGameIsSurfacedOnSlot() {
+    void aTeamLookingForAnOpponentIsSurfacedOnItsSlot() {
         stubStadium();
         UUID gameId = UUID.randomUUID();
-        Game game = Game.builder().id(gameId).type("open").status("open").maxPlayers(10)
+        Game game = Game.builder().id(gameId).type("team_vs_team").status("open").maxPlayers(10)
                 .startsAt(at(LocalTime.of(14, 0))).endsAt(at(LocalTime.of(15, 0))).build();
         when(gameRepository.findByStadiumIdAndStatus(STADIUM_ID, "open")).thenReturn(List.of(game));
         when(participantRepository.findByGameId(gameId)).thenReturn(List.of(
@@ -264,10 +264,28 @@ class AvailabilityServiceTest {
         TimeSlot slot = slotAt(response, LocalTime.of(14, 0));
         assertThat(slot.isHasWaitingGame()).isTrue();
         assertThat(slot.getWaitingGameId()).isEqualTo(gameId);
-        assertThat(slot.getWaitingGameType()).isEqualTo("open");
+        assertThat(slot.getWaitingGameType()).isEqualTo("team_vs_team");
         assertThat(slot.getPlayersJoined()).isEqualTo(3);
         assertThat(slot.getPlayersNeeded()).isEqualTo(10);
+        // The slot is genuinely free: a waiting game holds no booking.
         assertThat(slot.isAvailable()).isTrue();
+    }
+
+    @Test
+    void aWaitingCasualGameIsNotMarkedOnTheSlot() {
+        stubStadium();
+        UUID gameId = UUID.randomUUID();
+        Game game = Game.builder().id(gameId).type("casual").status("open").maxPlayers(10)
+                .startsAt(at(LocalTime.of(14, 0))).endsAt(at(LocalTime.of(15, 0))).build();
+        when(gameRepository.findByStadiumIdAndStatus(STADIUM_ID, "open")).thenReturn(List.of(game));
+
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
+
+        // "A team is looking for an opponent" is a team-vs-team thing only;
+        // a casual game is private to whoever was invited.
+        TimeSlot slot = slotAt(response, LocalTime.of(14, 0));
+        assertThat(slot.isHasWaitingGame()).isFalse();
+        assertThat(slot.getWaitingGameId()).isNull();
     }
 
     @Test

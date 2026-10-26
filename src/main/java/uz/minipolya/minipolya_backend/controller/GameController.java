@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.dto.request.GameCashRequest;
 import uz.minipolya.minipolya_backend.dto.request.JoinGameRequest;
 import uz.minipolya.minipolya_backend.dto.request.PayGameRemainderRequest;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
+import uz.minipolya.minipolya_backend.dto.response.GameChallengeResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameParticipantResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameResponse;
@@ -25,6 +26,7 @@ import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.service.GameService;
 import uz.minipolya.minipolya_backend.util.Pagination;
 
+import java.time.LocalDate;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -52,6 +54,23 @@ public class GameController {
                                                              @RequestParam(defaultValue = "20") int size) {
         PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"));
         return ApiResponse.ok(PageResponse.from(gameService.getOpenGames(stadiumId, pageable), Function.identity()));
+    }
+
+    /**
+     * Open challenges: waiting team-vs-team games an opponent could still join.
+     * Casual games are not challenges and are never listed here.
+     */
+    @GetMapping("/api/games/challenges")
+    public ApiResponse<PageResponse<GameChallengeResponse>> challenges(
+            @AuthenticationPrincipal UUID userId,
+            @RequestParam(required = false) LocalDate date,
+            @RequestParam(required = false) String format,
+            @RequestParam(required = false) UUID stadiumId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"));
+        return ApiResponse.ok(PageResponse.from(
+                gameService.getChallenges(userId, date, format, stadiumId, pageable), Function.identity()));
     }
 
     @GetMapping("/api/games/my")

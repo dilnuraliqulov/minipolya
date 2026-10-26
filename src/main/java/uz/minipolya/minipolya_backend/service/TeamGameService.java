@@ -3,9 +3,12 @@ package uz.minipolya.minipolya_backend.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.config.AppProperties;
+import uz.minipolya.minipolya_backend.dto.response.GameChallengeResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameTeamResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
@@ -25,13 +28,19 @@ import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.GameTeamRepository;
+import uz.minipolya.minipolya_backend.repository.TeamMemberRepository;
+import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.util.CancellationPolicy;
 import uz.minipolya.minipolya_backend.util.TeamGameSplit;
 
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -62,6 +71,12 @@ public class TeamGameService {
     /** Shown to the team that is still in after its opponent walked out. */
     static final String OPPONENT_LEFT = "Raqib bekor qildi, yangi raqib qidirilmoqda";
 
+    /** Date filters are Tashkent days; games are stored in UTC. */
+    private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
+
+    /** Sentinel so the exclusion list is never empty. */
+    private static final UUID NO_TEAM = new UUID(0L, 0L);
+
     private static final String STATUS_WAITING = "open";
     private static final String STATUS_CONFIRMED = "confirmed";
 
@@ -76,6 +91,8 @@ public class TeamGameService {
     private final AuditService auditService;
     private final CancellationPolicy cancellationPolicy;
     private final AppProperties appProperties;
+    private final TeamMemberRepository teamMemberRepository;
+    private final TeamRepository teamRepository;
 
     /**
      * Puts the creating team on side A and holds its fee and advance. No
@@ -341,6 +358,29 @@ public class TeamGameService {
         return team;
     }
 
+    /**
+     * The challenge board. Only waiting team games before their 3-hour point —
+     * a game nobody could reach in time is not an offer — and never one the
+     * viewer's own team is already waiting on.
+     *
+     * @param date      a Tashkent calendar day, or null for any
+     * @param format    the pitch format, or null for any
+     * @param stadiumId one stadium, or null for any
+     */
+    @Transactional(readOnly = true)
+    public Page<GameChallengeResponse> challenges(UUID userId, LocalDate date, String format,
+                                                  UUID stadiumId, Pageable pageable) {
+        OffsetDateTime cutoff = OffsetDateTime.now(ZoneOffset.UTC)
+                .plusHours(appProperties.getGame().getOpponentDeadlineHours());
+        OffsetDateTime from = date == null ? null : date.atStartOfDay(TASHKENT).toOffsetDateTime();
+        OffsetDateTime to = date == null ? null : date.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime();
+
+        return gameRepository
+                .findChallenges(cutoff, from, to, stadiumId, format, pageable,
+                        viewersTeamIds(userId), GameTeam.Status.ACTIVE)
+                .map(this::toChallenge);
+    }
+
     /** Each team's money, for the game response. */
     @Transactional(readOnly = true)
     public List<GameTeamResponse> teamsOf(Game game) {
@@ -596,6 +636,51 @@ public class TeamGameService {
         } catch (Exception ex) {
             log.warn("Notification failed: {}", ex.toString());
         }
+    }
+
+    /**
+     * Every team the viewer belongs to or leads, so their own waiting games are
+     * not offered back to them. Padded with a sentinel because an empty
+     * {@code IN (...)} is not valid SQL.
+     */
+    private List<UUID> viewersTeamIds(UUID userId) {
+        Set<UUID> ids = new LinkedHashSet<>();
+        ids.add(NO_TEAM);
+        teamMemberRepository.findByUserId(userId).forEach(m -> ids.add(m.getTeam().getId()));
+        teamRepository.findByLeaderId(userId).forEach(team -> ids.add(team.getId()));
+        return List.copyOf(ids);
+    }
+
+    private GameChallengeResponse toChallenge(Game game) {
+        GameTeam waiting = gameTeamRepository
+                .findByGameIdAndSideAndStatus(game.getId(), Side.A, GameTeam.Status.ACTIVE)
+                .or(() -> gameTeamRepository
+                        .findByGameIdAndSideAndStatus(game.getId(), Side.B, GameTeam.Status.ACTIVE))
+                .orElse(null);
+        // The joining team takes whichever side is free, and the split gives
+        // each side its own half, so quote the free one.
+        Side freeSide = waiting != null && waiting.getSide() == Side.A ? Side.B : Side.A;
+        TeamGameSplit split = splitFor(game);
+        Stadium stadium = game.getStadium();
+
+        return GameChallengeResponse.builder()
+                .gameId(game.getId())
+                .title(game.getTitle())
+                .waitingTeamId(waiting == null ? null : waiting.getTeam().getId())
+                .waitingTeamName(waiting == null ? null : waiting.getTeam().getName())
+                .stadiumId(stadium.getId())
+                .stadiumName(stadium.getName())
+                .stadiumAddress(stadium.getAddress())
+                .format(stadium.getFormat())
+                .startsAt(game.getStartsAt())
+                .endsAt(game.getEndsAt())
+                .durationHours((int) Duration.between(game.getStartsAt(), game.getEndsAt()).toHours())
+                .totalPrice(game.getTotalPrice())
+                .feeAmount(split.fee())
+                .advanceAmount(split.advanceFor(freeSide))
+                .amountToPayNow(split.joinAmountFor(freeSide))
+                .remainderAmount(split.remainderFor(freeSide))
+                .build();
     }
 
     /** How this game's price divides, given the stadium's minimum and the current platform fee. */

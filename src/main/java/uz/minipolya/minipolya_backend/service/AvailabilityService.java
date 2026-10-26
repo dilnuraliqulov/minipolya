@@ -76,7 +76,11 @@ public class AvailabilityService {
 
         List<Booking> bookings = bookingRepository.findActiveForStadiumBetween(stadiumId, dayStart, dayEnd);
         List<PricingRule> rules = pricingRuleRepository.findByStadiumIdAndIsActiveTrue(stadiumId);
+        // Only a team game waiting for an opponent is advertised on a free slot:
+        // "a team is looking for an opponent" is an invitation anyone can take
+        // up, whereas a casual game is private to whoever was invited to it.
         List<Game> waitingGames = gameRepository.findByStadiumIdAndStatus(stadiumId, "open").stream()
+                .filter(g -> "team_vs_team".equals(g.getType()))
                 .filter(g -> !g.getStartsAt().isBefore(dayStart) && g.getStartsAt().isBefore(dayEnd))
                 .toList();
 

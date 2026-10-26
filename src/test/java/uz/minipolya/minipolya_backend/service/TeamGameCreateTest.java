@@ -25,6 +25,7 @@ import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.GameTeamRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
+import uz.minipolya.minipolya_backend.repository.TeamMemberRepository;
 import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
@@ -131,7 +132,8 @@ class TeamGameCreateTest {
         TeamGameService teamGameService = new TeamGameService(gameRepository, gameTeamRepository,
                 participantRepository, bookingRepository, paymentService, savedCardService,
                 platformSettingsService, notificationService, auditService,
-                new uz.minipolya.minipolya_backend.util.CancellationPolicy(), new AppProperties());
+                new uz.minipolya.minipolya_backend.util.CancellationPolicy(), new AppProperties(),
+                mock(TeamMemberRepository.class), teamRepository);
 
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, priceCalculator, bookingRepository, gameMapper, participantMapper,

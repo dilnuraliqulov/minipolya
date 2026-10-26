@@ -13,6 +13,7 @@ import uz.minipolya.minipolya_backend.dto.response.OwnerScheduleResponse;
 import uz.minipolya.minipolya_backend.dto.response.ReviewResponse;
 import uz.minipolya.minipolya_backend.dto.response.StadiumResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
+import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
@@ -20,6 +21,7 @@ import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
+import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 
@@ -56,6 +58,7 @@ public class OwnerDashboardService {
     private final BookingResponseFactory bookingResponseFactory;
     private final StadiumService stadiumService;
     private final ReviewService reviewService;
+    private final GameRepository gameRepository;
 
     @Transactional(readOnly = true)
     public List<StadiumResponse> getMyStadiums(UUID ownerUserId) {
@@ -145,6 +148,27 @@ public class OwnerDashboardService {
             byDate.computeIfAbsent(date, d -> new ArrayList<>()).add(booking);
         }
 
+        // Slots with no booking but a team already after them. Only team games:
+        // a casual game is private to whoever was invited, so it is not an
+        // offer the owner or anyone else can act on.
+        Map<LocalDate, List<OwnerScheduleResponse.WaitingGame>> waitingByDate = new LinkedHashMap<>();
+        for (Game game : gameRepository.findByStadiumIdAndStatus(stadiumId, "open")) {
+            if (!"team_vs_team".equals(game.getType())) {
+                continue;
+            }
+            LocalDate date = game.getStartsAt().atZoneSameInstant(TASHKENT).toLocalDate();
+            if (date.isBefore(rangeFrom) || date.isAfter(rangeTo)) {
+                continue;
+            }
+            waitingByDate.computeIfAbsent(date, d -> new ArrayList<>())
+                    .add(OwnerScheduleResponse.WaitingGame.builder()
+                            .gameId(game.getId())
+                            .teamName(game.getTeamA() == null ? null : game.getTeamA().getName())
+                            .startsAt(game.getStartsAt())
+                            .endsAt(game.getEndsAt())
+                            .build());
+        }
+
         List<OwnerScheduleResponse> schedule = new ArrayList<>();
         for (LocalDate date = rangeFrom; !date.isAfter(rangeTo); date = date.plusDays(1)) {
             List<Booking> dayBookings = byDate.getOrDefault(date, List.of()).stream()
@@ -161,6 +185,7 @@ public class OwnerDashboardService {
             schedule.add(OwnerScheduleResponse.builder()
                     .date(date)
                     .bookings(bookingResponseFactory.of(dayBookings))
+                    .waitingGames(waitingByDate.getOrDefault(date, List.of()))
                     .totalSlots(slotsPerDay)
                     .bookedSlots(bookedSlots)
                     .revenue(revenue)

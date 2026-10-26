@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import uz.minipolya.minipolya_backend.entity.Game;
+import uz.minipolya.minipolya_backend.entity.GameTeam;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -39,6 +40,38 @@ public interface GameRepository extends JpaRepository<Game, UUID> {
     Page<Game> findByIsPublicTrueAndStatus(String status, Pageable pageable);
 
     Page<Game> findByStadiumIdAndIsPublicTrueAndStatus(UUID stadiumId, String status, Pageable pageable);
+
+    /**
+     * Waiting team games an opponent could still join: before the 3-hour point,
+     * and not one the viewer's own team is waiting on.
+     *
+     * <p>{@code excludedTeamIds} is never empty — an empty {@code IN (...)} is
+     * not valid SQL — so the caller pads it with a sentinel id.
+     */
+    @Query("""
+            SELECT g FROM Game g
+            WHERE g.type = 'team_vs_team'
+              AND g.status = 'open'
+              AND g.startsAt > :cutoff
+              AND (:from IS NULL OR g.startsAt >= :from)
+              AND (:to IS NULL OR g.startsAt < :to)
+              AND (:stadiumId IS NULL OR g.stadium.id = :stadiumId)
+              AND (:format IS NULL OR g.stadium.format = :format)
+              AND NOT EXISTS (
+                  SELECT 1 FROM GameTeam t
+                  WHERE t.game = g
+                    AND t.status = :activeStatus
+                    AND t.team.id IN :excludedTeamIds)
+            ORDER BY g.startsAt ASC
+            """)
+    Page<Game> findChallenges(@Param("cutoff") OffsetDateTime cutoff,
+                              @Param("from") OffsetDateTime from,
+                              @Param("to") OffsetDateTime to,
+                              @Param("stadiumId") UUID stadiumId,
+                              @Param("format") String format,
+                              Pageable pageable,
+                              @Param("excludedTeamIds") List<UUID> excludedTeamIds,
+                              @Param("activeStatus") GameTeam.Status activeStatus);
 
     /** True if either side of any game still references the team (blocks team deletion). */
     boolean existsByTeamAIdOrTeamBId(UUID teamAId, UUID teamBId);

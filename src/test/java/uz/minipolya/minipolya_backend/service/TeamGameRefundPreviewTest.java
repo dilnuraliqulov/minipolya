@@ -25,6 +25,8 @@ import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.GameTeamRepository;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
+import uz.minipolya.minipolya_backend.repository.TeamMemberRepository;
+import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.util.CancellationPolicy;
 
 import java.time.Duration;
@@ -110,7 +112,8 @@ class TeamGameRefundPreviewTest {
                 mock(GameParticipantRepository.class), bookingRepository,
                 paymentService, mock(SavedCardService.class), platformSettingsService,
                 mock(NotificationService.class), mock(AuditService.class),
-                new CancellationPolicy(), new AppProperties());
+                new CancellationPolicy(), new AppProperties(),
+                mock(TeamMemberRepository.class), mock(TeamRepository.class));
 
         User owner = User.builder().id(UUID.randomUUID()).name("Owner").build();
         User leaderA = User.builder().id(LEADER_A_ID).name("Leader A").build();

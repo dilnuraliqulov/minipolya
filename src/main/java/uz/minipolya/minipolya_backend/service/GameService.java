@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.dto.request.CreateGameRequest;
+import uz.minipolya.minipolya_backend.dto.response.GameChallengeResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameParticipantResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameResponse;
@@ -35,6 +36,7 @@ import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -187,6 +189,13 @@ public class GameService {
                 user.getName() + " присоединился к вашей игре.", Notification.ReferenceType.GAME, game.getId()));
         log.info("Game joined: gameId={} userId={} side={}", gameId, userId, assignedSide);
         return participantMapper.toResponse(participant);
+    }
+
+    /** Waiting team games an opponent could still join. */
+    @Transactional(readOnly = true)
+    public Page<GameChallengeResponse> getChallenges(UUID userId, LocalDate date, String format,
+                                                     UUID stadiumId, Pageable pageable) {
+        return teamGameService.challenges(userId, date, format, stadiumId, pageable);
     }
 
     /** A team leader settles their own team's remainder from a saved card. */
