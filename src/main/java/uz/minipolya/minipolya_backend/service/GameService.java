@@ -171,6 +171,11 @@ public class GameService {
                 User leader = userRepository.findById(userId)
                         .orElseThrow(() -> new ResourceNotFoundException("User not found"));
                 teamGameService.join(game, teamB, leader, cardId);
+                // The game has just taken the slot, so any other team still
+                // waiting on it must be cleared and refunded — the same rule an
+                // ordinary booking follows. This game is 'confirmed' by now, so
+                // it cannot cancel itself.
+                cancelGamesOnSlot(game.getStadium().getId(), game.getStartsAt(), game.getEndsAt());
             }
         } else {
             long current = participantRepository.findByGameId(gameId).size();
@@ -288,18 +293,17 @@ public class GameService {
      * an admin blocks the stadium. The booking is not where a team game's money
      * lives, so the game itself has to give it back.
      *
-     * @return true when the game handled the refunds, so the caller should not
-     *         also refund the booking's own payments
+     * @return the tiyin the game gave back, or null when there is no such game
+     *         and the caller should fall back to refunding the booking itself
      */
     @Transactional
-    public boolean cancelGameForBooking(UUID gameId, String reason) {
+    public Long cancelGameForBooking(UUID gameId, String reason) {
         Game game = gameRepository.findById(gameId).orElse(null);
         if (game == null) {
-            return false;
+            return null;
         }
         if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
-            teamGameService.cancelForBookingCancelled(gameId, reason);
-            return true;
+            return teamGameService.cancelForBookingCancelled(gameId, reason);
         }
         if (STATUS_OPEN.equals(game.getStatus()) || "confirmed".equals(game.getStatus())) {
             game.setStatus("cancelled_slot_taken");
@@ -309,7 +313,9 @@ public class GameService {
                     "Игра в «" + game.getStadium().getName() + "» отменена.");
             auditService.log(null, "GAME_CANCELLED", "game", gameId, "{\"reason\":\"booking_cancelled\"}");
         }
-        return true;
+        // A casual game's refunds go through its participants' own payment
+        // rows, which the booking does not own either.
+        return 0L;
     }
 
     /** Called by PaymentService when a game share payment completes. */

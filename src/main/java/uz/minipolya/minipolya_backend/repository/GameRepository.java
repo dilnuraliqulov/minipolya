@@ -47,16 +47,25 @@ public interface GameRepository extends JpaRepository<Game, UUID> {
      *
      * <p>{@code excludedTeamIds} is never empty — an empty {@code IN (...)} is
      * not valid SQL — so the caller pads it with a sentinel id.
+     *
+     * <p><b>No parameter here is ever null.</b> A bare {@code :param IS NULL}
+     * renders as an untyped {@code ? is null}, and PostgreSQL has nothing to
+     * infer a type from in that position: a null timestamp or uuid bind arrives
+     * as {@code Oid.UNSPECIFIED} and the statement is rejected outright with
+     * {@code 42P18 could not determine data type of parameter}. So each
+     * optional filter is switched off by a boolean flag instead, and
+     * {@code from}/{@code to} carry a wide-open range rather than nulls. A
+     * non-null bind compared against a column is fine — the column gives the
+     * type — which is why the remaining comparisons need no casts.
      */
     @Query("""
             SELECT g FROM Game g
             WHERE g.type = 'team_vs_team'
               AND g.status = 'open'
-              AND g.startsAt > :cutoff
-              AND (:from IS NULL OR g.startsAt >= :from)
-              AND (:to IS NULL OR g.startsAt < :to)
-              AND (:stadiumId IS NULL OR g.stadium.id = :stadiumId)
-              AND (:format IS NULL OR g.stadium.format = :format)
+              AND g.startsAt >= :from
+              AND g.startsAt < :to
+              AND (:anyStadium = TRUE OR g.stadium.id = :stadiumId)
+              AND (:anyFormat = TRUE OR g.stadium.format = :format)
               AND NOT EXISTS (
                   SELECT 1 FROM GameTeam t
                   WHERE t.game = g
@@ -64,10 +73,11 @@ public interface GameRepository extends JpaRepository<Game, UUID> {
                     AND t.team.id IN :excludedTeamIds)
             ORDER BY g.startsAt ASC
             """)
-    Page<Game> findChallenges(@Param("cutoff") OffsetDateTime cutoff,
-                              @Param("from") OffsetDateTime from,
+    Page<Game> findChallenges(@Param("from") OffsetDateTime from,
                               @Param("to") OffsetDateTime to,
+                              @Param("anyStadium") boolean anyStadium,
                               @Param("stadiumId") UUID stadiumId,
+                              @Param("anyFormat") boolean anyFormat,
                               @Param("format") String format,
                               Pageable pageable,
                               @Param("excludedTeamIds") List<UUID> excludedTeamIds,

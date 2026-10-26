@@ -94,8 +94,18 @@ public class GameMessageService {
                 .orElseThrow(() -> new ResourceNotFoundException("Game not found"));
     }
 
+    /**
+     * A participant who is still in the game. A leader whose team walked out
+     * keeps their row — it is how their payments stay explainable — but the
+     * row is {@code CANCELLED}, and they have no business reading what the
+     * teams still playing say to each other afterwards.
+     */
     private GameParticipant requireParticipant(UUID gameId, UUID userId) {
-        return participantRepository.findByGameIdAndUserId(gameId, userId)
+        GameParticipant participant = participantRepository.findByGameIdAndUserId(gameId, userId)
                 .orElseThrow(() -> new ForbiddenException("You are not a participant of this game"));
+        if (participant.getStatus() == GameParticipant.Status.CANCELLED) {
+            throw new ForbiddenException("You are no longer a participant of this game");
+        }
+        return participant;
     }
 }

@@ -234,7 +234,7 @@ class TeamGameJoinTest {
     }
 
     @Test
-    void aTakenSlotCancelsTheGameRefundsTheWaitingTeamAndChargesNobody() {
+    void aTakenSlotChargesNobodyAndMovesNoMoney() {
         when(bookingRepository.saveAndFlush(any(Booking.class)))
                 .thenThrow(new DataIntegrityViolationException("bookings_no_overlap"));
         Game game = waitingGame();
@@ -242,9 +242,13 @@ class TeamGameJoinTest {
         assertThatThrownBy(() -> service.join(game, teamB, leaderB, CARD_B_ID))
                 .isInstanceOf(SlotAlreadyBookedException.class);
 
-        assertThat(game.getStatus()).isEqualTo("cancelled_slot_taken");
-        verify(paymentService).giveBackAllTeamPayments(eq(sideA.getId()), anyString());
+        // Nothing is compensated here on purpose: this whole transaction rolls
+        // back, and a provider call would not. The booking that took the slot
+        // cancels this game and refunds its waiting team from its own
+        // committed transaction.
         verify(paymentService, never()).chargeForTeamGame(any(), any(), any());
+        verify(paymentService, never()).giveBackAllTeamPayments(any(), anyString());
+        verify(paymentService, never()).captureAllHeldTeamPayments(any());
     }
 
     @Test
@@ -291,6 +295,52 @@ class TeamGameJoinTest {
 
         verify(paymentService, never()).chargeForTeamGame(any(), any(), any());
         verify(bookingRepository, never()).saveAndFlush(any(Booking.class));
+    }
+
+    @Test
+    void aNewOpponentTakesWhicheverSideIsFree() {
+        // Side A walked out of a confirmed game, so the team still in is on
+        // side B and the newcomer has to take side A.
+        Game game = waitingGame();
+        sideA.setSide(Side.B);
+
+        service.join(game, teamB, leaderB, CARD_B_ID);
+
+        ArgumentCaptor<GameTeam> captor = ArgumentCaptor.forClass(GameTeam.class);
+        verify(gameTeamRepository).saveAndFlush(captor.capture());
+        assertThat(captor.getValue().getSide()).isEqualTo(Side.A);
+        assertThat(game.getTeamA()).isSameAs(teamB);
+        assertThat(game.getStatus()).isEqualTo("confirmed");
+    }
+
+    @Test
+    void aJoinerOnAFreedSideIsChargedThatSidesHalf() {
+        Game game = waitingGame();
+        sideA.setSide(Side.B);
+        sideA.setAdvanceAmount(2_500_001L);   // the odd tiyin went to side B
+
+        service.join(game, teamB, leaderB, CARD_B_ID);
+
+        ArgumentCaptor<GameTeam> captor = ArgumentCaptor.forClass(GameTeam.class);
+        verify(gameTeamRepository).saveAndFlush(captor.capture());
+        // Side A's half of a 50 000 so'm minimum floors down.
+        assertThat(captor.getValue().getAdvanceAmount()).isEqualTo(2_500_000L);
+    }
+
+    @Test
+    void aGameWithBothSidesTakenRejectsAFurtherOpponent() {
+        Game game = waitingGame();
+        GameTeam sideBTaken = GameTeam.builder().id(UUID.randomUUID()).game(game)
+                .side(Side.B).status(GameTeam.Status.ACTIVE)
+                .feeAmount(FEE).advanceAmount(ADVANCE).remainderAmount(7_500_000L)
+                .remainderStatus(GameTeam.RemainderStatus.UNPAID).build();
+        activeTeams.add(sideBTaken);
+
+        assertThatThrownBy(() -> service.join(game, teamB, leaderB, CARD_B_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("opponent");
+
+        verify(paymentService, never()).chargeForTeamGame(any(), any(), any());
     }
 
     @Test

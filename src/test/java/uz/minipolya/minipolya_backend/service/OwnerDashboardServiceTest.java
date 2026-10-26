@@ -10,6 +10,8 @@ import uz.minipolya.minipolya_backend.dto.response.StadiumResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.Game;
+import uz.minipolya.minipolya_backend.entity.GameParticipant;
+import uz.minipolya.minipolya_backend.entity.GameTeam;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.User;
@@ -19,6 +21,7 @@ import uz.minipolya.minipolya_backend.util.CancellationPolicy;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
+import uz.minipolya.minipolya_backend.repository.GameTeamRepository;
 import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 
@@ -51,6 +54,7 @@ class OwnerDashboardServiceTest {
     private StadiumService stadiumService;
     private ReviewService reviewService;
     private GameRepository gameRepository;
+    private GameTeamRepository gameTeamRepository;
     private OwnerDashboardService service;
 
     private Stadium stadium;
@@ -66,10 +70,11 @@ class OwnerDashboardServiceTest {
         reviewService = mock(ReviewService.class);
 
         gameRepository = mock(GameRepository.class);
+        gameTeamRepository = mock(GameTeamRepository.class);
         service = new OwnerDashboardService(stadiumRepository, bookingRepository, paymentRepository,
                 reviewRepository,
                 new BookingResponseFactory(bookingMapper, new CancellationPolicy(), mock(PaymentService.class)),
-                stadiumService, reviewService, gameRepository);
+                stadiumService, reviewService, gameRepository, gameTeamRepository);
 
         stadium = Stadium.builder().id(STADIUM_ID).name("Arena").owner(User.builder().id(OWNER_ID).build())
                 .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).build();
@@ -185,6 +190,9 @@ class OwnerDashboardServiceTest {
                 .teamA(Team.builder().id(UUID.randomUUID()).name("Bars FC").build())
                 .startsAt(start).endsAt(start.plusHours(1)).build();
         when(gameRepository.findByStadiumIdAndStatus(STADIUM_ID, "open")).thenReturn(List.of(waiting));
+        when(gameTeamRepository.findByGameIdAndStatus(gameId, GameTeam.Status.ACTIVE)).thenReturn(List.of(
+                GameTeam.builder().id(UUID.randomUUID()).side(GameParticipant.Side.A)
+                        .status(GameTeam.Status.ACTIVE).team(waiting.getTeamA()).build()));
 
         OwnerScheduleResponse todaySchedule = service.getSchedule(STADIUM_ID, null, null, OWNER_ID).stream()
                 .filter(s -> s.getDate().equals(today)).findFirst().orElseThrow();
@@ -195,6 +203,30 @@ class OwnerDashboardServiceTest {
         assertThat(todaySchedule.getWaitingGames().getFirst().getGameId()).isEqualTo(gameId);
         assertThat(todaySchedule.getWaitingGames().getFirst().getTeamName()).isEqualTo("Bars FC");
         assertThat(todaySchedule.getWaitingGames().getFirst().getStartsAt()).isEqualTo(start);
+    }
+
+    @Test
+    void theScheduleNamesTheWaitingTeamEvenAfterTheCreatorLeft() {
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(bookingRepository.findByStadiumIdAndStartsAtBetween(eq(STADIUM_ID), any(), any()))
+                .thenReturn(List.of());
+        LocalDate today = LocalDate.now(TASHKENT);
+        OffsetDateTime start = today.atTime(20, 0).atZone(TASHKENT).toOffsetDateTime();
+        UUID gameId = UUID.randomUUID();
+        // The creating team walked out, so games.team_a_id is null and the team
+        // still waiting sits on side b.
+        Game reopened = Game.builder().id(gameId).type("team_vs_team").status("open")
+                .startsAt(start).endsAt(start.plusHours(1)).build();
+        when(gameRepository.findByStadiumIdAndStatus(STADIUM_ID, "open")).thenReturn(List.of(reopened));
+        when(gameTeamRepository.findByGameIdAndStatus(gameId, GameTeam.Status.ACTIVE)).thenReturn(List.of(
+                GameTeam.builder().id(UUID.randomUUID()).side(GameParticipant.Side.B)
+                        .status(GameTeam.Status.ACTIVE)
+                        .team(Team.builder().id(UUID.randomUUID()).name("Bars FC").build()).build()));
+
+        OwnerScheduleResponse todaySchedule = service.getSchedule(STADIUM_ID, null, null, OWNER_ID).stream()
+                .filter(s -> s.getDate().equals(today)).findFirst().orElseThrow();
+
+        assertThat(todaySchedule.getWaitingGames().getFirst().getTeamName()).isEqualTo("Bars FC");
     }
 
     @Test

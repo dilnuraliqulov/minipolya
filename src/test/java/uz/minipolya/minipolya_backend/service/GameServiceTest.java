@@ -517,6 +517,28 @@ class GameServiceTest {
     }
 
     @Test
+    void confirmingATeamGameClearsTheOtherWaitingGamesOnThatSlot() {
+        OffsetDateTime start = inHours(48);
+        Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("open").stadium(stadium)
+                .startsAt(start).endsAt(start.plusHours(1)).maxPlayers(10).totalPrice(100_000L).build();
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game));
+        when(participantRepository.findByGameIdAndUserId(GAME_ID, LEADER_B_ID)).thenReturn(Optional.empty());
+        when(participantRepository.save(any(GameParticipant.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(userRepository.findById(LEADER_B_ID)).thenReturn(Optional.of(
+                User.builder().id(LEADER_B_ID).name("Leader B").build()));
+        when(teamRepository.findById(TEAM_B_ID)).thenReturn(Optional.of(
+                Team.builder().id(TEAM_B_ID).name("Team B").build()));
+        when(gameRepository.findByStadiumIdAndStatus(STADIUM_ID, "open")).thenReturn(List.of());
+
+        service.joinGame(GAME_ID, LEADER_B_ID, "b", TEAM_B_ID, UUID.randomUUID());
+
+        // Taking the slot has to clear other teams still waiting on it, exactly
+        // as an ordinary booking does — otherwise their money stays on hold for
+        // a pitch that is gone.
+        verify(gameRepository).findByStadiumIdAndStatus(STADIUM_ID, "open");
+    }
+
+    @Test
     void aWaitingTeamGameOnATakenSlotIsEndedByTheTeamFlow() {
         OffsetDateTime start = inHours(24);
         Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("open").stadium(stadium)

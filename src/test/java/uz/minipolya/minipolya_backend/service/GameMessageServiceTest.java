@@ -190,6 +190,21 @@ class GameMessageServiceTest {
     }
 
     @Test
+    void aTeamThatLeftTheGameCanNoLongerReadTheChat() {
+        Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("confirmed").build();
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game));
+        // Their participant row was cancelled when their team walked out.
+        when(participantRepository.findByGameIdAndUserId(GAME_ID, USER_ID)).thenReturn(Optional.of(
+                GameParticipant.builder().id(PARTICIPANT_ID).user(player)
+                        .status(GameParticipant.Status.CANCELLED).build()));
+
+        assertThatThrownBy(() -> service.getMessages(GAME_ID, USER_ID, Pageable.ofSize(20)))
+                .isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> service.sendMessage(GAME_ID, USER_ID, "still here"))
+                .isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
     void someoneWithNoTeamOfTheirOwnStillSeesTheWholeHistory() {
         Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("confirmed").build();
         when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game));

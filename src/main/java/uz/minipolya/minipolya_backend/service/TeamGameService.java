@@ -12,6 +12,7 @@ import uz.minipolya.minipolya_backend.dto.response.GameChallengeResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameTeamResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
+import uz.minipolya.minipolya_backend.entity.GameParticipant;
 import uz.minipolya.minipolya_backend.entity.GameParticipant.Side;
 import uz.minipolya.minipolya_backend.entity.GameTeam;
 import uz.minipolya.minipolya_backend.entity.Notification;
@@ -74,8 +75,14 @@ public class TeamGameService {
     /** Date filters are Tashkent days; games are stored in UTC. */
     private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
 
-    /** Sentinel so the exclusion list is never empty. */
+    /**
+     * Stand-in id for "no filter" / "no team". The query never receives a null
+     * uuid, and no real row can carry this one.
+     */
     private static final UUID NO_TEAM = new UUID(0L, 0L);
+
+    /** How far ahead an unfiltered challenge search looks. */
+    private static final int FAR_FUTURE_YEARS = 5;
 
     private static final String STATUS_WAITING = "open";
     private static final String STATUS_CONFIRMED = "confirmed";
@@ -158,20 +165,28 @@ public class TeamGameService {
         }
         SavedCard card = savedCardService.requireOwnedCard(leader.getId(), cardId);
 
-        GameTeam sideB;
+        // Not always side B. When the creating team walks out of a confirmed
+        // game the team left behind is on side B, so the newcomer takes A.
+        Side freeSide = freeSideOf(game);
+
+        GameTeam joining;
         try {
-            sideB = gameTeamRepository.saveAndFlush(
-                    teamEntry(game, teamB, leader, Side.B, splitFor(game)));
+            joining = gameTeamRepository.saveAndFlush(
+                    teamEntry(game, teamB, leader, freeSide, splitFor(game)));
         } catch (DataIntegrityViolationException ex) {
             throw new BadRequestException("This game already has an opponent");
         }
 
         Booking booking = bookGameSlot(game);
-        chargeJoiner(game, sideB, card, booking);
-        captureWaitingTeam(game, sideB, booking);
+        chargeJoiner(game, joining, card, booking);
+        captureWaitingTeam(game, joining, booking);
 
         confirmBooking(game, booking);
-        game.setTeamB(teamB);
+        if (freeSide == Side.A) {
+            game.setTeamA(teamB);
+        } else {
+            game.setTeamB(teamB);
+        }
         game.setBookingId(booking.getId());
         game.setStatus(STATUS_CONFIRMED);
         gameRepository.save(game);
@@ -181,7 +196,7 @@ public class TeamGameService {
                 "{\"teamBId\":\"" + teamB.getId() + "\",\"bookingId\":\"" + booking.getId() + "\"}");
         log.info("Team game confirmed: gameId={} teamBId={} bookingId={}",
                 game.getId(), teamB.getId(), booking.getId());
-        return sideB;
+        return joining;
     }
 
     /**
@@ -208,6 +223,13 @@ public class TeamGameService {
                 .orElseThrow(() -> new ForbiddenException("Only a team leader in this game can cancel it"));
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         boolean waiting = STATUS_WAITING.equals(game.getStatus());
+
+        // Nothing is cancellable once kick-off has passed. The pitch was there
+        // to be used, and cancelling would reverse a booking that may already
+        // be completed and refund the opponent for a game they actually got.
+        if (now.isAfter(game.getStartsAt())) {
+            throw new BadRequestException("The game has already started and cannot be cancelled");
+        }
 
         // A confirmed game holds a slot; freeing it is the first thing to do,
         // whichever band we are in.
@@ -261,14 +283,14 @@ public class TeamGameService {
      * says, and the game is over.
      */
     @Transactional
-    public void cancelForBookingCancelled(UUID gameId, String reason) {
+    public long cancelForBookingCancelled(UUID gameId, String reason) {
         Game game = gameRepository.findById(gameId)
                 .orElseThrow(() -> new ResourceNotFoundException("Game not found"));
         if (isOver(game)) {
-            return; // already cancelled or played: nothing to give back twice
+            return 0L; // already cancelled or played: nothing to give back twice
         }
         game.setBookingId(null);
-        endWaitingGame(game, "cancelled_slot_taken", reason);
+        return endWaitingGame(game, "cancelled_slot_taken", reason);
     }
 
     /**
@@ -278,6 +300,9 @@ public class TeamGameService {
      */
     @Transactional(readOnly = true)
     public long refundIfCancelledNow(Game game, GameTeam team, OffsetDateTime now) {
+        if (now.isAfter(game.getStartsAt())) {
+            return 0L; // nothing is cancellable any more, so nothing would come back
+        }
         if (now.isAfter(opponentDeadline(game))) {
             // Past this point the canceller forfeits, unless it is the lone
             // waiting team, which the timeout job would refund anyway.
@@ -295,10 +320,12 @@ public class TeamGameService {
 
     /** Ends a game nobody can play and gives every team still in it everything back. */
     @Transactional
-    public void endWaitingGame(Game game, String cancelStatus, String reason) {
-        endGame(game, cancelStatus, reason);
+    public long endWaitingGame(Game game, String cancelStatus, String reason) {
+        long given = endGame(game, cancelStatus, reason);
         notifyCancelled(game, reason);
-        log.info("Team game ended: gameId={} status={} reason={}", game.getId(), cancelStatus, reason);
+        log.info("Team game ended: gameId={} status={} reason={} givenBack={}",
+                game.getId(), cancelStatus, reason, given);
+        return given;
     }
 
     /**
@@ -370,14 +397,25 @@ public class TeamGameService {
     @Transactional(readOnly = true)
     public Page<GameChallengeResponse> challenges(UUID userId, LocalDate date, String format,
                                                   UUID stadiumId, Pageable pageable) {
+        // The window is always a real range, never a pair of nulls: the query
+        // cannot take a null bind (see GameRepository.findChallenges). Its lower
+        // bound never goes behind the 3-hour cutoff, so a stale date cannot
+        // surface a game nobody could still join.
         OffsetDateTime cutoff = OffsetDateTime.now(ZoneOffset.UTC)
                 .plusHours(appProperties.getGame().getOpponentDeadlineHours());
-        OffsetDateTime from = date == null ? null : date.atStartOfDay(TASHKENT).toOffsetDateTime();
-        OffsetDateTime to = date == null ? null : date.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime();
+        OffsetDateTime from = cutoff;
+        OffsetDateTime to = cutoff.plusYears(FAR_FUTURE_YEARS);
+        if (date != null) {
+            OffsetDateTime dayStart = date.atStartOfDay(TASHKENT).toOffsetDateTime();
+            from = dayStart.isAfter(cutoff) ? dayStart : cutoff;
+            to = date.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime();
+        }
 
         return gameRepository
-                .findChallenges(cutoff, from, to, stadiumId, format, pageable,
-                        viewersTeamIds(userId), GameTeam.Status.ACTIVE)
+                .findChallenges(from, to,
+                        stadiumId == null, stadiumId == null ? NO_TEAM : stadiumId,
+                        format == null, format == null ? "" : format,
+                        pageable, viewersTeamIds(userId), GameTeam.Status.ACTIVE)
                 .map(this::toChallenge);
     }
 
@@ -433,21 +471,29 @@ public class TeamGameService {
         try {
             return bookingRepository.saveAndFlush(booking);
         } catch (DataIntegrityViolationException ex) {
-            endGame(game, "cancelled_slot_taken", "The slot was booked before an opponent arrived");
+            // Deliberately no compensation here. A failed flush poisons this
+            // EntityManager, and anything we did next would roll back with the
+            // throw below — while provider calls would NOT roll back, leaving
+            // money moved with no record of it. Whoever took the slot cancels
+            // this game and refunds its waiting team from their own committed
+            // transaction (BookingService.createBooking and
+            // TeamGameService.join both call cancelGamesOnSlot), and
+            // GameTimeoutJob is the backstop.
+            log.info("Game {} lost its slot to another booking while joining", game.getId());
             throw new SlotAlreadyBookedException("That time slot is already booked");
         }
     }
 
     /** A declined joiner costs nobody anything: the booking goes, the game waits on. */
-    private void chargeJoiner(Game game, GameTeam sideB, SavedCard card, Booking booking) {
-        Payment charge = paymentService.chargeForTeamGame(sideB, card, Payment.PaymentType.TEAM_GAME);
+    private void chargeJoiner(Game game, GameTeam joining, SavedCard card, Booking booking) {
+        Payment charge = paymentService.chargeForTeamGame(joining, card, Payment.PaymentType.TEAM_GAME);
         if (charge.getStatus() != Payment.Status.FAILED) {
             return;
         }
         bookingRepository.delete(booking);
-        sideB.setStatus(GameTeam.Status.CANCELLED);
-        sideB.setLeftAt(OffsetDateTime.now(ZoneOffset.UTC));
-        gameTeamRepository.save(sideB);
+        joining.setStatus(GameTeam.Status.CANCELLED);
+        joining.setLeftAt(OffsetDateTime.now(ZoneOffset.UTC));
+        gameTeamRepository.save(joining);
         throw new BadRequestException(
                 "Card payment was declined; the game is still looking for an opponent");
     }
@@ -457,10 +503,10 @@ public class TeamGameService {
      * waiting team's hold can no longer be captured, nobody plays, so the
      * joining team is refunded and the game ends.
      */
-    private void captureWaitingTeam(Game game, GameTeam sideB, Booking booking) {
+    private void captureWaitingTeam(Game game, GameTeam joining, Booking booking) {
         try {
             for (GameTeam waiting : gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)) {
-                if (!waiting.getId().equals(sideB.getId())) {
+                if (!waiting.getId().equals(joining.getId())) {
                     paymentService.captureAllHeldTeamPayments(waiting.getId());
                 }
             }
@@ -498,17 +544,17 @@ public class TeamGameService {
     }
 
     /** Cancels the game and gives every team still in it everything back. */
-    private void endGame(Game game, String status, String reason) {
+    private long endGame(Game game, String status, String reason) {
         game.setStatus(status);
         gameRepository.save(game);
+        long given = 0L;
         for (GameTeam entry : gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)) {
-            paymentService.giveBackAllTeamPayments(entry.getId(), reason);
-            entry.setStatus(GameTeam.Status.CANCELLED);
-            entry.setLeftAt(OffsetDateTime.now(ZoneOffset.UTC));
-            gameTeamRepository.save(entry);
+            given += paymentService.giveBackAllTeamPayments(entry.getId(), reason);
+            releaseTeam(entry, OffsetDateTime.now(ZoneOffset.UTC));
         }
         auditService.log(null, "GAME_CANCELLED", "game", game.getId(),
-                "{\"reason\":\"" + status + "\"}");
+                "{\"reason\":\"" + status + "\",\"givenBack\":" + given + "}");
+        return given;
     }
 
     /**
@@ -602,11 +648,23 @@ public class TeamGameService {
                 .orElseThrow(() -> new ResourceNotFoundException("Game not found"));
     }
 
-    /** Takes a team out of the game, keeping its row so its payments stay explainable. */
+    /**
+     * Takes a team out of the game. Its {@code game_teams} row is kept, so its
+     * payments stay explainable, and its players are taken out with it — a
+     * leader whose team walked out must not keep reading the chat of the teams
+     * still playing. Invited members carry no side and are left alone.
+     */
     private void releaseTeam(GameTeam entry, OffsetDateTime now) {
         entry.setStatus(GameTeam.Status.CANCELLED);
         entry.setLeftAt(now);
         gameTeamRepository.save(entry);
+
+        for (GameParticipant participant : participantRepository.findByGameId(entry.getGame().getId())) {
+            if (participant.getSide() == entry.getSide()) {
+                participant.setStatus(GameParticipant.Status.CANCELLED);
+                participantRepository.save(participant);
+            }
+        }
     }
 
     private void notifyCancelled(Game game, String message) {
@@ -681,6 +739,24 @@ public class TeamGameService {
                 .amountToPayNow(split.joinAmountFor(freeSide))
                 .remainderAmount(split.remainderFor(freeSide))
                 .build();
+    }
+
+    /**
+     * The side a newcomer takes: whichever has no live occupant. A game with
+     * both sides taken is not looking for anyone.
+     */
+    private Side freeSideOf(Game game) {
+        Set<Side> taken = gameTeamRepository
+                .findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE).stream()
+                .map(GameTeam::getSide)
+                .collect(java.util.stream.Collectors.toSet());
+        if (!taken.contains(Side.A)) {
+            return Side.A;
+        }
+        if (!taken.contains(Side.B)) {
+            return Side.B;
+        }
+        throw new BadRequestException("This game already has an opponent");
     }
 
     /** How this game's price divides, given the stadium's minimum and the current platform fee. */

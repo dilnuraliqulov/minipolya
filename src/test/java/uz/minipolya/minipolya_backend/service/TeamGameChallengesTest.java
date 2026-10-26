@@ -35,6 +35,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -106,7 +107,7 @@ class TeamGameChallengesTest {
         when(teamRepository.findByLeaderId(VIEWER_ID)).thenReturn(List.of());
         when(gameTeamRepository.findByGameIdAndSideAndStatus(game.getId(), Side.A, GameTeam.Status.ACTIVE))
                 .thenReturn(Optional.of(sideA));
-        when(gameRepository.findChallenges(any(), any(), any(), any(), any(), any(), any(), any()))
+        when(gameRepository.findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(game)));
     }
 
@@ -139,38 +140,72 @@ class TeamGameChallengesTest {
         assertThat(card.getRemainderAmount()).isEqualTo(REMAINDER);
     }
 
+    /** Every argument findChallenges was called with, in order. */
+    private Object[] lastCall() {
+        ArgumentCaptor<OffsetDateTime> from = ArgumentCaptor.forClass(OffsetDateTime.class);
+        ArgumentCaptor<OffsetDateTime> to = ArgumentCaptor.forClass(OffsetDateTime.class);
+        ArgumentCaptor<Boolean> anyStadium = ArgumentCaptor.forClass(Boolean.class);
+        ArgumentCaptor<UUID> stadiumId = ArgumentCaptor.forClass(UUID.class);
+        ArgumentCaptor<Boolean> anyFormat = ArgumentCaptor.forClass(Boolean.class);
+        ArgumentCaptor<String> format = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
+        verify(gameRepository).findChallenges(from.capture(), to.capture(), anyStadium.capture(),
+                stadiumId.capture(), anyFormat.capture(), format.capture(), any(), excluded.capture(), any());
+        return new Object[]{from.getValue(), to.getValue(), anyStadium.getValue(),
+                stadiumId.getValue(), anyFormat.getValue(), format.getValue(), excluded.getValue()};
+    }
+
     @Test
     void gamesInsideTheThreeHourWindowAreNotListed() {
         challenges(null, null, null);
 
-        ArgumentCaptor<OffsetDateTime> cutoff = ArgumentCaptor.forClass(OffsetDateTime.class);
-        verify(gameRepository).findChallenges(cutoff.capture(), any(), any(), any(), any(), any(), any(), any());
-
-        long hoursAhead = Duration.between(OffsetDateTime.now(ZoneOffset.UTC), cutoff.getValue()).toMinutes();
-        assertThat(hoursAhead).isBetween(175L, 181L);   // ~3 hours from now
+        OffsetDateTime from = (OffsetDateTime) lastCall()[0];
+        long minutesAhead = Duration.between(OffsetDateTime.now(ZoneOffset.UTC), from).toMinutes();
+        assertThat(minutesAhead).isBetween(175L, 181L);   // ~3 hours from now
     }
 
     @Test
     void theDateFilterCoversOneTashkentDay() {
-        LocalDate date = LocalDate.of(2026, 11, 5);
+        LocalDate date = LocalDate.of(2099, 11, 5);   // far future, so the 3-hour cutoff does not clip it
 
         challenges(date, null, null);
 
-        ArgumentCaptor<OffsetDateTime> from = ArgumentCaptor.forClass(OffsetDateTime.class);
-        ArgumentCaptor<OffsetDateTime> to = ArgumentCaptor.forClass(OffsetDateTime.class);
-        verify(gameRepository).findChallenges(any(), from.capture(), to.capture(), any(), any(), any(), any(), any());
+        Object[] call = lastCall();
+        assertThat(call[0]).isEqualTo(date.atStartOfDay(TASHKENT).toOffsetDateTime());
+        assertThat(call[1]).isEqualTo(date.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime());
+    }
 
-        assertThat(from.getValue()).isEqualTo(date.atStartOfDay(TASHKENT).toOffsetDateTime());
-        assertThat(to.getValue()).isEqualTo(date.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime());
+    @Test
+    void aDateInThePastIsClippedToTheThreeHourCutoff() {
+        challenges(LocalDate.now(TASHKENT).minusDays(5), null, null);
+
+        // The lower bound never goes behind the cutoff, so a stale date cannot
+        // surface a game that can no longer be joined.
+        OffsetDateTime from = (OffsetDateTime) lastCall()[0];
+        assertThat(from).isAfter(OffsetDateTime.now(ZoneOffset.UTC));
     }
 
     @Test
     void theFormatAndStadiumFiltersArePassedThrough() {
         challenges(null, "7x7", STADIUM_ID);
 
-        verify(gameRepository).findChallenges(any(), any(), any(),
-                org.mockito.ArgumentMatchers.eq(STADIUM_ID),
-                org.mockito.ArgumentMatchers.eq("7x7"), any(), any(), any());
+        Object[] call = lastCall();
+        assertThat(call[2]).isEqualTo(false);        // anyStadium
+        assertThat(call[3]).isEqualTo(STADIUM_ID);
+        assertThat(call[4]).isEqualTo(false);        // anyFormat
+        assertThat(call[5]).isEqualTo("7x7");
+    }
+
+    @Test
+    void anUnfilteredCallPassesNoNullsAtAll() {
+        challenges(null, null, null);
+
+        // A null bind in a `? is null` position is rejected outright by
+        // PostgreSQL (42P18), so the query is built to never receive one.
+        Object[] call = lastCall();
+        assertThat(call).doesNotContainNull();
+        assertThat(call[2]).isEqualTo(true);         // anyStadium
+        assertThat(call[4]).isEqualTo(true);         // anyFormat
     }
 
     @Test
@@ -182,7 +217,7 @@ class TeamGameChallengesTest {
         challenges(null, null, null);
 
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
-        verify(gameRepository).findChallenges(any(), any(), any(), any(), any(), any(), excluded.capture(), any());
+        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any());
         assertThat(excluded.getValue()).contains(VIEWER_TEAM_ID);
     }
 
@@ -194,7 +229,7 @@ class TeamGameChallengesTest {
         challenges(null, null, null);
 
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
-        verify(gameRepository).findChallenges(any(), any(), any(), any(), any(), any(), excluded.capture(), any());
+        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any());
         assertThat(excluded.getValue()).contains(VIEWER_TEAM_ID);
     }
 
@@ -203,7 +238,7 @@ class TeamGameChallengesTest {
         challenges(null, null, null);
 
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
-        verify(gameRepository).findChallenges(any(), any(), any(), any(), any(), any(), excluded.capture(), any());
+        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any());
 
         // An empty IN (...) is not valid SQL, so the list always holds something.
         assertThat(excluded.getValue()).isNotEmpty();

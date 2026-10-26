@@ -14,6 +14,7 @@ import uz.minipolya.minipolya_backend.dto.response.ReviewResponse;
 import uz.minipolya.minipolya_backend.dto.response.StadiumResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
+import uz.minipolya.minipolya_backend.entity.GameTeam;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
@@ -22,6 +23,7 @@ import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
+import uz.minipolya.minipolya_backend.repository.GameTeamRepository;
 import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 
@@ -59,6 +61,7 @@ public class OwnerDashboardService {
     private final StadiumService stadiumService;
     private final ReviewService reviewService;
     private final GameRepository gameRepository;
+    private final GameTeamRepository gameTeamRepository;
 
     @Transactional(readOnly = true)
     public List<StadiumResponse> getMyStadiums(UUID ownerUserId) {
@@ -163,7 +166,7 @@ public class OwnerDashboardService {
             waitingByDate.computeIfAbsent(date, d -> new ArrayList<>())
                     .add(OwnerScheduleResponse.WaitingGame.builder()
                             .gameId(game.getId())
-                            .teamName(game.getTeamA() == null ? null : game.getTeamA().getName())
+                            .teamName(waitingTeamName(game))
                             .startsAt(game.getStartsAt())
                             .endsAt(game.getEndsAt())
                             .build());
@@ -201,6 +204,18 @@ public class OwnerDashboardService {
     }
 
     // ---- Helpers ----
+
+    /**
+     * The team actually waiting on a slot. Not {@code games.team_a_id}: once a
+     * confirmed game falls back to waiting, the team left behind can be the one
+     * on side B, and team A is empty.
+     */
+    private String waitingTeamName(Game game) {
+        return gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE).stream()
+                .findFirst()
+                .map(entry -> entry.getTeam().getName())
+                .orElse(null);
+    }
 
     private long revenue(UUID stadiumId, OffsetDateTime from, OffsetDateTime to) {
         return paymentRepository.sumRevenueByStadiumAndDateRange(

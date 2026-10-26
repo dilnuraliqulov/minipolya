@@ -5,12 +5,14 @@ import org.junit.jupiter.api.Test;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
+import uz.minipolya.minipolya_backend.entity.GameParticipant;
 import uz.minipolya.minipolya_backend.entity.GameParticipant.Side;
 import uz.minipolya.minipolya_backend.entity.GameTeam;
 import uz.minipolya.minipolya_backend.entity.PlatformSettings;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.User;
+import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
@@ -66,6 +68,7 @@ class TeamGameConfirmedCancelTest {
     private GameTeamRepository gameTeamRepository;
     private BookingRepository bookingRepository;
     private PaymentService paymentService;
+    private GameParticipantRepository participantRepository;
     private TeamGameService service;
 
     private Stadium stadium;
@@ -85,8 +88,10 @@ class TeamGameConfirmedCancelTest {
         when(platformSettingsService.current()).thenReturn(
                 PlatformSettings.builder().teamGamePlatformFee(FEE).build());
 
+        participantRepository = mock(GameParticipantRepository.class);
+        when(participantRepository.save(any(GameParticipant.class))).thenAnswer(inv -> inv.getArgument(0));
         service = new TeamGameService(gameRepository, gameTeamRepository,
-                mock(GameParticipantRepository.class), bookingRepository,
+                participantRepository, bookingRepository,
                 paymentService, mock(SavedCardService.class), platformSettingsService,
                 mock(NotificationService.class), mock(AuditService.class),
                 new CancellationPolicy(), new AppProperties(),
@@ -171,6 +176,25 @@ class TeamGameConfirmedCancelTest {
     }
 
     @Test
+    void theLeavingTeamsPlayersAreTakenOutOfTheGame() {
+        Game game = confirmedGame(Duration.ofDays(2));
+        GameParticipant leaverB = GameParticipant.builder().id(UUID.randomUUID()).game(game)
+                .user(teamB.getLeader()).side(Side.B).status(GameParticipant.Status.PAID).build();
+        GameParticipant stayerA = GameParticipant.builder().id(UUID.randomUUID()).game(game)
+                .user(teamA.getLeader()).side(Side.A).status(GameParticipant.Status.PAID).build();
+        GameParticipant invited = GameParticipant.builder().id(UUID.randomUUID()).game(game)
+                .user(teamA.getLeader()).status(GameParticipant.Status.JOINED).build();
+        when(participantRepository.findByGameId(GAME_ID)).thenReturn(List.of(leaverB, stayerA, invited));
+
+        service.cancelByLeader(game, LEADER_B_ID);
+
+        // Their chat access and their place in the game go with their team.
+        assertThat(leaverB.getStatus()).isEqualTo(GameParticipant.Status.CANCELLED);
+        assertThat(stayerA.getStatus()).isEqualTo(GameParticipant.Status.PAID);
+        assertThat(invited.getStatus()).isEqualTo(GameParticipant.Status.JOINED);
+    }
+
+    @Test
     void eitherLeaderCanCancel() {
         Game game = confirmedGame(Duration.ofDays(2));
 
@@ -222,13 +246,47 @@ class TeamGameConfirmedCancelTest {
     }
 
     @Test
-    void cancellingAfterKickOffRefundsNothingAndEndsTheGame() {
+    void aGameThatHasAlreadyStartedCannotBeCancelled() {
         Game game = confirmedGame(Duration.ofHours(-1));
+
+        // The pitch was used. Cancelling would reverse a played booking and
+        // refund the opponent for a game they actually got.
+        assertThatThrownBy(() -> service.cancelByLeader(game, LEADER_B_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("already started");
+
+        assertThat(game.getStatus()).isEqualTo("confirmed");
+        assertThat(booking.getStatus()).isEqualTo("confirmed");
+        verify(paymentService, never()).giveBackAllTeamPayments(any(), anyString());
+        verify(paymentService, never()).keepAllTeamPayments(any());
+    }
+
+    @Test
+    void aWaitingGameThatHasAlreadyStartedCannotBeCancelledEither() {
+        Game game = confirmedGame(Duration.ofHours(-1));
+        game.setStatus("open");
+
+        assertThatThrownBy(() -> service.cancelByLeader(game, LEADER_B_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("already started");
+    }
+
+    @Test
+    void thePreviewIsZeroOnceTheGameHasStarted() {
+        Game game = confirmedGame(Duration.ofHours(-1));
+        when(paymentService.refundableTeamTotal(any())).thenReturn(5_000_000L);
+
+        assertThat(service.refundIfCancelledNow(game, sideB, OffsetDateTime.now(ZoneOffset.UTC))).isZero();
+    }
+
+    @Test
+    void cancellingJustBeforeKickOffEndsTheGameAndRefundsTheRemainingTeam() {
+        Game game = confirmedGame(Duration.ofMinutes(30));
 
         service.cancelByLeader(game, LEADER_B_ID);
 
         verify(paymentService).keepAllTeamPayments(sideB.getId());
-        verify(paymentService, never()).giveBackAllTeamPayments(eq(sideB.getId()), anyString());
+        verify(paymentService).giveBackAllTeamPayments(eq(sideA.getId()), anyString());
         assertThat(game.getStatus()).isEqualTo("cancelled_not_filled");
     }
 

@@ -209,6 +209,36 @@ class TeamGamePaymentTest {
     }
 
     @Test
+    void aRefundRowStaysAttachedToTheTeamThatPaid() {
+        Payment captured = heldPayment();
+        captured.setStatus(Payment.Status.CAPTURED);
+        when(paymentProvider.refund("txn-hold-a")).thenReturn(
+                new ProviderTransaction("txn-hold-a", ProviderTransactionStatus.REFUNDED));
+
+        Payment refund = service.giveBackInFull(captured, "Game cancelled");
+
+        // A team game's money hangs off (game, team); a refund row with no
+        // team would silently drop out of that team's ledger.
+        assertThat(refund.getGameTeam()).isSameAs(gameTeam);
+        assertThat(refund.getGame()).isSameAs(gameTeam.getGame());
+    }
+
+    @Test
+    void aHoldThatTheProviderHasAlreadySettledIsStillMarkedGivenBack() {
+        Payment held = heldPayment();
+        org.mockito.Mockito.doThrow(new uz.minipolya.minipolya_backend.exception.BadRequestException(
+                        "Only a held transaction can be RELEASED, not one that is RELEASED"))
+                .when(paymentProvider).release("txn-hold-a");
+
+        // The hold is already gone at the provider — our row was just stale.
+        // Refusing to move on would wedge the timeout job on this game forever.
+        Payment result = service.giveBackInFull(held, "Game cancelled");
+
+        assertThat(result).isNull();
+        assertThat(held.getStatus()).isEqualTo(Payment.Status.RELEASED);
+    }
+
+    @Test
     void givingBackAFailedPaymentDoesNothing() {
         Payment failed = heldPayment();
         failed.setStatus(Payment.Status.FAILED);

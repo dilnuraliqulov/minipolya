@@ -281,7 +281,15 @@ public class PaymentService {
     @Transactional
     public Payment giveBackInFull(Payment original, String reason) {
         if (original.getStatus() == Payment.Status.HELD) {
-            paymentProvider.release(original.getProviderTxnId());
+            try {
+                paymentProvider.release(original.getProviderTxnId());
+            } catch (RuntimeException ex) {
+                // The hold is already settled at the provider and our row was
+                // stale. Record the truth and move on: refusing to would wedge
+                // every later cancellation and the timeout job on this game.
+                log.error("Hold {} could not be released ({}); marking it released anyway",
+                        original.getProviderTxnId(), ex.toString());
+            }
             original.setStatus(Payment.Status.RELEASED);
             paymentRepository.save(original);
             auditService.log(original.getUser() == null ? null : original.getUser().getId(),
@@ -463,6 +471,8 @@ public class PaymentService {
         Payment refund = paymentRepository.save(Payment.builder()
                 .booking(original.getBooking())
                 .game(original.getGame())
+                // Carried over so a team game's refund stays in that team's ledger.
+                .gameTeam(original.getGameTeam())
                 .user(original.getUser())
                 .amount(-Math.abs(original.getAmount()))
                 .ownerAmount(-Math.abs(original.getOwnerAmount()))

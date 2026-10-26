@@ -305,9 +305,11 @@ public class BookingService {
         // whatever the window says. A game booking holds none of its teams'
         // money — that hangs off the game — so the game refunds them instead.
         applyCancellation(booking, "cancelled_by_owner", reason);
-        long refundAmount = isGameBooking(booking)
-                        && gameService.cancelGameForBooking(booking.getGameId(), cancelReasonOf(reason))
-                ? 0L
+        Long refundedByGame = isGameBooking(booking)
+                ? gameService.cancelGameForBooking(booking.getGameId(), cancelReasonOf(reason))
+                : null;
+        long refundAmount = refundedByGame != null
+                ? refundedByGame
                 : paymentService.refundAllCardPayments(booking.getId(), reason);
 
         if (booking.getUser() != null) {

@@ -484,15 +484,17 @@ class BookingServiceTest {
                 .source("game").gameId(gameId).price(80_000L).startsAt(inHours(48)).build();
         when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
-        when(gameService.cancelGameForBooking(eq(gameId), anyString())).thenReturn(true);
+        when(gameService.cancelGameForBooking(eq(gameId), anyString())).thenReturn(120_000L);
 
-        service.cancelByOwner(OWNER_ID, BOOKING_ID, "pitch flooded");
+        BookingResponse resp = service.cancelByOwner(OWNER_ID, BOOKING_ID, "pitch flooded");
 
         // A team game's money hangs off game_teams; refunding the booking's own
         // payments would hand back nothing and hide the real refund.
         verify(gameService).cancelGameForBooking(eq(gameId), anyString());
         verify(paymentService, never()).refundAllCardPayments(eq(BOOKING_ID), anyString());
         assertThat(booking.getStatus()).isEqualTo("cancelled_by_owner");
+        // The owner has to be told what the teams actually got back, not 0.
+        assertThat(resp.getRefundAmount()).isEqualTo(120_000L);
     }
 
     @Test

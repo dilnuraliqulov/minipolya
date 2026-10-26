@@ -291,7 +291,7 @@ class AdminServiceTest {
         when(bookingRepository.findByStadiumIdAndStartsAtBetween(eq(STADIUM_ID), any(), any()))
                 .thenReturn(List.of(gameBooking));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(gameService.cancelGameForBooking(eq(gameId), anyString())).thenReturn(true);
+        when(gameService.cancelGameForBooking(eq(gameId), anyString())).thenReturn(80_000L);
 
         service.updateStadiumStatus(STADIUM_ID,
                 AdminUpdateStadiumStatusRequest.builder().status("blocked").reason("fraud").build(), ADMIN_ID);

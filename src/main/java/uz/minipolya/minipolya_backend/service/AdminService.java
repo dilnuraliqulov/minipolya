@@ -260,9 +260,10 @@ public class AdminService {
             // owner rule: every card payment back in full, whatever the window.
             // A game booking holds none of its teams' money, so the game gives
             // that back instead.
-            boolean refundedByGame = "game".equals(booking.getSource()) && booking.getGameId() != null
-                    && gameService.cancelGameForBooking(booking.getGameId(), cancelReason);
-            if (!refundedByGame) {
+            Long refundedByGame = "game".equals(booking.getSource()) && booking.getGameId() != null
+                    ? gameService.cancelGameForBooking(booking.getGameId(), cancelReason)
+                    : null;
+            if (refundedByGame == null) {
                 paymentService.refundAllCardPayments(booking.getId(), cancelReason);
             }
             if (booking.getUser() != null) {
