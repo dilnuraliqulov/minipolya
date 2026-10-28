@@ -42,4 +42,13 @@ class ApiResponseTest {
 
         assertThat(json).isEqualTo("{\"success\":true,\"data\":null,\"message\":\"Member removed\"}");
     }
+
+    @Test
+    void aCodedErrorAddsTheCodeKey() {
+        String json = objectMapper.writeValueAsString(
+                ApiResponse.error("INVALID_CREDENTIALS", "Login yoki parol noto'g'ri", null));
+
+        assertThat(json).isEqualTo("{\"success\":false,\"data\":null,"
+                + "\"message\":\"Login yoki parol noto'g'ri\",\"code\":\"INVALID_CREDENTIALS\"}");
+    }
 }
