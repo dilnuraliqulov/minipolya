@@ -16,6 +16,7 @@ public class AppProperties {
     private Booking booking = new Booking();
     private Game game = new Game();
     private Payments payments = new Payments();
+    private AdminLogin adminLogin = new AdminLogin();
 
     @Getter
     @Setter
@@ -60,5 +61,17 @@ public class AppProperties {
          * the real ATMOS client will register itself under its own value.
          */
         private String provider = "fake";
+    }
+
+    @Getter
+    @Setter
+    public static class AdminLogin {
+        /** Wrong passwords in a row that lock an admin account. */
+        private int maxFailedAttempts = 5;
+        /** How long a locked account stays locked. */
+        private int lockMinutes = 15;
+        /** Sign-in attempts one IP address may make per window, right or wrong. */
+        private int maxAttemptsPerIp = 20;
+        private int ipWindowMinutes = 15;
     }
 }

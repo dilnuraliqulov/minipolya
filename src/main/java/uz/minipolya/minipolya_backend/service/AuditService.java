@@ -30,6 +30,11 @@ public class AuditService {
     private final AuditLogMapper auditLogMapper;
 
     public void log(UUID userId, String action, String entityType, UUID entityId, String details) {
+        log(userId, action, entityType, entityId, details, null);
+    }
+
+    public void log(UUID userId, String action, String entityType, UUID entityId, String details,
+                    String ipAddress) {
         try {
             User user = userId == null ? null : userRepository.getReferenceById(userId);
             auditLogRepository.save(AuditLog.builder()
@@ -38,6 +43,7 @@ public class AuditService {
                     .entityType(entityType)
                     .entityId(entityId)
                     .details(details)
+                    .ipAddress(ipAddress)
                     .build());
         } catch (Exception ex) {
             log.error("Audit log failed for action {} on {} {}: {}", action, entityType, entityId, ex.toString());
