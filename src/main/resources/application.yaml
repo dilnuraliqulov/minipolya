@@ -47,3 +47,17 @@ app:
     # `fake` wires up FakePaymentProvider, which refuses to start under the prod
     # profile. The real ATMOS client replaces this once its API docs land.
     provider: ${PAYMENTS_PROVIDER:fake}
+    # The longest a team game's hold may last (30 days); a game needing longer cannot be created.
+    hold-max-minutes: 43200
+  # The real ATMOS client, active only under the "atmos" profile (it then refuses to start
+  # unless every value except the two OFD codes is set). Never commit real values.
+  atmos:
+    base-url: ${ATMOS_BASE_URL:}
+    consumer-key: ${ATMOS_CONSUMER_KEY:}
+    consumer-secret: ${ATMOS_CONSUMER_SECRET:}
+    store-id: ${ATMOS_STORE_ID:}
+    platform-recipient-id: ${ATMOS_PLATFORM_RECIPIENT_ID:}
+    # Fiscal receipt (OFD) IKPU codes: receipts are sent only when both are set.
+    ofd-code-rental: ${ATMOS_OFD_CODE_RENTAL:}
+    ofd-code-service: ${ATMOS_OFD_CODE_SERVICE:}
+    timeout-seconds: 30

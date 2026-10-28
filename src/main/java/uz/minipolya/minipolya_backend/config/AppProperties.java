@@ -17,6 +17,7 @@ public class AppProperties {
     private Game game = new Game();
     private Payments payments = new Payments();
     private AdminLogin adminLogin = new AdminLogin();
+    private Atmos atmos = new Atmos();
 
     @Getter
     @Setter
@@ -67,6 +68,38 @@ public class AppProperties {
          * A game whose hold would need longer cannot be created.
          */
         private int holdMaxMinutes = 43_200;
+    }
+
+    /**
+     * The ATMOS client, read from the environment (see .env.example). Only used under the
+     * {@code atmos} profile, where AtmosPaymentProvider refuses to start unless every
+     * required value is set.
+     */
+    @Getter
+    @Setter
+    public static class Atmos {
+        /** ATMOS_BASE_URL, e.g. https://apigw.atmos.uz */
+        private String baseUrl;
+        /** ATMOS_CONSUMER_KEY */
+        private String consumerKey;
+        /** ATMOS_CONSUMER_SECRET */
+        private String consumerSecret;
+        /** ATMOS_STORE_ID: our merchant store, used to pre-apply, apply and look up payments. */
+        private String storeId;
+        /** ATMOS_PLATFORM_RECIPIENT_ID: where the platform's split of every payment goes. */
+        private String platformRecipientId;
+        /** ATMOS_OFD_CODE_RENTAL (optional): IKPU code for the pitch-rental receipt line. */
+        private String ofdCodeRental;
+        /** ATMOS_OFD_CODE_SERVICE (optional): IKPU code for the platform-service receipt line. */
+        private String ofdCodeService;
+        /** How long to wait for ATMOS before treating a call as timed out. */
+        private int timeoutSeconds = 30;
+
+        /** Never render the credentials. */
+        @Override
+        public String toString() {
+            return "Atmos(baseUrl=" + baseUrl + ", storeId=" + storeId + ")";
+        }
     }
 
     @Getter

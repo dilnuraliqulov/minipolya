@@ -3,6 +3,7 @@ package uz.minipolya.minipolya_backend.provider;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Profile;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
@@ -41,6 +42,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Component
 @ConditionalOnProperty(name = "app.payments.provider", havingValue = "fake")
+@Profile("!atmos")
 public class FakePaymentProvider implements PaymentProvider {
 
     /** The only SMS code this fake accepts. */
