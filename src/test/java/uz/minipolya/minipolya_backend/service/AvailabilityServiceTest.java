@@ -73,7 +73,7 @@ class AvailabilityServiceTest {
     private AvailabilityService newServiceWithClock(Clock clock) {
         return new AvailabilityService(stadiumRepository, bookingRepository, pricingRuleRepository,
                 gameRepository, participantRepository, new PriceCalculator(), promotionService,
-                closureService, new AppProperties(), clock);
+                closureService, new AppProperties(), clock, CardPricing.withDefaults());
     }
 
     /** A clock fixed at the given Tashkent-local date and time. */
@@ -221,8 +221,10 @@ class AvailabilityServiceTest {
 
         AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
-        assertThat(slotAt(response, LocalTime.of(18, 0)).getPricePerHour()).isEqualTo(80_000);
-        assertThat(slotAt(response, LocalTime.of(8, 0)).getPricePerHour()).isEqualTo(50_000);
+        // Slots show what the player pays by card.
+        assertThat(slotAt(response, LocalTime.of(18, 0)).getPricePerHour()).isEqualTo(TestPrices.card(80_000));
+        assertThat(slotAt(response, LocalTime.of(8, 0)).getPricePerHour()).isEqualTo(TestPrices.card(50_000));
+        assertThat(slotAt(response, LocalTime.of(18, 0)).getCardFee()).isEqualTo(TestPrices.card(80_000) - 80_000);
     }
 
     @Test
@@ -231,7 +233,8 @@ class AvailabilityServiceTest {
 
         AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
-        assertThat(slotAt(response, LocalTime.of(8, 0)).getPricePerHour()).isEqualTo(50_000);
+        assertThat(slotAt(response, LocalTime.of(8, 0)).getPricePerHour()).isEqualTo(TestPrices.card(50_000));
+        assertThat(slotAt(response, LocalTime.of(8, 0)).getPrice()).isEqualTo(TestPrices.card(50_000));
     }
 
     @Test
@@ -244,8 +247,9 @@ class AvailabilityServiceTest {
 
         TimeSlot slot = slotAt(response, LocalTime.of(8, 0));
         assertThat(slot.getDiscountPercent()).isEqualTo(20);
-        assertThat(slot.getOriginalPrice()).isEqualTo(50_000);
-        assertThat(slot.getPricePerHour()).isEqualTo(40_000);
+        // Both grossed up on their own: the discount applies to the owner's net price.
+        assertThat(slot.getOriginalPrice()).isEqualTo(TestPrices.card(50_000));
+        assertThat(slot.getPricePerHour()).isEqualTo(TestPrices.card(40_000));
         assertThat(slot.getPromotionName()).isEqualTo("Happy Hour");
     }
 

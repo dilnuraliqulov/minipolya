@@ -89,6 +89,27 @@ public class CardPricing {
         return split(game.getTotalPrice() / players, fee);
     }
 
+    /** A net price and what it costs by card, for responses. */
+    public record Quote(long price, long netPrice, long cardFee) {
+    }
+
+    /**
+     * The largest net whose card price is still at most {@code cardPrice} — to filter by
+     * what players see. playerAmount(n) ≤ P ⟺ grossUp(n) ≤ M where M = P rounded down to
+     * a step ⟺ n ≤ floor(M · (10000 − bps) / 10000).
+     */
+    public long maxNetFor(long cardPrice) {
+        PlatformSettings s = settings.get();
+        long m = Math.floorDiv(cardPrice, s.getPaymentRoundingStep()) * s.getPaymentRoundingStep();
+        return Math.floorDiv(Math.multiplyExact(m, PriceCalculator.BPS_SCALE - s.getCardFeeBps()),
+                PriceCalculator.BPS_SCALE);
+    }
+
+    public Quote quote(long net) {
+        long card = playerAmount(net);
+        return new Quote(card, net, card - net);
+    }
+
     /** The platform's share of a booking's net, by the booking commission in force. */
     public long bookingCommission(long net) {
         return net * settings.get().getBookingCommissionPercent() / 100;

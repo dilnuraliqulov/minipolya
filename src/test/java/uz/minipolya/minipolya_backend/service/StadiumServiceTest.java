@@ -57,6 +57,9 @@ class StadiumServiceTest {
     @Mock
     private EntityManager entityManager;
 
+    @org.mockito.Spy
+    private CardPricing cardPricing = CardPricing.withDefaults();
+
     @InjectMocks
     private StadiumService stadiumService;
 
@@ -245,5 +248,33 @@ class StadiumServiceTest {
         stadiumService.update(OWNER_ID, STADIUM_ID, UpdateStadiumRequest.builder().build());
 
         verify(stadiumRepository).saveAndFlush(existing);
+    }
+
+    // ---- Card prices ----
+
+    @Test
+    void playersSeeTheCardPriceAndOwnersTheirNetPrice() {
+        User owner = User.builder().id(OWNER_ID).name("Owner").build();
+        Stadium stadium = Stadium.builder().id(STADIUM_ID).owner(owner).status("approved").isActive(true)
+                .pricePerHour(20_000_000L).minBookingAmount(5_000_000L).build();
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(stadiumMapper.toDetailResponse(any(Stadium.class))).thenAnswer(inv -> StadiumDetailResponse.builder()
+                .pricePerHour(20_000_000L).minBookingAmount(5_000_000L).build());
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.saveAndFlush(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        StadiumDetailResponse player = stadiumService.getPublicDetail(STADIUM_ID, null);
+        StadiumDetailResponse forOwner = stadiumService.update(OWNER_ID, STADIUM_ID, new UpdateStadiumRequest());
+
+        assertThat(player.getPricePerHour()).isEqualTo(20_310_000L);
+        assertThat(player.getPrice()).isEqualTo(20_310_000L);
+        assertThat(player.getCardFee()).isEqualTo(310_000L);
+        assertThat(player.getNetPrice()).isNull();
+        assertThat(player.getMinBookingAmount()).isEqualTo(TestPrices.card(5_000_000L));
+
+        assertThat(forOwner.getPricePerHour()).isEqualTo(20_000_000L);
+        assertThat(forOwner.getNetPrice()).isEqualTo(20_000_000L);
+        assertThat(forOwner.getPrice()).isEqualTo(20_310_000L);
+        assertThat(forOwner.getMinBookingAmount()).isEqualTo(5_000_000L);
     }
 }

@@ -43,7 +43,8 @@ class PricingServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PricingService(ruleRepository, stadiumRepository, mapper, auditService);
+        service = new PricingService(ruleRepository, stadiumRepository, mapper, auditService,
+                CardPricing.withDefaults());
         stadium = Stadium.builder().id(STADIUM_ID).name("Arena")
                 .owner(User.builder().id(OWNER_ID).name("Owner").build()).build();
         when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));

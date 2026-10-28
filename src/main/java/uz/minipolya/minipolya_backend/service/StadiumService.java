@@ -50,6 +50,7 @@ public class StadiumService {
     private final FavoriteRepository favoriteRepository;
     private final AuditService auditService;
     private final EntityManager entityManager;
+    private final CardPricing cardPricing;
 
     // ---- Owner operations ----
 
@@ -77,7 +78,7 @@ public class StadiumService {
                 .entity(AuditEntityType.STADIUM, saved.getId(), AuditLabels.stadium(saved))
                 .diff(Map.of(), auditSnapshot(saved)));
         log.info("Stadium created: id={} ownerId={} status={}", saved.getId(), ownerId, saved.getStatus());
-        return stadiumMapper.toDetailResponse(saved);
+        return ownerPrices(stadiumMapper.toDetailResponse(saved));
     }
 
     @Transactional
@@ -116,13 +117,14 @@ public class StadiumService {
             auditService.record(audit);
         }
         log.info("Stadium updated: id={} ownerId={}", saved.getId(), ownerId);
-        return stadiumMapper.toDetailResponse(saved);
+        return ownerPrices(stadiumMapper.toDetailResponse(saved));
     }
 
     @Transactional(readOnly = true)
     public List<StadiumResponse> listOwnerStadiums(UUID ownerId) {
         return stadiumRepository.findByOwnerId(ownerId).stream()
                 .map(this::toResponseWithRatings)
+                .map(this::ownerPrices)
                 .toList();
     }
 
@@ -132,8 +134,10 @@ public class StadiumService {
     public PageResponse<StadiumResponse> searchPublic(String q, String format, Long maxPrice, int page, int size) {
         Pageable pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "createdAt"));
         return PageResponse.from(
-                stadiumRepository.search(blankToNull(q), blankToNull(format), maxPrice, pageable),
-                this::toResponseWithRatings);
+                // Players filter by the card price they see; the table holds net prices.
+                stadiumRepository.search(blankToNull(q), blankToNull(format),
+                        maxPrice == null ? null : cardPricing.maxNetFor(maxPrice), pageable),
+                stadium -> publicPrices(toResponseWithRatings(stadium)));
     }
 
     /** @param userId the viewer, or null for an anonymous request (no favorite flag). */
@@ -142,7 +146,7 @@ public class StadiumService {
         Stadium stadium = stadiumRepository.findByIdAndStatus(id, STATUS_APPROVED)
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
-        StadiumDetailResponse response = stadiumMapper.toDetailResponse(stadium);
+        StadiumDetailResponse response = publicPrices(stadiumMapper.toDetailResponse(stadium));
         if (userId != null) {
             response.setFavorited(favoriteRepository.existsByUserIdAndStadiumId(userId, id));
         }
@@ -150,6 +154,51 @@ public class StadiumService {
     }
 
     // ---- Helpers ----
+
+    /** Players see what they pay by card: the hourly price and the deposit both grossed up. */
+    private StadiumDetailResponse publicPrices(StadiumDetailResponse r) {
+        if (r != null && r.getPricePerHour() != null) {
+            CardPricing.Quote q = cardPricing.quote(r.getPricePerHour());
+            r.setPricePerHour(q.price());
+            r.setPrice(q.price());
+            r.setCardFee(q.cardFee());
+        }
+        if (r != null && r.getMinBookingAmount() != null) {
+            r.setMinBookingAmount(cardPricing.playerAmount(r.getMinBookingAmount()));
+        }
+        return r;
+    }
+
+    private StadiumResponse publicPrices(StadiumResponse r) {
+        if (r != null && r.getPricePerHour() != null) {
+            CardPricing.Quote q = cardPricing.quote(r.getPricePerHour());
+            r.setPricePerHour(q.price());
+            r.setPrice(q.price());
+            r.setCardFee(q.cardFee());
+        }
+        return r;
+    }
+
+    /** The owner keeps seeing and editing their net price; the card price is alongside. */
+    private StadiumDetailResponse ownerPrices(StadiumDetailResponse r) {
+        if (r != null && r.getPricePerHour() != null) {
+            CardPricing.Quote q = cardPricing.quote(r.getPricePerHour());
+            r.setPrice(q.price());
+            r.setNetPrice(q.netPrice());
+            r.setCardFee(q.cardFee());
+        }
+        return r;
+    }
+
+    private StadiumResponse ownerPrices(StadiumResponse r) {
+        if (r != null && r.getPricePerHour() != null) {
+            CardPricing.Quote q = cardPricing.quote(r.getPricePerHour());
+            r.setPrice(q.price());
+            r.setNetPrice(q.netPrice());
+            r.setCardFee(q.cardFee());
+        }
+        return r;
+    }
 
     /**
      * The owner-editable fields an audit entry compares, prices and the minimum booking

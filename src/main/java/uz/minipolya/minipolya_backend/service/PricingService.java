@@ -37,13 +37,14 @@ public class PricingService {
     private final StadiumRepository stadiumRepository;
     private final PricingRuleMapper pricingRuleMapper;
     private final AuditService auditService;
+    private final CardPricing cardPricing;
 
     // ---- Owner operations ----
 
     @Transactional(readOnly = true)
     public List<PricingRuleResponse> listForOwner(UUID ownerId, UUID stadiumId) {
         requireOwnedStadium(ownerId, stadiumId);
-        return mapActive(stadiumId);
+        return mapActive(stadiumId).stream().map(this::ownerPrices).toList();
     }
 
     @Transactional
@@ -61,7 +62,7 @@ public class PricingService {
                 .diff(Map.of(), auditSnapshot(saved)));
         log.info("Pricing rule created: id={} stadiumId={} day={} {}-{}",
                 saved.getId(), stadiumId, saved.getDayOfWeek(), saved.getStartTime(), saved.getEndTime());
-        return pricingRuleMapper.toResponse(saved);
+        return ownerPrices(pricingRuleMapper.toResponse(saved));
     }
 
     @Transactional
@@ -83,7 +84,7 @@ public class PricingService {
             auditService.record(audit);
         }
         log.info("Pricing rule updated: id={} stadiumId={}", saved.getId(), stadiumId);
-        return pricingRuleMapper.toResponse(saved);
+        return ownerPrices(pricingRuleMapper.toResponse(saved));
     }
 
     @Transactional
@@ -107,10 +108,32 @@ public class PricingService {
         stadiumRepository.findByIdAndStatus(stadiumId, STATUS_APPROVED)
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
-        return mapActive(stadiumId);
+        return mapActive(stadiumId).stream().map(this::publicPrices).toList();
     }
 
     // ---- Helpers ----
+
+    /** Players see the hour's card price. */
+    private PricingRuleResponse publicPrices(PricingRuleResponse r) {
+        if (r != null && r.getPricePerHour() != null) {
+            CardPricing.Quote q = cardPricing.quote(r.getPricePerHour());
+            r.setPricePerHour(q.price());
+            r.setPrice(q.price());
+            r.setCardFee(q.cardFee());
+        }
+        return r;
+    }
+
+    /** The owner keeps their net price; the card price is alongside. */
+    private PricingRuleResponse ownerPrices(PricingRuleResponse r) {
+        if (r != null && r.getPricePerHour() != null) {
+            CardPricing.Quote q = cardPricing.quote(r.getPricePerHour());
+            r.setPrice(q.price());
+            r.setNetPrice(q.netPrice());
+            r.setCardFee(q.cardFee());
+        }
+        return r;
+    }
 
     /** A rule's fields for the audit log; the price in tiyin. */
     private static Map<String, Object> auditSnapshot(PricingRule rule) {
