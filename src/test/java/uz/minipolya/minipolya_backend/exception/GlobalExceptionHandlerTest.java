@@ -3,7 +3,10 @@ package uz.minipolya.minipolya_backend.exception;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 
 import java.util.Map;
@@ -36,6 +39,24 @@ class GlobalExceptionHandlerTest {
 
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().getMessage()).doesNotContain("jackson");
+    }
+
+    @Test
+    void anUnknownPathIs404NotA500() {
+        ResponseEntity<ApiResponse<Void>> response =
+                handler.handleNoResource(new NoResourceFoundException(HttpMethod.GET, "/api/nope", "api/nope"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getMessage()).isEqualTo("Not found");
+    }
+
+    @Test
+    void anUnsupportedMethodIs405NotA500() {
+        ResponseEntity<ApiResponse<Void>> response =
+                handler.handleMethodNotSupported(new HttpRequestMethodNotSupportedException("DELETE"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
     }
 
     @Test
