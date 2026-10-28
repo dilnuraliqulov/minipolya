@@ -66,6 +66,49 @@ public class PriceCalculator {
         return !slotStart.isBefore(rule.getStartTime()) && slotStart.isBefore(rule.getEndTime());
     }
 
+    // ---- Card fee ----
+
+    /** Basis points in 100%. */
+    public static final int BPS_SCALE = 10_000;
+
+    /**
+     * What a player pays by card for a net amount: grossed up by the card fee so that
+     * after the provider takes {@code cardFeeBps} the recipients still get {@code net},
+     * then rounded up to the next multiple of {@code roundingStep}. Integer math only.
+     *
+     * <pre>playerAmount(net) = roundUp( ceil(net * 10000 / (10000 - bps)), step )</pre>
+     *
+     * For example 20 000 000 tiyin (200 000 so'm) at 150 bps, step 10 000 →
+     * ceil(20 304 568.5) = 20 304 569 → 20 310 000 (203 100 so'm).
+     *
+     * @param net          tiyin, not negative
+     * @param cardFeeBps   0..9999 (150 = 1.5%)
+     * @param roundingStep tiyin, at least 1 (1 = no rounding)
+     * @throws ArithmeticException rather than overflow silently (needs net above ~9×10^14 tiyin)
+     */
+    public static long playerAmount(long net, int cardFeeBps, long roundingStep) {
+        if (roundingStep < 1) {
+            throw new IllegalArgumentException("roundingStep must be at least 1");
+        }
+        return roundUp(grossUp(net, cardFeeBps), roundingStep);
+    }
+
+    /** {@code ceil(net * 10000 / (10000 - bps))}: the least amount that still leaves {@code net} after the fee. */
+    public static long grossUp(long net, int cardFeeBps) {
+        if (net < 0) {
+            throw new IllegalArgumentException("net must not be negative");
+        }
+        if (cardFeeBps < 0 || cardFeeBps >= BPS_SCALE) {
+            throw new IllegalArgumentException("cardFeeBps must be 0..9999");
+        }
+        return Math.ceilDiv(Math.multiplyExact(net, BPS_SCALE), BPS_SCALE - cardFeeBps);
+    }
+
+    /** The smallest multiple of {@code step} that is at least {@code amount}. */
+    public static long roundUp(long amount, long step) {
+        return Math.multiplyExact(Math.ceilDiv(amount, step), step);
+    }
+
     /** Converts a date's weekday to the app convention: 0 = Monday .. 6 = Sunday. */
     public int toDayOfWeek(LocalDate date) {
         return date.getDayOfWeek().getValue() - 1;
