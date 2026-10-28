@@ -73,34 +73,6 @@ public class AuditService {
         }
     }
 
-    /** Legacy unstructured entry; kept only until every caller uses {@link #record}. */
-    public void log(UUID userId, String action, String entityType, UUID entityId, String details) {
-        log(userId, action, entityType, entityId, details, null);
-    }
-
-    /** Legacy unstructured entry; kept only until every caller uses {@link #record}. */
-    public void log(UUID userId, String action, String entityType, UUID entityId, String details,
-                    String ipAddress) {
-        try {
-            User user = userId == null ? null : userRepository.getReferenceById(userId);
-            auditLogRepository.save(AuditLog.builder()
-                    .user(user)
-                    .action(action)
-                    .entityType(entityType)
-                    .entityId(entityId)
-                    .details(details)
-                    .ipAddress(ipAddress)
-                    .build());
-        } catch (Exception ex) {
-            log.error("Audit log failed for action {} on {} {}: {}", action, entityType, entityId, ex.toString());
-        }
-    }
-
-    /** Legacy unstructured entry; kept only until every caller uses {@link #record}. */
-    public void log(UUID userId, String action, String entityType, UUID entityId) {
-        log(userId, action, entityType, entityId, null);
-    }
-
     // ---- Reading ----
 
     /**
