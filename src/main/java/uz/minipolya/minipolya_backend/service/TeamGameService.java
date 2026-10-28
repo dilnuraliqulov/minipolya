@@ -191,13 +191,19 @@ public class TeamGameService {
         } else {
             game.setTeamB(teamB);
         }
+        String oldStatus = game.getStatus();
         game.setBookingId(booking.getId());
         game.setStatus(STATUS_CONFIRMED);
         gameRepository.save(game);
 
         notifyConfirmed(game);
-        auditService.log(leader.getId(), "GAME_CONFIRMED", "game", game.getId(),
-                "{\"teamBId\":\"" + teamB.getId() + "\",\"bookingId\":\"" + booking.getId() + "\"}");
+        // The leader's own act is GAME_JOINED (GameService); the confirmation it set off is SYSTEM.
+        auditService.record(AuditEntry.system(AuditAction.GAME_CONFIRMED)
+                .entity(AuditEntityType.GAME, game.getId(), AuditLabels.game(game))
+                .change("status", oldStatus, game.getStatus())
+                .created("team" + freeSide.getValue().toUpperCase(), teamB.getName())
+                .created("bookingId", booking.getId())
+                .reason("An opponent joined"));
         log.info("Team game confirmed: gameId={} teamBId={} bookingId={}",
                 game.getId(), teamB.getId(), booking.getId());
         return joining;
@@ -245,7 +251,7 @@ public class TeamGameService {
             if (waiting) {
                 // The timeout job would have refunded this team within the
                 // minute; racing it by hand must not cost them their money.
-                endWaitingGame(game, "cancelled_not_filled", "No opponent was found in time");
+                endWaitingGame(game, "cancelled_not_filled", "No opponent was found in time", userId);
                 return;
             }
             // Nobody can replace them in time, so the game is over: the leaver
@@ -253,9 +259,7 @@ public class TeamGameService {
             paymentService.keepAllTeamPayments(leaving.getId());
             releaseTeam(leaving, now);
             endWaitingGame(game, "cancelled_not_filled",
-                    "The opponent cancelled too close to kick-off");
-            auditService.log(userId, "GAME_CANCELLED", "game", game.getId(),
-                    "{\"reason\":\"opponent_left_past_deadline\",\"refunded\":false}");
+                    "The opponent cancelled too close to kick-off", userId);
             log.info("Confirmed team game ended: gameId={} leaverForfeited=true", game.getId());
             return;
         }
@@ -269,11 +273,14 @@ public class TeamGameService {
         releaseTeam(leaving, now);
 
         if (waiting) {
+            String oldStatus = game.getStatus();
             game.setStatus("cancelled_by_creator");
             gameRepository.save(game);
             notifyCancelled(game, "Игра отменена создателем.");
-            auditService.log(userId, "GAME_CANCELLED", "game", game.getId(),
-                    "{\"reason\":\"cancelled_by_creator\",\"refunded\":" + refundable + "}");
+            auditService.record(AuditEntry.player(userId, AuditAction.GAME_CANCELLED)
+                    .entity(AuditEntityType.GAME, game.getId(), AuditLabels.game(game))
+                    .change("status", oldStatus, game.getStatus())
+                    .reason(refundOutcome(refundable)));
             log.info("Waiting team game cancelled by its leader: gameId={} refunded={}",
                     game.getId(), refundable);
             return;
@@ -322,10 +329,18 @@ public class TeamGameService {
                 game.getStartsAt(), game.getStadium().getCancellationHours(), now);
     }
 
-    /** Ends a game nobody can play and gives every team still in it everything back. */
+    /** Ends a game nobody can play and gives every team still in it everything back. SYSTEM. */
     @Transactional
     public long endWaitingGame(Game game, String cancelStatus, String reason) {
-        long given = endGame(game, cancelStatus, reason);
+        return endWaitingGame(game, cancelStatus, reason, null);
+    }
+
+    /**
+     * As above, but ended by a leader's own cancellation when {@code cancelledBy} is set:
+     * then it is that player's GAME_CANCELLED, not the system's GAME_AUTO_CANCELLED.
+     */
+    private long endWaitingGame(Game game, String cancelStatus, String reason, UUID cancelledBy) {
+        long given = endGame(game, cancelStatus, reason, cancelledBy);
         notifyCancelled(game, reason);
         log.info("Team game ended: gameId={} status={} reason={} givenBack={}",
                 game.getId(), cancelStatus, reason, given);
@@ -354,10 +369,13 @@ public class TeamGameService {
             throw new BadRequestException("Card payment was declined; the remainder is still owed");
         }
 
+        GameTeam.RemainderStatus statusBefore = team.getRemainderStatus();
         settleRemainder(game, team);
-        auditService.log(userId, "GAME_REMAINDER_PAID", "game", gameId,
-                "{\"side\":\"" + team.getSide().getValue() + "\",\"amount\":"
-                        + team.getRemainderAmount() + ",\"method\":\"card\"}");
+        String side = team.getSide().getValue().toUpperCase();
+        auditService.record(AuditEntry.player(userId, AuditAction.GAME_REMAINDER_PAID)
+                .entity(AuditEntityType.GAME, gameId, AuditLabels.game(game))
+                .change("team" + side + ".remainderStatus", statusBefore, team.getRemainderStatus())
+                .created("team" + side + ".cardAmount", team.getRemainderAmount()));
         log.info("Team remainder paid by card: gameId={} side={} amount={}",
                 gameId, team.getSide().getValue(), team.getRemainderAmount());
         return team;
@@ -522,7 +540,7 @@ public class TeamGameService {
             bookingRepository.delete(booking);
             // endGame gives every team still in the game its money back — the
             // joiner included, since its row is active by now.
-            endGame(game, "cancelled_slot_taken", "The other team's payment could not be settled");
+            endGame(game, "cancelled_slot_taken", "The other team's payment could not be settled", null);
             throw ex;
         }
     }
@@ -551,7 +569,8 @@ public class TeamGameService {
     }
 
     /** Cancels the game and gives every team still in it everything back. */
-    private long endGame(Game game, String status, String reason) {
+    private long endGame(Game game, String status, String reason, UUID cancelledBy) {
+        String oldStatus = game.getStatus();
         game.setStatus(status);
         gameRepository.save(game);
         long given = 0L;
@@ -559,8 +578,13 @@ public class TeamGameService {
             given += paymentService.giveBackAllTeamPayments(entry.getId(), reason);
             releaseTeam(entry, OffsetDateTime.now(ZoneOffset.UTC));
         }
-        auditService.log(null, "GAME_CANCELLED", "game", game.getId(),
-                "{\"reason\":\"" + status + "\",\"givenBack\":" + given + "}");
+        AuditEntry audit = cancelledBy == null
+                ? AuditEntry.system(AuditAction.GAME_AUTO_CANCELLED)
+                : AuditEntry.player(cancelledBy, AuditAction.GAME_CANCELLED);
+        auditService.record(audit
+                .entity(AuditEntityType.GAME, game.getId(), AuditLabels.game(game))
+                .change("status", oldStatus, game.getStatus())
+                .reason(reason));
         return given;
     }
 
@@ -588,6 +612,11 @@ public class TeamGameService {
      * find a replacement, so the game goes back to WAITING rather than ending.
      */
     private void reopenWithRemainingTeam(Game game, GameTeam leaving, UUID userId, boolean refunded) {
+        String oldStatus = game.getStatus();
+        String side = leaving.getSide().getValue().toUpperCase();
+        String leavingTeam = leaving.getSide() == Side.A
+                ? (game.getTeamA() == null ? null : game.getTeamA().getName())
+                : (game.getTeamB() == null ? null : game.getTeamB().getName());
         if (leaving.getSide() == Side.A) {
             game.setTeamA(null);
         } else {
@@ -609,10 +638,17 @@ public class TeamGameService {
         safeNotify(() -> notificationService.notify(leaverId, Notification.Type.GAME_CANCELLED,
                 "Игра отменена", leaverMessage, Notification.ReferenceType.GAME, game.getId()));
 
-        auditService.log(userId, "GAME_OPPONENT_LEFT", "game", game.getId(),
-                "{\"side\":\"" + leaving.getSide().getValue() + "\",\"refunded\":" + refunded + "}");
+        auditService.record(AuditEntry.player(userId, AuditAction.GAME_OPPONENT_LEFT)
+                .entity(AuditEntityType.GAME, game.getId(), AuditLabels.game(game))
+                .change("status", oldStatus, game.getStatus())
+                .change("team" + side, leavingTeam, null)
+                .reason(refundOutcome(refunded)));
         log.info("Team game reopened after a team left: gameId={} side={} refunded={}",
                 game.getId(), leaving.getSide().getValue(), refunded);
+    }
+
+    private static String refundOutcome(boolean refunded) {
+        return refunded ? "Cancelled in time: everything back" : "Cancelled after the deadline: nothing back";
     }
 
     private void notifyOwner(Game game, String message) {

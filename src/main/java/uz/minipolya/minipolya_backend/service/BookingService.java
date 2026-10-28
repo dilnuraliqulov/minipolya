@@ -129,7 +129,13 @@ public class BookingService {
 
         gameService.cancelGamesOnSlot(stadium.getId(), startsAt, endsAt);
 
-        auditService.log(userId, "BOOKING_CREATED", "booking", saved.getId());
+        auditService.record(AuditEntry.player(userId, AuditAction.BOOKING_CREATED)
+                .entity(AuditEntityType.BOOKING, saved.getId(), AuditLabels.booking(saved))
+                .created("status", saved.getStatus())
+                .created("startsAt", saved.getStartsAt())
+                .created("durationHours", saved.getDurationHours())
+                .created("price", saved.getPrice())
+                .created("paymentOption", request.getPaymentOption()));
         log.info("Booking created: id={} stadiumId={} userId={} {}-{} price={} charging={}",
                 saved.getId(), stadium.getId(), userId, startsAt, endsAt, price, amountToCharge);
 
@@ -185,11 +191,17 @@ public class BookingService {
 
         long remainder = booking.getRemainingAmount();
         SavedCard card = savedCardService.requireOwnedCard(userId, cardId);
+        long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
+        Booking.PaymentStatus statusBefore = booking.getPaymentStatus();
         paymentService.chargeForBooking(booking, card, remainder, Payment.PaymentType.REMAINDER);
 
-        auditService.log(userId, "BOOKING_REMAINDER_PAID", "booking", bookingId,
-                "{\"amount\":" + remainder + ",\"paymentStatus\":\""
-                        + booking.getPaymentStatus().getValue() + "\"}");
+        // A declined card changes nothing, and then there is nothing to record.
+        if (booking.getPaymentStatus() != statusBefore) {
+            auditService.record(AuditEntry.player(userId, AuditAction.BOOKING_REMAINDER_PAID)
+                    .entity(AuditEntityType.BOOKING, bookingId, AuditLabels.booking(booking))
+                    .change("paidAmount", paidBefore, booking.getPaidAmount())
+                    .change("paymentStatus", statusBefore, booking.getPaymentStatus()));
+        }
         log.info("Booking remainder charged: id={} userId={} amount={} status={}",
                 bookingId, userId, remainder, booking.getPaymentStatus().getValue());
         return bookingResponseFactory.of(booking);
@@ -286,6 +298,7 @@ public class BookingService {
         // comes back in full; past it the booking is still cancelled, but the
         // player keeps nothing.
         boolean refundable = cancellationPolicy.refundableNow(booking);
+        String oldStatus = booking.getStatus();
 
         applyCancellation(booking, "cancelled_by_user", reason);
         long refundAmount = refundable
@@ -295,8 +308,13 @@ public class BookingService {
         safeNotify(() -> notificationService.notify(userId, Notification.Type.BOOKING_CANCELLED,
                 "Бронь отменена", "Вы отменили бронь в «" + booking.getStadium().getName() + "».",
                 Notification.ReferenceType.BOOKING, booking.getId()));
-        auditService.log(userId, "BOOKING_CANCELLED_BY_USER", "booking", booking.getId(),
-                "{\"refundAmount\":" + refundAmount + ",\"inTime\":" + refundable + "}");
+        // The money itself is recorded by the REFUND_CREATED entries; this says whether any was due.
+        auditService.record(AuditEntry.player(userId, AuditAction.BOOKING_CANCELLED_BY_USER)
+                .entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
+                .change("status", oldStatus, booking.getStatus())
+                .reason(reason != null && !reason.isBlank() ? reason
+                        : refundable ? "Cancelled in time: refunded in full"
+                        : "Cancelled after the deadline: nothing refunded"));
         log.info("Booking cancelled by user: id={} userId={} inTime={} refundAmount={}",
                 bookingId, userId, refundable, refundAmount);
         return withRefund(booking, refundAmount);

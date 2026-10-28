@@ -4,6 +4,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditActorType;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.SavedCard;
@@ -183,7 +188,23 @@ class BookingRemainderTest {
 
         service.payRemainder(USER_ID, BOOKING_ID, CARD_ID);
 
-        verify(auditService).log(eq(USER_ID), eq("BOOKING_REMAINDER_PAID"), eq("booking"), eq(BOOKING_ID),
-                any(String.class));
+        AuditEntry entry = Audited.one(auditService, AuditAction.BOOKING_REMAINDER_PAID);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.PLAYER);
+        assertThat(entry.getActorId()).isEqualTo(USER_ID);
+        assertThat(entry.getEntityId()).isEqualTo(BOOKING_ID);
+        assertThat(entry.getChanges()).containsExactly(
+                AuditChange.of("paidAmount", PAID, booking.getPrice()),
+                AuditChange.of("paymentStatus", "partially_paid", "paid"));
+    }
+
+    @Test
+    void aDeclinedRemainderRecordsNothing() {
+        Booking booking = booking("confirmed", Booking.PaymentStatus.PARTIALLY_PAID, PAID);
+        when(paymentService.chargeForBooking(any(), any(), anyLong(), eq(Payment.PaymentType.REMAINDER)))
+                .thenReturn(Payment.builder().amount(REMAINDER).status(Payment.Status.FAILED).build());
+
+        service.payRemainder(USER_ID, BOOKING_ID, CARD_ID);
+
+        assertThat(Audited.entries(auditService)).isEmpty();
     }
 }
