@@ -173,7 +173,8 @@ db/changelog/
     ├── 017-create-triggers.sql       # set_updated_at() function + triggers
     ├── ...                           # 018–024: duration, blocking, tiyin, settings, cards, payments, cancellation
     ├── 025-game-teams.sql            # game_teams + payments.game_team_id; drops games.creator_share_pct
-    └── 026-opponent-left.sql         # bookings status cancelled_opponent_left + notification game_opponent_left
+    ├── 026-opponent-left.sql         # bookings status cancelled_opponent_left + notification game_opponent_left
+    └── 027-admin-password-login.sql  # pgcrypto + users.username/password_hash/lockout columns; audit_log.entity_id nullable
 ```
 
 ### Adding New Migrations
@@ -590,6 +591,73 @@ To show free slots for a stadium on a given date:
 - Same flow, different payload format
 - Same JWT returned, same user record
 
+### Admin accounts
+
+Platform admins sign in to the admin web panel with a **username and password**,
+not Telegram. They are a handful of people the platform owner creates directly in
+the database. Players and stadium owners keep signing in through Telegram; nothing
+changes for them. All of this lives in `service/AdminAuthService.java`.
+
+- `POST /api/auth/admin/login` with `{ "username", "password" }` (public) returns
+  the same `{ token, user }` as the Telegram sign-in. Only a user with
+  `is_admin = true` **and** a `password_hash` can sign in this way. Usernames
+  match case-insensitively (unique index `uq_users_username_lower`).
+- Wrong username or wrong password → **401 `INVALID_CREDENTIALS`**
+  "Login yoki parol noto'g'ri" — identical in both cases, and an unknown username
+  still runs a BCrypt check against a dummy hash so the response time matches.
+- **5** wrong passwords in a row lock the account for **15 minutes** →
+  **423 `ACCOUNT_LOCKED`** with `data.minutesRemaining`. While locked even the
+  right password is refused. When the lock lifts the counter starts again at 0.
+- One IP may make **20** attempts per **15 minutes**, right or wrong →
+  **429 `TOO_MANY_ATTEMPTS`**. Kept in memory (`LoginRateLimiter`), which is
+  enough for one server. The IP is `request.getRemoteAddr()`: behind a reverse
+  proxy set `server.forward-headers-strategy`, or every admin shares the proxy's IP.
+- A blocked admin → **403 `ACCOUNT_BLOCKED`**, but only once the password is
+  right, so the block tells a guesser nothing.
+- Success resets `failed_login_attempts`, clears `locked_until` and stores
+  `last_login_at`. Successes and failures write `ADMIN_LOGIN_SUCCEEDED` /
+  `ADMIN_LOGIN_FAILED` audit entries with the username and IP.
+- `POST /api/admin/me/password` with `{ "currentPassword", "newPassword" }`:
+  a wrong current password → 400; the new one needs 10+ characters and at most
+  72 bytes (BCrypt ignores the rest). Writes `ADMIN_PASSWORD_CHANGED`.
+- Limits are `app.admin-login.*` (`max-failed-attempts`, `lock-minutes`,
+  `max-attempts-per-ip`, `ip-window-minutes`), defaults 5 / 15 / 20 / 15.
+- Error responses here carry an extra `code` key in the envelope. It appears only
+  when set, so every other response keeps its three keys.
+
+**Passwords are never stored or logged in plain text.** Only the BCrypt hash goes
+into `users.password_hash`; audit entries and log lines carry the username and IP,
+never a password; `AdminLoginRequest` and `ChangePasswordRequest` override
+`toString` to mask them. The SQL below necessarily contains the plain password
+in the statement itself: don't save it in a script file or in `psql` history
+(`\set HISTFILE /dev/null` before running it, or clear the history afterwards),
+and have the admin change it from the panel after the first sign-in.
+
+**Create an admin** (pgcrypto is enabled by changeset 027; `id`, `language` and
+the other flags take their defaults; `telegram_id` and `phone` stay null):
+
+```sql
+INSERT INTO users (username, name, password_hash, is_admin)
+VALUES ('dilnur', 'Dilnur Aliqulov', crypt('a-long-unique-password', gen_salt('bf', 12)), true);
+```
+
+**Reset a password** (also clears any lockout):
+
+```sql
+UPDATE users
+SET password_hash         = crypt('a-new-long-password', gen_salt('bf', 12)),
+    failed_login_attempts = 0,
+    locked_until          = NULL
+WHERE LOWER(username) = LOWER('dilnur');
+```
+
+**Unlock a locked account** without changing the password:
+
+```sql
+UPDATE users SET locked_until = NULL, failed_login_attempts = 0
+WHERE LOWER(username) = LOWER('dilnur');
+```
+
 ### JWT
 - Sent as `Authorization: Bearer <token>`
 - Contains: userId, phone, isOwner, isAdmin
@@ -597,7 +665,7 @@ To show free slots for a stadium on a given date:
 - `JwtAuthFilter` validates on every request, sets SecurityContext
 
 ### Endpoint Security
-- `/api/auth/**` → public
+- `/api/auth/**` → public (Telegram sign-in and `POST /api/auth/admin/login`)
 - `/api/stadiums/**` GET → public (listing, detail, availability)
 - `/api/bookings/**` → authenticated
 - `/api/owner/**` → authenticated + isOwner check
@@ -659,6 +727,7 @@ For paginated lists:
 - Use `@ConfigurationProperties` for custom config (app.jwt.*, app.booking.*, etc.)
   - `app.game.opponent-deadline-hours` (default 3) is the team-game joining
     cutoff. Money rules live in `platform_settings`, not here — only timing does.
+  - `app.admin-login.*` holds the admin password sign-in limits (see "Admin accounts").
 - Use constructor injection (Lombok `@RequiredArgsConstructor`), never `@Autowired` on fields
 - Log important actions: booking created, payment received, game confirmed, errors
 - Write unit tests for service layer, integration tests for controllers
