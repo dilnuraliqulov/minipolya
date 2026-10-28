@@ -131,6 +131,7 @@ class TeamGameJoinTest {
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(participantRepository.findByGameIdAndUserId(any(), any())).thenReturn(Optional.empty());
         when(participantRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(paymentService.captureAllHeldTeamPayments(any())).thenReturn(true);
         when(paymentService.chargeForTeamGame(any(), any(), any())).thenAnswer(inv ->
                 Payment.builder().id(UUID.randomUUID()).status(Payment.Status.PAID)
                         .providerTxnId("txn-charge-b").gameTeam(inv.getArgument(0)).build());
@@ -269,13 +270,48 @@ class TeamGameJoinTest {
     }
 
     @Test
-    void aFailedCaptureRefundsTheJoinerAndCancelsEverything() {
-        org.mockito.Mockito.doThrow(new BadRequestException("transaction gone"))
-                .when(paymentService).captureAllHeldTeamPayments(any());
+    void anUnansweredJoinerChargeIsCommittedAndTheGameGoesOnWaiting() {
+        when(paymentService.chargeForTeamGame(any(), any(), any())).thenAnswer(inv ->
+                Payment.builder().id(UUID.randomUUID()).status(Payment.Status.PROCESSING)
+                        .gameTeam(inv.getArgument(0)).build());
         Game game = waitingGame();
 
+        // Not rolled back: the processing row must survive for the reconcile job, which
+        // gives the money back if the charge went through (its team has left by then).
         assertThatThrownBy(() -> service.join(game, teamB, leaderB, CARD_B_ID))
-                .isInstanceOf(BadRequestException.class);
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.PaymentStepFailedException.class);
+
+        ArgumentCaptor<GameTeam> joining = ArgumentCaptor.forClass(GameTeam.class);
+        verify(gameTeamRepository).saveAndFlush(joining.capture());
+        assertThat(joining.getValue().getStatus()).isEqualTo(GameTeam.Status.CANCELLED);
+        verify(bookingRepository).delete(any(Booking.class));
+        verify(paymentService, never()).captureAllHeldTeamPayments(any());
+        assertThat(game.getStatus()).isEqualTo("open");
+    }
+
+    @Test
+    void nobodyMayJoinWhileTheWaitingTeamsHoldIsStillUnconfirmed() {
+        Game game = waitingGame();
+        when(paymentService.teamPayments(sideA.getId())).thenReturn(List.of(
+                Payment.builder().id(UUID.randomUUID()).status(Payment.Status.PROCESSING).build()));
+
+        assertThatThrownBy(() -> service.join(game, teamB, leaderB, CARD_B_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("still being confirmed");
+
+        verify(bookingRepository, never()).saveAndFlush(any());
+        verify(paymentService, never()).chargeForTeamGame(any(), any(), any());
+    }
+
+    @Test
+    void aFailedCaptureRefundsTheJoinerAndCancelsEverything() {
+        // The waiting team's hold lapsed or was let go: it cannot be taken.
+        when(paymentService.captureAllHeldTeamPayments(any())).thenReturn(false);
+        Game game = waitingGame();
+
+        // Committed, not rolled back: the joiner's money has already moved and is being given back.
+        assertThatThrownBy(() -> service.join(game, teamB, leaderB, CARD_B_ID))
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.PaymentStepFailedException.class);
 
         ArgumentCaptor<GameTeam> captor = ArgumentCaptor.forClass(GameTeam.class);
         verify(gameTeamRepository).saveAndFlush(captor.capture());

@@ -91,10 +91,18 @@ public class GameController {
         return ApiResponse.ok(gameService.joinGame(id, userId, side, teamId, cardId), "Joined game");
     }
 
+    /**
+     * A casual player's share. With {@code cardId}: charged now to that saved card through
+     * ATMOS. Without it: the legacy hosted checkout of {@code provider} (payme/click).
+     */
     @PostMapping("/api/games/{id}/pay")
     public ApiResponse<PaymentInitResponse> pay(@AuthenticationPrincipal UUID userId,
                                                 @PathVariable UUID id,
-                                                @RequestParam String provider) {
+                                                @RequestParam(required = false) String provider,
+                                                @RequestParam(required = false) UUID cardId) {
+        if (cardId != null) {
+            return ApiResponse.ok(gameService.payForGameByCard(id, userId, cardId));
+        }
         return ApiResponse.ok(gameService.payForGame(id, userId, provider));
     }
 

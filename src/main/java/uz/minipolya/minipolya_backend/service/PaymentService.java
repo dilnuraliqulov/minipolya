@@ -243,7 +243,18 @@ public class PaymentService {
      */
     @Transactional
     public Payment captureHeld(Payment held) {
-        HoldOutcome outcome = paymentProvider.captureHold(held.getProviderTxnId());
+        held.setStatus(Payment.Status.CAPTURE_PENDING);
+        paymentRepository.save(held);
+        HoldOutcome outcome;
+        try {
+            outcome = paymentProvider.captureHold(held.getProviderTxnId());
+        } catch (HoldCancelledException | HoldExpiredException ex) {
+            // Nothing is reserved any more: the money was never taken.
+            held.setStatus(Payment.Status.RELEASED);
+            paymentRepository.save(held);
+            log.error("Hold of payment {} could not be captured: {}", held.getId(), ex.getCode());
+            throw ex;
+        }
         held.setStatus(Payment.Status.CAPTURED);
         if (outcome.commission() != null) {
             held.setProviderCommission(outcome.commission());
@@ -251,6 +262,24 @@ public class PaymentService {
         Payment saved = paymentRepository.save(held);
         log.info("Hold captured: paymentId={} amount={}", held.getId(), held.getAmount());
         return saved;
+    }
+
+    /**
+     * {@link #captureHeld} that reports instead of throwing: false when the hold had lapsed
+     * or been let go (row RELEASED), or when the answer was lost (row CAPTURE_PENDING, for
+     * the reconcile job). Never throws for those, so a caller can undo its own steps and
+     * commit rather than roll back over money that already moved.
+     */
+    boolean tryCapture(Payment held) {
+        try {
+            captureHeld(held);
+            return true;
+        } catch (HoldCancelledException | HoldExpiredException ex) {
+            return false;
+        } catch (ProviderTimeoutException ex) {
+            log.warn("Capture of payment {} unanswered; left capture_pending", held.getId());
+            return false;
+        }
     }
 
     /**
@@ -279,14 +308,27 @@ public class PaymentService {
         return payment;
     }
 
-    /** Settles every hold one team placed on one game. */
+    /** Every payment one team made on one game. */
+    @Transactional(readOnly = true)
+    public List<Payment> teamPayments(UUID gameTeamId) {
+        return paymentRepository.findByGameTeamId(gameTeamId);
+    }
+
+    /**
+     * Settles every hold one team placed on one game.
+     *
+     * @return false when any hold could not be taken (lapsed, let go, or unanswered) —
+     *         never an exception, so the joining flow can make everyone whole and commit
+     */
     @Transactional
-    public void captureAllHeldTeamPayments(UUID gameTeamId) {
+    public boolean captureAllHeldTeamPayments(UUID gameTeamId) {
+        boolean all = true;
         for (Payment payment : paymentRepository.findByGameTeamId(gameTeamId)) {
             if (payment.getStatus() == Payment.Status.HELD) {
-                captureHeld(payment);
+                all &= tryCapture(payment);
             }
         }
+        return all;
     }
 
     /**
@@ -302,9 +344,21 @@ public class PaymentService {
      */
     @Transactional
     public Payment giveBackInFull(Payment original, String reason) {
+        if (original.getStatus() == Payment.Status.CAPTURE_PENDING) {
+            // Whether the capture went through is unknown; giving back is now the intent, and
+            // the reconcile job reverses it if it was taken or releases it if it was not.
+            original.setStatus(Payment.Status.RETURN_PENDING);
+            paymentRepository.save(original);
+            return null;
+        }
         if (original.getStatus() == Payment.Status.HELD) {
+            original.setStatus(Payment.Status.RETURN_PENDING);
+            paymentRepository.save(original);
             try {
                 paymentProvider.releaseHold(original.getProviderTxnId());
+            } catch (ProviderTimeoutException ex) {
+                log.warn("Release of payment {} unanswered; left return_pending", original.getId());
+                return null;
             } catch (HoldCancelledException | HoldExpiredException ex) {
                 // Already let go — released before, or lapsed at the provider. Either way
                 // no money is reserved any more, which is all a release is for, so this
@@ -312,7 +366,7 @@ public class PaymentService {
                 log.info("Hold {} was already let go ({}); recording it released",
                         original.getId(), ex.getCode());
             }
-            Payment.Status statusBefore = original.getStatus();
+            Payment.Status statusBefore = Payment.Status.HELD;
             original.setStatus(Payment.Status.RELEASED);
             paymentRepository.save(original);
             // No money moved, so no refund row: the hold on the card is simply let go.
@@ -366,10 +420,13 @@ public class PaymentService {
             if (payment.getAmount() == null || payment.getAmount() <= 0) {
                 continue;
             }
-            if (payment.getStatus() == Payment.Status.HELD) {
-                captureHeld(payment);
+            if (payment.getStatus() == Payment.Status.HELD && !tryCapture(payment)) {
+                // Lapsed or let go: the money promised cannot be taken any more. The rule
+                // says it is kept, so this is worth an error, not a silent pass.
+                log.error("Payment {} should have been kept but its hold could not be taken: {}",
+                        payment.getId(), payment.getStatus().getValue());
             }
-            if (KEPT_STATUSES.contains(payment.getStatus())) {
+            if (KEPT_STATUSES.contains(payment.getStatus()) || payment.getStatus() == Payment.Status.CAPTURE_PENDING) {
                 kept += payment.getAmount();
             }
         }
@@ -616,10 +673,25 @@ public class PaymentService {
 
         // Only the card provider can give money back. Legacy Payme/Click rows
         // predate it and are reversed on paper only, as they always were.
+        Payment.Status statusBefore = original.getStatus();
         if (original.getProvider() == Payment.Provider.ATMOS) {
-            reverseInFull(original, reason);
+            original.setStatus(Payment.Status.RETURN_PENDING);
+            paymentRepository.save(original);
+            try {
+                reverseInFull(original, reason);
+            } catch (ProviderTimeoutException ex) {
+                log.warn("Reverse of payment {} unanswered; left return_pending", original.getId());
+                return null;
+            }
         }
+        return recordRefund(original, statusBefore, reason);
+    }
 
+    /**
+     * The provider has given the whole gross back: the negative refund row, and the
+     * original marked refunded. Also used by the reconcile job to finish a return_pending.
+     */
+    Payment recordRefund(Payment original, Payment.Status statusBefore, String reason) {
         Payment refund = paymentRepository.save(Payment.builder()
                 .booking(original.getBooking())
                 .game(original.getGame())
@@ -642,7 +714,6 @@ public class PaymentService {
                 .refundOfPayment(original)
                 .build());
 
-        Payment.Status statusBefore = original.getStatus();
         original.setStatus(Payment.Status.REFUNDED);
         paymentRepository.save(original);
 
@@ -685,6 +756,49 @@ public class PaymentService {
         log.info("Payment initiated: id={} bookingId={} userId={} provider={}",
                 saved.getId(), bookingId, userId, provider.getValue());
         return initResponse(saved, provider, checkoutUrl);
+    }
+
+    /**
+     * A casual player's share charged to a saved card. On success the game hears of it as
+     * it does from the legacy webhook; a lost answer leaves the row processing for the
+     * reconcile job.
+     */
+    @Transactional
+    public Payment chargeGameShare(UUID gameId, UUID userId, SavedCard card) {
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new ResourceNotFoundException("Game not found"));
+        if ("team_vs_team".equals(game.getType())) {
+            throw new BadRequestException("A team game is paid when creating or joining it");
+        }
+        GameParticipant participant = gameParticipantRepository.findByGameIdAndUserId(gameId, userId)
+                .orElseThrow(() -> new BadRequestException("Join the game before paying"));
+        if (participant.getStatus() == GameParticipant.Status.PAID) {
+            throw new BadRequestException("Already paid");
+        }
+        CardFeeSplit share = gameShareSplit(game);
+        Payment row = Payment.builder()
+                .game(game)
+                .user(participant.getUser())
+                .amount(share.playerAmount())
+                .ownerAmount(share.ownerGross())
+                .platformAmount(share.platformGross())
+                .cardFeeExpected(share.cardFee())
+                .commissionPercent(0)
+                .method(Payment.Method.CARD)
+                .paymentType(Payment.PaymentType.GAME_SHARE)
+                .provider(Payment.Provider.ATMOS)
+                .status(Payment.Status.PROCESSING)
+                .build();
+        Payment payment = chargeCard(row, card, share, game.getStadium() == null ? null : game.getStadium().getOwner());
+        participant.setPayment(payment);
+        gameParticipantRepository.save(participant);
+        if (payment.getStatus() == Payment.Status.PAID) {
+            auditPaymentCompleted(payment, null);
+            gameService.handleGamePaymentConfirmed(gameId, userId);
+        }
+        log.info("Game share by card {}: gameId={} paymentId={} amount={}",
+                payment.getStatus().getValue(), gameId, payment.getId(), payment.getAmount());
+        return payment;
     }
 
     @Transactional
@@ -804,6 +918,8 @@ public class PaymentService {
             Payment refund = refundInFull(original, reason);
             if (refund != null) {
                 refunded += Math.abs(refund.getAmount());
+            } else if (original.getStatus() == Payment.Status.RETURN_PENDING) {
+                refunded += original.getAmount(); // on its way back; the reconcile job finishes it
             }
         }
         if (refunded == 0) {

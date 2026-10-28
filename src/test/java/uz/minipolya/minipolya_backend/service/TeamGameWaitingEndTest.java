@@ -117,6 +117,29 @@ class TeamGameWaitingEndTest {
         return game;
     }
 
+    // ---- how long the creating team's money is held ----
+
+    @Test
+    void theHoldLastsUntilTheThreeHourPointPlusTwoHours() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        Game game = waitingGame(Duration.ofDays(2));
+
+        int minutes = service.holdMinutes(game, now);
+
+        long untilCutoff = Duration.between(now, game.getStartsAt().minusHours(3)).toMinutes();
+        assertThat(minutes).isEqualTo((int) untilCutoff + 120);
+    }
+
+    @Test
+    void aGameTooFarAheadForTheHoldCapCannotBeCreated() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        Game game = waitingGame(Duration.ofDays(31));   // the default cap is 43 200 min = 30 days
+
+        assertThatThrownBy(() -> service.holdMinutes(game, now))
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.BadRequestException.class)
+                .hasMessageContaining("days before it is played");
+    }
+
     // ---- somebody books the pitch ----
 
     @Test

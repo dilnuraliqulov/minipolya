@@ -214,7 +214,8 @@ class TeamGamePaymentTest {
         when(paymentProvider.captureHold("hold-a")).thenThrow(new HoldExpiredException("HOLD_EXPIRED"));
 
         assertThatThrownBy(() -> service.captureHeld(held)).isInstanceOf(HoldExpiredException.class);
-        assertThat(held.getStatus()).isEqualTo(Payment.Status.HELD);
+        // Nothing is reserved any more: the money was never taken.
+        assertThat(held.getStatus()).isEqualTo(Payment.Status.RELEASED);
     }
 
     // ---- giveBackInFull ----
@@ -277,7 +278,8 @@ class TeamGamePaymentTest {
 
         assertThatThrownBy(() -> service.giveBackInFull(held, "Game cancelled"))
                 .isInstanceOf(PaymentProviderException.class);
-        assertThat(held.getStatus()).isEqualTo(Payment.Status.HELD);
+        // The intent stays recorded, so the reconcile job tries again.
+        assertThat(held.getStatus()).isEqualTo(Payment.Status.RETURN_PENDING);
     }
 
     @Test

@@ -239,6 +239,10 @@ public class Payment {
     public enum Status {
         /** Written, provider called, answer not in yet (or lost): settled by the reconcile job. */
         PROCESSING,
+        /** Being given back — a charge reversed or a hold released; the reconcile job finishes it. */
+        RETURN_PENDING,
+        /** A hold being taken; the reconcile job finishes it. */
+        CAPTURE_PENDING,
         HELD, CAPTURED, RELEASED, PAID, REFUNDED, FAILED, PENDING, COMPLETED;
 
         @JsonValue

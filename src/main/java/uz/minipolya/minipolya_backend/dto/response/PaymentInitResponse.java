@@ -19,4 +19,6 @@ public class PaymentInitResponse {
     private UUID paymentId;
     private String checkoutUrl;
     private String provider;
+    /** For a saved-card payment: paid, or processing while the provider has not answered. */
+    private String status;
 }

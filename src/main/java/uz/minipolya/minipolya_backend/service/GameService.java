@@ -21,6 +21,8 @@ import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
+import uz.minipolya.minipolya_backend.entity.Payment;
+import uz.minipolya.minipolya_backend.entity.SavedCard;
 import uz.minipolya.minipolya_backend.entity.PlatformSettings;
 import uz.minipolya.minipolya_backend.entity.Notification;
 import uz.minipolya.minipolya_backend.entity.Stadium;
@@ -82,6 +84,7 @@ public class GameService {
     private final BookingWindowValidator bookingWindowValidator;
     private final PlatformSettingsService platformSettingsService;
     private final TeamGameService teamGameService;
+    private final SavedCardService savedCardService;
 
     @Transactional
     public GameDetailResponse createGame(CreateGameRequest request, UUID creatorUserId) {
@@ -161,7 +164,7 @@ public class GameService {
         return toDetail(saved);
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = uz.minipolya.minipolya_backend.exception.PaymentStepFailedException.class)
     public GameParticipantResponse joinGame(UUID gameId, UUID userId, String side, UUID teamId, UUID cardId) {
         Game game = requireGame(gameId);
         if (!STATUS_OPEN.equals(game.getStatus())) {
@@ -223,7 +226,7 @@ public class GameService {
     }
 
     /** A team leader settles their own team's remainder from a saved card. */
-    @Transactional
+    @Transactional(noRollbackFor = uz.minipolya.minipolya_backend.exception.PaymentStepFailedException.class)
     public void payTeamRemainder(UUID gameId, UUID userId, UUID cardId) {
         teamGameService.payRemainder(gameId, userId, cardId);
     }
@@ -241,6 +244,26 @@ public class GameService {
     @Transactional
     public PaymentInitResponse payForGame(UUID gameId, UUID userId, String provider) {
         return paymentService.initiateGamePayment(gameId, provider, userId);
+    }
+
+    /**
+     * A casual player pays their share from a saved card through ATMOS: charged now,
+     * grossed up by the card fee, and reversed in full if the game is called off. The
+     * existing rule is unchanged — each player pays as they go, and the slot is booked once
+     * everyone has; nothing is held.
+     */
+    @Transactional
+    public PaymentInitResponse payForGameByCard(UUID gameId, UUID userId, UUID cardId) {
+        SavedCard card = savedCardService.requireOwnedCard(userId, cardId);
+        Payment payment = paymentService.chargeGameShare(gameId, userId, card);
+        if (payment.getStatus() == Payment.Status.FAILED) {
+            throw new BadRequestException("Card payment was declined");
+        }
+        return PaymentInitResponse.builder()
+                .paymentId(payment.getId())
+                .provider(Payment.Provider.ATMOS.getValue())
+                .status(payment.getStatus().getValue())
+                .build();
     }
 
     @Transactional

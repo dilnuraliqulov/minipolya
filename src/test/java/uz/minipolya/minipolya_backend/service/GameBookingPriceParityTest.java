@@ -141,7 +141,7 @@ class GameBookingPriceParityTest {
                 mock(TeamRepository.class), priceCalculator, bookingRepository,
                 gameMapper, mock(GameParticipantMapper.class), new AppProperties(),
                 mock(PaymentService.class), mock(NotificationService.class), mock(AuditService.class),
-                windowValidator, platformSettings, mock(TeamGameService.class));
+                windowValidator, platformSettings, mock(TeamGameService.class), savedCardService);
     }
 
     @Test

@@ -151,7 +151,7 @@ public class TeamGameService {
      *   <li>confirm the booking and the game.</li>
      * </ol>
      */
-    @Transactional
+    @Transactional(noRollbackFor = uz.minipolya.minipolya_backend.exception.PaymentStepFailedException.class)
     public GameTeam join(Game game, Team teamB, User leader, UUID cardId) {
         if (teamB == null) {
             throw new BadRequestException("teamId is required to join as team B");
@@ -169,6 +169,7 @@ public class TeamGameService {
             throw new BadRequestException(TOO_LATE_TO_JOIN);
         }
         SavedCard card = savedCardService.requireOwnedCard(leader.getId(), cardId);
+        requireWaitingHoldsInPlace(game);
 
         // Not always side B. When the creating team walks out of a confirmed
         // game the team left behind is on side B, so the newcomer takes A.
@@ -356,7 +357,7 @@ public class TeamGameService {
      *                             nothing, whether because it already settled
      *                             or because its advance covered the pitch
      */
-    @Transactional
+    @Transactional(noRollbackFor = uz.minipolya.minipolya_backend.exception.PaymentStepFailedException.class)
     public GameTeam payRemainder(UUID gameId, UUID userId, UUID cardId) {
         Game game = requireGame(gameId);
         GameTeam team = gameTeamRepository
@@ -368,6 +369,11 @@ public class TeamGameService {
         Payment payment = paymentService.chargeForTeamGame(team, card, Payment.PaymentType.REMAINDER);
         if (payment.getStatus() == Payment.Status.FAILED) {
             throw new BadRequestException("Card payment was declined; the remainder is still owed");
+        }
+        if (payment.getStatus() == Payment.Status.PROCESSING) {
+            // Kept (committed) for the reconcile job, which settles the remainder if it went through.
+            throw new uz.minipolya.minipolya_backend.exception.PaymentStepFailedException(
+                    "The card payment is still being confirmed; the remainder will be marked paid once it is");
         }
 
         GameTeam.RemainderStatus statusBefore = team.getRemainderStatus();
@@ -541,17 +547,42 @@ public class TeamGameService {
     }
 
     /** A declined joiner costs nobody anything: the booking goes, the game waits on. */
+    /**
+     * Step 2: the joining team's charge. Anything but a confirmed charge removes the
+     * booking and leaves the game waiting. A decline moved no money, so it may roll back;
+     * an unanswered charge may have, so its row is committed and the reconcile job gives it
+     * back if it went through (its team has left the game by then).
+     */
     private void chargeJoiner(Game game, GameTeam joining, SavedCard card, Booking booking) {
         Payment charge = paymentService.chargeForTeamGame(joining, card, Payment.PaymentType.TEAM_GAME);
-        if (charge.getStatus() != Payment.Status.FAILED) {
+        if (charge.getStatus() == Payment.Status.PAID) {
             return;
         }
         bookingRepository.delete(booking);
         joining.setStatus(GameTeam.Status.CANCELLED);
         joining.setLeftAt(OffsetDateTime.now(ZoneOffset.UTC));
         gameTeamRepository.save(joining);
-        throw new BadRequestException(
-                "Card payment was declined; the game is still looking for an opponent");
+        if (charge.getStatus() == Payment.Status.FAILED) {
+            throw new BadRequestException(
+                    "Card payment was declined; the game is still looking for an opponent");
+        }
+        log.warn("Joining charge unanswered: gameId={} paymentId={}; the game goes on waiting",
+                game.getId(), charge.getId());
+        throw new uz.minipolya.minipolya_backend.exception.PaymentStepFailedException(
+                "The card payment could not be confirmed; the game is still looking for an opponent. "
+                        + "If the money was taken it will be returned in full");
+    }
+
+    /** A join must not go ahead while the waiting team's hold is still unconfirmed. */
+    private void requireWaitingHoldsInPlace(Game game) {
+        for (GameTeam waiting : gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)) {
+            boolean unsettled = paymentService.teamPayments(waiting.getId()).stream()
+                    .anyMatch(p -> p.getStatus() == Payment.Status.PROCESSING);
+            if (unsettled) {
+                throw new BadRequestException(
+                        "The other team's payment is still being confirmed; try again in a few minutes");
+            }
+        }
     }
 
     /**
@@ -559,21 +590,34 @@ public class TeamGameService {
      * waiting team's hold can no longer be captured, nobody plays, so the
      * joining team is refunded and the game ends.
      */
+    /**
+     * Step 3, last: take the waiting team's hold. If it lapsed, was let go, or the answer
+     * was lost, the game cannot go ahead, and everything is undone in this order: the
+     * joiner's charge is reversed and the waiting team's hold given back (endGame), the
+     * booking is deleted, the game is cancelled, both teams are told — and all of that is
+     * committed. A hold whose capture went unanswered is left return_pending, which the
+     * reconcile job reverses if it was taken or releases if it was not.
+     */
     private void captureWaitingTeam(Game game, GameTeam joining, Booking booking) {
-        try {
-            for (GameTeam waiting : gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)) {
-                if (!waiting.getId().equals(joining.getId())) {
-                    paymentService.captureAllHeldTeamPayments(waiting.getId());
-                }
+        boolean captured = true;
+        for (GameTeam waiting : gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)) {
+            if (!waiting.getId().equals(joining.getId())) {
+                captured &= paymentService.captureAllHeldTeamPayments(waiting.getId());
             }
-        } catch (RuntimeException ex) {
-            log.error("Could not capture the waiting team's hold on game {}: {}", game.getId(), ex.toString());
-            bookingRepository.delete(booking);
-            // endGame gives every team still in the game its money back — the
-            // joiner included, since its row is active by now.
-            endGame(game, "cancelled_slot_taken", "The other team's payment could not be settled", null);
-            throw ex;
         }
+        if (captured) {
+            return;
+        }
+        log.error("Could not capture the waiting team's hold on game {}; cancelling it and returning both teams' money",
+                game.getId());
+        // endGame gives every team still in the game its money back — the joiner included,
+        // since its row is active by now.
+        endGame(game, "cancelled_slot_taken", "The other team's payment could not be settled", null);
+        bookingRepository.delete(booking);
+        notifyCancelled(game, "Raqib jamoaning to'lovini yechib bo'lmadi, o'yin bekor qilindi. To'lov to'liq qaytariladi.");
+        throw new uz.minipolya.minipolya_backend.exception.PaymentStepFailedException(
+                "The other team's payment could not be taken, so the game is cancelled; "
+                        + "your payment is being returned in full");
     }
 
     /** Both advances are on the pitch now, so the booking is part-paid (or paid outright). */

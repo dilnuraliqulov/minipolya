@@ -138,7 +138,8 @@ class TeamGameCreateTest {
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, priceCalculator, bookingRepository, gameMapper, participantMapper,
                 new AppProperties(), paymentService, notificationService, auditService,
-                new BookingWindowValidator(closureService), platformSettingsService, teamGameService);
+                new BookingWindowValidator(closureService), platformSettingsService, teamGameService,
+                savedCardService);
     }
 
     private CreateGameRequest request(UUID cardId) {

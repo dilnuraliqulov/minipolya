@@ -109,7 +109,8 @@ class GameServiceTest {
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, bookingPriceCalculator, bookingRepository,
                 gameMapper, participantMapper, new AppProperties(), paymentService, notificationService,
-                auditService, new BookingWindowValidator(closureService), platformSettingsService, teamGameService);
+                auditService, new BookingWindowValidator(closureService), platformSettingsService, teamGameService,
+                mock(SavedCardService.class));
 
         creator = User.builder().id(CREATOR_ID).name("Creator").build();
         stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000L)
@@ -257,7 +258,8 @@ class GameServiceTest {
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, bookingPriceCalculator, bookingRepository,
                 gameMapper, participantMapper, props, paymentService, notificationService,
-                auditService, new BookingWindowValidator(closureService), platformSettingsService, teamGameService);
+                auditService, new BookingWindowValidator(closureService), platformSettingsService, teamGameService,
+                mock(SavedCardService.class));
         stubCreate();
         CreateGameRequest req = CreateGameRequest.builder()
                 .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(18, 1)).duration(1).build();
