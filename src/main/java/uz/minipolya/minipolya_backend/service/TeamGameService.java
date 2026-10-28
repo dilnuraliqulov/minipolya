@@ -119,11 +119,12 @@ public class TeamGameService {
             throw new BadRequestException("cardId is required to create a team game");
         }
         SavedCard card = savedCardService.requireOwnedCard(leader.getId(), cardId);
+        int holdMinutes = holdMinutes(game, OffsetDateTime.now(ZoneOffset.UTC));
 
         GameTeam sideA = gameTeamRepository.saveAndFlush(
                 teamEntry(game, teamA, leader, Side.A, splitFor(game)));
 
-        Payment hold = paymentService.holdForTeamGame(sideA, card);
+        Payment hold = paymentService.holdForTeamGame(sideA, card, holdMinutes);
         if (hold.getStatus() == Payment.Status.FAILED) {
             throw new BadRequestException("Card payment was declined; the game was not created");
         }
@@ -481,6 +482,25 @@ public class TeamGameService {
     /** The last moment a new opponent can still arrive in time to play. */
     public OffsetDateTime opponentDeadline(Game game) {
         return game.getStartsAt().minusHours(appProperties.getGame().getOpponentDeadlineHours());
+    }
+
+    /** Slack past the 3-hour point, so the timeout job can release the hold before it lapses. */
+    static final int HOLD_SLACK_MINUTES = 120;
+
+    /**
+     * How long the creating team's hold must last: until the 3-hour point, when the game
+     * either has an opponent (and the hold is captured) or is over (and it is released),
+     * plus {@value #HOLD_SLACK_MINUTES} minutes of slack. Capped by
+     * {@code app.payments.hold-max-minutes}; a game that would need longer cannot be created.
+     */
+    int holdMinutes(Game game, OffsetDateTime now) {
+        long minutes = Math.max(0, Duration.between(now, opponentDeadline(game)).toMinutes()) + HOLD_SLACK_MINUTES;
+        int max = appProperties.getPayments().getHoldMaxMinutes();
+        if (minutes > max) {
+            throw new BadRequestException("A team game can be created at most "
+                    + (max - HOLD_SLACK_MINUTES) / (24 * 60) + " days before it is played");
+        }
+        return (int) minutes;
     }
 
     // ---- Helpers ----

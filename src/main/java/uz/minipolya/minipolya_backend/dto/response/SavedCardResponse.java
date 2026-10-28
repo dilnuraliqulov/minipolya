@@ -22,6 +22,8 @@ public class SavedCardResponse {
     private UUID id;
     private String maskedNumber;
     private String cardType;
+    /** MM/YY, as the provider reports it. */
+    private String expiry;
 
     @JsonProperty("isActive")
     private boolean isActive;

@@ -17,8 +17,6 @@ import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
 import uz.minipolya.minipolya_backend.provider.ClickProvider;
 import uz.minipolya.minipolya_backend.provider.PaymeProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
-import uz.minipolya.minipolya_backend.provider.ProviderTransaction;
-import uz.minipolya.minipolya_backend.provider.ProviderTransactionStatus;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -95,12 +93,7 @@ class TeamGameRefundPreviewTest {
 
         // The provider always succeeds: what is being tested is our arithmetic,
         // not its failure handling.
-        when(paymentProvider.release(anyString())).thenAnswer(inv ->
-                new ProviderTransaction(inv.getArgument(0), ProviderTransactionStatus.RELEASED));
-        when(paymentProvider.refund(anyString())).thenAnswer(inv ->
-                new ProviderTransaction(inv.getArgument(0), ProviderTransactionStatus.REFUNDED));
-        when(paymentProvider.capture(anyString())).thenAnswer(inv ->
-                new ProviderTransaction(inv.getArgument(0), ProviderTransactionStatus.CAPTURED));
+        ProviderStubs.behaveLikeAtmos(paymentProvider);
 
         paymentService = new PaymentService(paymentRepository, bookingRepository, mock(UserRepository.class),
                 gameRepository, mock(GameParticipantRepository.class), mock(PaymentMapper.class),
@@ -123,7 +116,7 @@ class TeamGameRefundPreviewTest {
         teamA = Team.builder().id(UUID.randomUUID()).name("Team A").leader(leaderA).build();
         teamB = Team.builder().id(UUID.randomUUID()).name("Team B").leader(leaderB).build();
 
-        when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(ProviderStubs.savedWithId());
         when(gameTeamRepository.save(any(GameTeam.class))).thenAnswer(inv -> inv.getArgument(0));
         when(gameRepository.save(any(Game.class))).thenAnswer(inv -> inv.getArgument(0));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));

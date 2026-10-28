@@ -20,8 +20,6 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
-import uz.minipolya.minipolya_backend.provider.ProviderTransaction;
-import uz.minipolya.minipolya_backend.provider.ProviderTransactionStatus;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
@@ -94,7 +92,7 @@ class BookingConfirmationTest {
         card = SavedCard.builder().id(CARD_ID).user(player).providerToken("tok-1").isActive(true).build();
 
         when(platformSettingsService.current()).thenReturn(PlatformSettings.builder().build());
-        when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(ProviderStubs.savedWithId());
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
     }
@@ -110,8 +108,7 @@ class BookingConfirmationTest {
     }
 
     private void providerCharges() {
-        when(paymentProvider.charge(any())).thenReturn(
-                new ProviderTransaction("txn-1", ProviderTransactionStatus.PAID));
+        ProviderStubs.behaveLikeAtmos(paymentProvider);
     }
 
     // ---- the happy path ----
@@ -172,15 +169,17 @@ class BookingConfirmationTest {
         assertThat(payment.getMethod()).isEqualTo(Payment.Method.CARD);
         assertThat(payment.getPaymentType()).isEqualTo(Payment.PaymentType.BOOKING);
         assertThat(payment.getStatus()).isEqualTo(Payment.Status.PAID);
-        assertThat(payment.getProviderTxnId()).isEqualTo("txn-1");
+        // The row was written first: its id is the provider's account.
+        assertThat(payment.getProviderTxnId()).isEqualTo("txn-" + payment.getId());
+        assertThat(payment.getProviderSuccessTxnIds()).isEqualTo("succ-txn-" + payment.getId());
     }
 
     // ---- a failed charge ----
 
     @Test
     void aFailedChargeLeavesTheBookingPendingAndUnpaid() {
-        when(paymentProvider.charge(any())).thenReturn(
-                new ProviderTransaction("failed-1", ProviderTransactionStatus.FAILED));
+        ProviderStubs.behaveLikeAtmos(paymentProvider);
+        ProviderStubs.declineCharges(paymentProvider);
         Booking pending = booking("pending");
 
         Payment payment = service.chargeForBooking(pending, card, TestPrices.net(PRICE));
@@ -204,20 +203,18 @@ class BookingConfirmationTest {
 
         assertThat(expired.getStatus()).isEqualTo("confirmed");
         assertThat(expired.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);
-        verify(paymentProvider, never()).refund(anyString());
+        verify(paymentProvider, never()).reverse(anyString(), any());
     }
 
     @Test
     void paymentOnAnExpiredBookingWhoseSlotWasTakenIsRefundedInFull() {
         providerCharges();
         when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(true);
-        when(paymentProvider.refund("txn-1")).thenReturn(
-                new ProviderTransaction("txn-1", ProviderTransactionStatus.REFUNDED));
         Booking expired = booking("expired");
 
         service.chargeForBooking(expired, card, TestPrices.net(PRICE));
 
-        verify(paymentProvider).refund("txn-1");
+        verify(paymentProvider).reverse(org.mockito.ArgumentMatchers.startsWith("succ-txn-"), any());
         assertThat(expired.getStatus()).isEqualTo("expired");
         assertThat(expired.getPaidAmount()).isZero();
         assertThat(expired.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.UNPAID);
@@ -227,8 +224,6 @@ class BookingConfirmationTest {
     void theRefundForATakenSlotIsANewNegativeRowAndNotifiesThePlayer() {
         providerCharges();
         when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(true);
-        when(paymentProvider.refund("txn-1")).thenReturn(
-                new ProviderTransaction("txn-1", ProviderTransactionStatus.REFUNDED));
 
         service.chargeForBooking(booking("expired"), card, TestPrices.net(PRICE));
 
@@ -252,13 +247,11 @@ class BookingConfirmationTest {
         when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(false);
         when(bookingRepository.saveAndFlush(any(Booking.class)))
                 .thenThrow(new DataIntegrityViolationException("bookings_no_overlap"));
-        when(paymentProvider.refund("txn-1")).thenReturn(
-                new ProviderTransaction("txn-1", ProviderTransactionStatus.REFUNDED));
 
         Payment payment = service.chargeForBooking(booking("expired"), card, TestPrices.net(PRICE));
 
         assertThat(payment.getStatus()).isEqualTo(Payment.Status.REFUNDED);
-        verify(paymentProvider).refund("txn-1");
+        verify(paymentProvider).reverse(org.mockito.ArgumentMatchers.startsWith("succ-txn-"), any());
     }
 
     // ---- paying off the rest ----

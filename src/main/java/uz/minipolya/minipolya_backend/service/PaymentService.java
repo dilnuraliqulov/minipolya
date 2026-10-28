@@ -25,10 +25,18 @@ import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
-import uz.minipolya.minipolya_backend.provider.ChargeCommand;
+import uz.minipolya.minipolya_backend.provider.ChargeOutcome;
+import uz.minipolya.minipolya_backend.provider.ChargeRequest;
+import uz.minipolya.minipolya_backend.provider.HoldCancelledException;
+import uz.minipolya.minipolya_backend.provider.HoldExpiredException;
+import uz.minipolya.minipolya_backend.provider.HoldOutcome;
+import uz.minipolya.minipolya_backend.provider.HoldRequest;
 import uz.minipolya.minipolya_backend.provider.LegacyCheckoutProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
-import uz.minipolya.minipolya_backend.provider.ProviderTransaction;
+import uz.minipolya.minipolya_backend.provider.PendingCharge;
+import uz.minipolya.minipolya_backend.provider.ProviderTimeoutException;
+import uz.minipolya.minipolya_backend.provider.Split;
+import uz.minipolya.minipolya_backend.provider.TransactionClosedException;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -36,6 +44,8 @@ import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.CardFeeSplit;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -114,11 +124,12 @@ public class PaymentService {
      * Charges a saved card for a booking and, if the money arrives, confirms the
      * booking through {@link #applySuccessfulBookingPayment}.
      *
-     * <p>The provider is called first and the payment row is written afterwards
-     * with its final status, so a row's amounts, split and transaction id are
-     * correct from the moment it exists and never need rewriting. A declined
-     * card produces a {@code FAILED} row and leaves the booking pending, to
-     * expire on the usual hold timeout.
+     * <p>The payment row is written first, {@code processing}, and its id is the
+     * provider's {@code account}, so a retry can never take the money twice; only its
+     * status and provider ids move afterwards. A declined card produces a {@code FAILED}
+     * row and leaves the booking pending, to expire on the usual hold timeout. A lost
+     * answer leaves the row {@code processing} for the reconcile job — never assumed
+     * failed, never charged again.
      *
      * @param charge what the card is charged and how it splits — the stadium minimum or
      *               the full price, grossed up by the card fee
@@ -132,32 +143,29 @@ public class PaymentService {
     @Transactional
     public Payment chargeForBooking(Booking booking, SavedCard card, CardFeeSplit charge, Payment.PaymentType type) {
         int commissionPercent = platformSettingsService.current().getBookingCommissionPercent();
-        long amount = charge.playerAmount();
-        long platformAmount = charge.platformGross();
-        long ownerAmount = charge.ownerGross();
-        String reference = UUID.randomUUID().toString();
-
-        ProviderTransaction txn = paymentProvider.charge(new ChargeCommand(
-                card.getProviderToken(), amount, ownerAmount, platformAmount, reference));
-
-        Payment payment = paymentRepository.save(Payment.builder()
+        Payment row = Payment.builder()
                 .booking(booking)
                 .user(booking.getUser())
-                .amount(amount)
-                .ownerAmount(ownerAmount)
-                .platformAmount(platformAmount)
+                .amount(charge.playerAmount())
+                .ownerAmount(charge.ownerGross())
+                .platformAmount(charge.platformGross())
                 .cardFeeExpected(charge.cardFee())
                 .commissionPercent(commissionPercent)
                 .method(Payment.Method.CARD)
                 .paymentType(type)
                 .provider(Payment.Provider.ATMOS)
-                .providerTxnId(txn.providerTxnId())
-                .status(txn.failed() ? Payment.Status.FAILED : Payment.Status.PAID)
-                .build());
+                .status(Payment.Status.PROCESSING)
+                .build();
+        Payment payment = chargeCard(row, card, charge, booking.getStadium().getOwner());
 
-        if (txn.failed()) {
-            log.info("Card charge declined: bookingId={} amount={} reference={}",
-                    booking.getId(), amount, reference);
+        if (payment.getStatus() == Payment.Status.FAILED) {
+            log.info("Card charge declined: bookingId={} paymentId={} amount={}",
+                    booking.getId(), payment.getId(), payment.getAmount());
+            return payment;
+        }
+        if (payment.getStatus() == Payment.Status.PROCESSING) {
+            log.warn("Card charge outcome unknown, left for reconciliation: bookingId={} paymentId={}",
+                    booking.getId(), payment.getId());
             return payment;
         }
 
@@ -176,23 +184,18 @@ public class PaymentService {
      * because on a team game the fee <em>is</em> the platform's cut.
      *
      * <p>A declined card comes back as a {@code FAILED} row, not an exception.
+     *
+     * @param durationMinutes how long the provider keeps the money reserved
      */
     @Transactional
-    public Payment holdForTeamGame(GameTeam gameTeam, SavedCard card) {
+    public Payment holdForTeamGame(GameTeam gameTeam, SavedCard card, int durationMinutes) {
         CardFeeSplit split = joinSplit(gameTeam);
-        ProviderTransaction txn = paymentProvider.hold(new ChargeCommand(card.getProviderToken(),
-                split.playerAmount(), split.ownerGross(), split.platformGross(), UUID.randomUUID().toString()));
+        Payment payment = holdCard(teamGameRow(gameTeam, split, Payment.PaymentType.TEAM_GAME),
+                card, split, ownerOf(gameTeam), durationMinutes);
 
-        Payment payment = paymentRepository.save(teamGameRow(gameTeam, split, txn,
-                Payment.PaymentType.TEAM_GAME,
-                txn.failed() ? Payment.Status.FAILED : Payment.Status.HELD));
-
-        if (txn.failed()) {
-            log.info("Team game hold declined: gameTeamId={} amount={}", gameTeam.getId(), split.playerAmount());
-        } else {
-            log.info("Team game hold placed: gameTeamId={} amount={} txn={}",
-                    gameTeam.getId(), split.playerAmount(), txn.providerTxnId());
-        }
+        log.info("Team game hold {}: gameTeamId={} paymentId={} amount={} minutes={}",
+                payment.getStatus().getValue(), gameTeam.getId(), payment.getId(), split.playerAmount(),
+                durationMinutes);
         return payment;
     }
 
@@ -212,14 +215,11 @@ public class PaymentService {
                 ? cardPricing.split(gameTeam.getRemainderAmount(), 0L)
                 : joinSplit(gameTeam);
 
-        ProviderTransaction txn = paymentProvider.charge(new ChargeCommand(card.getProviderToken(),
-                split.playerAmount(), split.ownerGross(), split.platformGross(), UUID.randomUUID().toString()));
+        Payment payment = chargeCard(teamGameRow(gameTeam, split, type), card, split, ownerOf(gameTeam));
 
-        Payment payment = paymentRepository.save(teamGameRow(gameTeam, split, txn, type,
-                txn.failed() ? Payment.Status.FAILED : Payment.Status.PAID));
-
-        log.info("Team game charge {}: gameTeamId={} type={} amount={}",
-                txn.failed() ? "declined" : "taken", gameTeam.getId(), type.getValue(), split.playerAmount());
+        log.info("Team game charge {}: gameTeamId={} paymentId={} type={} amount={}",
+                payment.getStatus().getValue(), gameTeam.getId(), payment.getId(), type.getValue(),
+                split.playerAmount());
         return payment;
     }
 
@@ -236,11 +236,18 @@ public class PaymentService {
         return cardPricing.joinSplit(gameTeam);
     }
 
-    /** Settles a hold by taking the reserved money. */
+    /**
+     * Settles a hold by taking the whole reserved amount. A hold that lapsed or was let go
+     * throws {@link HoldExpiredException} / {@link HoldCancelledException}; the caller
+     * decides what that means for its game.
+     */
     @Transactional
     public Payment captureHeld(Payment held) {
-        paymentProvider.capture(held.getProviderTxnId());
+        HoldOutcome outcome = paymentProvider.captureHold(held.getProviderTxnId());
         held.setStatus(Payment.Status.CAPTURED);
+        if (outcome.commission() != null) {
+            held.setProviderCommission(outcome.commission());
+        }
         Payment saved = paymentRepository.save(held);
         log.info("Hold captured: paymentId={} amount={}", held.getId(), held.getAmount());
         return saved;
@@ -297,13 +304,13 @@ public class PaymentService {
     public Payment giveBackInFull(Payment original, String reason) {
         if (original.getStatus() == Payment.Status.HELD) {
             try {
-                paymentProvider.release(original.getProviderTxnId());
-            } catch (RuntimeException ex) {
-                // The hold is already settled at the provider and our row was
-                // stale. Record the truth and move on: refusing to would wedge
-                // every later cancellation and the timeout job on this game.
-                log.error("Hold {} could not be released ({}); marking it released anyway",
-                        original.getProviderTxnId(), ex.toString());
+                paymentProvider.releaseHold(original.getProviderTxnId());
+            } catch (HoldCancelledException | HoldExpiredException ex) {
+                // Already let go — released before, or lapsed at the provider. Either way
+                // no money is reserved any more, which is all a release is for, so this
+                // counts as success: the timeout job and a retry are idempotent.
+                log.info("Hold {} was already let go ({}); recording it released",
+                        original.getId(), ex.getCode());
             }
             Payment.Status statusBefore = original.getStatus();
             original.setStatus(Payment.Status.RELEASED);
@@ -386,9 +393,8 @@ public class PaymentService {
                 .sum();
     }
 
-    /** One team-game payment row. Amounts and split never change once written. */
-    private Payment teamGameRow(GameTeam gameTeam, CardFeeSplit split,
-                                ProviderTransaction txn, Payment.PaymentType type, Payment.Status status) {
+    /** One team-game payment row, before the provider is called. Amounts and split never change. */
+    private Payment teamGameRow(GameTeam gameTeam, CardFeeSplit split, Payment.PaymentType type) {
         return Payment.builder()
                 .game(gameTeam.getGame())
                 .gameTeam(gameTeam)
@@ -401,9 +407,126 @@ public class PaymentService {
                 .method(Payment.Method.CARD)
                 .paymentType(type)
                 .provider(Payment.Provider.ATMOS)
-                .providerTxnId(txn.providerTxnId())
-                .status(status)
+                .status(Payment.Status.PROCESSING)
                 .build();
+    }
+
+    // ---- The provider ----
+
+    /**
+     * Writes the row ({@code processing}; its id is the provider's {@code account}), then
+     * creates and confirms the charge, and moves the row on to what the provider said.
+     * A timeout leaves it {@code processing}: the money may or may not have moved, so
+     * nothing here may assume either — PaymentReconcileJob asks the provider later.
+     */
+    private Payment chargeCard(Payment row, SavedCard card, CardFeeSplit split, User owner) {
+        Payment saved = paymentRepository.save(row);
+        try {
+            PendingCharge pending = paymentProvider.charge(ChargeRequest.withToken(
+                    splitsFor(owner, split), card.getProviderToken(), saved.getId().toString()));
+            saved.setProviderTxnId(String.join(",", pending.transactionIds()));
+            applyChargeOutcome(saved, paymentProvider.confirmCharge(pending.transactionIds(), null));
+        } catch (ProviderTimeoutException ex) {
+            log.warn("Payment {} left processing: {}", saved.getId(), ex.getMessage());
+        }
+        return paymentRepository.save(saved);
+    }
+
+    /** As {@link #chargeCard}, for a hold of {@code minutes}. */
+    private Payment holdCard(Payment row, SavedCard card, CardFeeSplit split, User owner, int minutes) {
+        Payment saved = paymentRepository.save(row);
+        try {
+            HoldOutcome created = paymentProvider.hold(new HoldRequest(
+                    splitsFor(owner, split), card.getProviderToken(), saved.getId().toString(), minutes));
+            saved.setProviderTxnId(created.holdId());
+            saved.setHoldExpiresAt(created.holdTill());
+            applyHoldOutcome(saved, paymentProvider.confirmHold(created.holdId(), null));
+        } catch (ProviderTimeoutException ex) {
+            log.warn("Payment {} left processing: {}", saved.getId(), ex.getMessage());
+        }
+        return paymentRepository.save(saved);
+    }
+
+    /** Moves a charge row on to the provider's answer. PENDING leaves it processing. */
+    void applyChargeOutcome(Payment payment, ChargeOutcome outcome) {
+        switch (outcome.status()) {
+            case SUCCESS -> {
+                payment.setStatus(Payment.Status.PAID);
+                payment.setProviderSuccessTxnIds(String.join(",", outcome.successTransIds()));
+                payment.setProviderCommission(outcome.commission());
+                payment.setOfdUrl(outcome.ofdUrl());
+            }
+            case FAILED -> {
+                payment.setStatus(Payment.Status.FAILED);
+                log.info("Payment {} declined by the provider: code={}", payment.getId(), outcome.errorCode());
+            }
+            case REVERSED -> payment.setStatus(Payment.Status.REFUNDED);
+            default -> {
+                // still in flight: stays processing
+            }
+        }
+    }
+
+    /** Moves a hold row on to the provider's answer. PENDING leaves it processing. */
+    void applyHoldOutcome(Payment payment, HoldOutcome outcome) {
+        if (outcome.holdTill() != null) {
+            payment.setHoldExpiresAt(outcome.holdTill());
+        }
+        switch (outcome.status()) {
+            case HELD -> payment.setStatus(Payment.Status.HELD);
+            case CAPTURED -> {
+                payment.setStatus(Payment.Status.CAPTURED);
+                payment.setProviderCommission(outcome.commission());
+            }
+            case RELEASED -> payment.setStatus(Payment.Status.RELEASED);
+            case FAILED -> {
+                payment.setStatus(Payment.Status.FAILED);
+                log.info("Hold {} declined by the provider: code={}", payment.getId(), outcome.errorCode());
+            }
+            default -> {
+                // still in flight: stays processing
+            }
+        }
+    }
+
+    /**
+     * Gives a settled card payment back in full: every split's transaction is reversed.
+     * One already reversed (TransactionClosed) is done, not an error, so a retry is safe.
+     *
+     * <p>TODO(ATMOS): a captured hold has no success transaction id in the documented
+     * answers; it is reversed by its hold id here until ATMOS says what to send.
+     */
+    private void reverseInFull(Payment original, String reason) {
+        List<String> ids = original.getProviderSuccessTxnIds() == null || original.getProviderSuccessTxnIds().isBlank()
+                ? List.of(original.getProviderTxnId())
+                : Arrays.asList(original.getProviderSuccessTxnIds().split(","));
+        for (String id : ids) {
+            try {
+                paymentProvider.reverse(id, reason);
+            } catch (TransactionClosedException ex) {
+                log.info("Transaction of payment {} was already reversed", original.getId());
+            }
+        }
+    }
+
+    /**
+     * The owner's grossed-up share to the owner's ATMOS recipient, the platform's to the
+     * platform; a share of zero is left out.
+     */
+    private List<Split> splitsFor(User owner, CardFeeSplit split) {
+        List<Split> splits = new ArrayList<>(2);
+        if (split.ownerGross() > 0) {
+            splits.add(Split.owner(owner == null ? null : owner.getAtmosRecipientId(), split.ownerGross()));
+        }
+        if (split.platformGross() > 0) {
+            splits.add(Split.platform(split.platformGross()));
+        }
+        return splits;
+    }
+
+    private User ownerOf(GameTeam gameTeam) {
+        return gameTeam.getGame() == null || gameTeam.getGame().getStadium() == null
+                ? null : gameTeam.getGame().getStadium().getOwner();
     }
 
     /**
@@ -494,7 +617,7 @@ public class PaymentService {
         // Only the card provider can give money back. Legacy Payme/Click rows
         // predate it and are reversed on paper only, as they always were.
         if (original.getProvider() == Payment.Provider.ATMOS) {
-            paymentProvider.refund(original.getProviderTxnId());
+            reverseInFull(original, reason);
         }
 
         Payment refund = paymentRepository.save(Payment.builder()

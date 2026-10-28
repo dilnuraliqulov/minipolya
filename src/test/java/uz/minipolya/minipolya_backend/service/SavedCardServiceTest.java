@@ -14,7 +14,7 @@ import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.SavedCardMapper;
 import uz.minipolya.minipolya_backend.mapper.SavedCardMapperImpl;
 import uz.minipolya.minipolya_backend.provider.BoundCard;
-import uz.minipolya.minipolya_backend.provider.CardBinding;
+import uz.minipolya.minipolya_backend.provider.CardBindingStart;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.repository.SavedCardRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
@@ -70,20 +70,21 @@ class SavedCardServiceTest {
 
     @Test
     void addingACardStartsABindingAndStoresNothingYet() {
-        when(paymentProvider.startCardBinding(PAN, "12/29")).thenReturn(new CardBinding("bind-1"));
+        when(paymentProvider.bindCardInit(PAN, "12/29")).thenReturn(new CardBindingStart("bind-1", "********9999"));
 
         CardBindingResponse response = service.addCard(USER_ID,
                 AddCardRequest.builder().cardNumber(PAN).expiry("12/29").build());
 
         assertThat(response.getBindingId()).isEqualTo("bind-1");
+        assertThat(response.getMaskedPhone()).isEqualTo("********9999");
         // Nothing is persisted until the SMS code confirms the binding.
         verify(repository, never()).save(any());
     }
 
     @Test
     void confirmingStoresTheTokenAndMaskedNumberAndNeverThePan() {
-        when(paymentProvider.confirmCardBinding("bind-1", "111111"))
-                .thenReturn(new BoundCard("tok-1", "8600 •••• 1234", "uzcard"));
+        when(paymentProvider.bindCardConfirm("bind-1", "111111"))
+                .thenReturn(new BoundCard("tok-1", "card-77", "8600 •••• 1234", "12/30"));
 
         SavedCardResponse response = service.confirmCard(USER_ID,
                 ConfirmCardRequest.builder().bindingId("bind-1").smsCode("111111").build());
@@ -95,11 +96,14 @@ class SavedCardServiceTest {
         assertThat(saved.getProviderToken()).isEqualTo("tok-1");
         assertThat(saved.getMaskedNumber()).isEqualTo("8600 •••• 1234");
         assertThat(saved.getCardType()).isEqualTo("uzcard");
+        assertThat(saved.getProviderCardId()).isEqualTo("card-77");
+        assertThat(saved.getExpiry()).isEqualTo("12/30");
         assertThat(saved.isActive()).isTrue();
         assertThat(saved.getUser().getId()).isEqualTo(USER_ID);
 
         assertThat(response.getMaskedNumber()).isEqualTo("8600 •••• 1234");
         assertThat(response.getCardType()).isEqualTo("uzcard");
+        assertThat(response.getExpiry()).isEqualTo("12/30");
         assertThat(response.isActive()).isTrue();
         // The response must not carry the provider token to the client at all.
         assertThat(response.toString()).doesNotContain("tok-1");
@@ -127,6 +131,31 @@ class SavedCardServiceTest {
         assertThat(mine.isActive()).isFalse();
         verify(repository).save(mine);
         verify(repository, never()).delete(any());
+    }
+
+    @Test
+    void deletingACardAlsoRemovesItAtTheProvider() {
+        SavedCard mine = card(USER_ID);
+        mine.setProviderCardId("card-77");
+        when(repository.findById(CARD_ID)).thenReturn(Optional.of(mine));
+
+        service.deleteCard(USER_ID, CARD_ID);
+
+        verify(paymentProvider).removeCard("card-77", "tok-1");
+        assertThat(mine.isActive()).isFalse();
+    }
+
+    @Test
+    void aProviderThatCannotRemoveTheCardDoesNotKeepItUsable() {
+        SavedCard mine = card(USER_ID);
+        mine.setProviderCardId("card-77");
+        when(repository.findById(CARD_ID)).thenReturn(Optional.of(mine));
+        org.mockito.Mockito.doThrow(new uz.minipolya.minipolya_backend.provider.PaymentProviderException("X", "no"))
+                .when(paymentProvider).removeCard("card-77", "tok-1");
+
+        service.deleteCard(USER_ID, CARD_ID);
+
+        assertThat(mine.isActive()).isFalse();
     }
 
     @Test

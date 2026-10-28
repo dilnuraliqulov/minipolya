@@ -121,9 +121,24 @@ public class Payment {
     @Column(nullable = false, length = 20)
     private Provider provider;
 
-    /** Null for cash. UNIQUE at the DB level — the webhook idempotency key. */
+    /**
+     * The provider's handle: the charge's transaction ids (comma-separated, one per split)
+     * or the hold id. Null for cash. UNIQUE at the DB level.
+     */
     @Column(name = "provider_txn_id", length = 255, unique = true)
     private String providerTxnId;
+
+    /** The ids a confirmed charge returned, comma-separated: what a reverse needs. */
+    @Column(name = "provider_success_txn_ids", length = 500)
+    private String providerSuccessTxnIds;
+
+    /** The fiscal receipt for this payment, when the provider issued one. */
+    @Column(name = "ofd_url", length = 500)
+    private String ofdUrl;
+
+    /** When an unsettled hold lapses at the provider. */
+    @Column(name = "hold_expires_at")
+    private OffsetDateTime holdExpiresAt;
 
     @Builder.Default
     @Convert(converter = StatusConverter.class)
@@ -222,6 +237,8 @@ public class Payment {
      * checkout and disappear with it.
      */
     public enum Status {
+        /** Written, provider called, answer not in yet (or lost): settled by the reconcile job. */
+        PROCESSING,
         HELD, CAPTURED, RELEASED, PAID, REFUNDED, FAILED, PENDING, COMPLETED;
 
         @JsonValue

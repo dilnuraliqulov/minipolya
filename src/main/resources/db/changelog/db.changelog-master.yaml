@@ -61,3 +61,5 @@ databaseChangeLog:
       file: db/changelog/changes/030-card-fee-settings.sql
   - include:
       file: db/changelog/changes/031-card-fee-payments.sql
+  - include:
+      file: db/changelog/changes/032-atmos-operations.sql

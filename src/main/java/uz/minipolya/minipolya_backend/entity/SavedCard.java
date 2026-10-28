@@ -56,6 +56,14 @@ public class SavedCard {
     @Column(name = "card_type", length = 20)
     private String cardType;
 
+    /** The provider's own id for the card, needed to remove it there. */
+    @Column(name = "provider_card_id", length = 64)
+    private String providerCardId;
+
+    /** The expiry the provider reports, MM/YY — shown to the player. */
+    @Column(length = 5)
+    private String expiry;
+
     @Builder.Default
     @Column(name = "is_active", nullable = false)
     private boolean isActive = true;

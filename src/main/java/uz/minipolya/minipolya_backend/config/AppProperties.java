@@ -61,6 +61,12 @@ public class AppProperties {
          * the real ATMOS client will register itself under its own value.
          */
         private String provider = "fake";
+
+        /**
+         * The longest a team game's hold may last, in minutes (default 43 200 = 30 days).
+         * A game whose hold would need longer cannot be created.
+         */
+        private int holdMaxMinutes = 43_200;
     }
 
     @Getter
