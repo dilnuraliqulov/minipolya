@@ -110,7 +110,8 @@ src/main/java/uz/minipolya/minipolya_backend/
 │   ├── GameTimeoutJob.java          # Cancel unfilled games (team: 3h before start; others: at start)
 │   ├── ReminderJob.java             # Send reminders 2h before game
 │   ├── BookingSeriesJob.java        # Generate next week's recurring bookings
-│   └── PromotionExpiryJob.java      # Mark expired promotions
+│   ├── PromotionExpiryJob.java      # Mark expired promotions
+│   └── PaymentReconcileJob.java     # Every 5 min: settle payments stuck mid-step (see "Payments")
 ├── telegram/                # Bot webhook
 │   ├── TelegramWebhookController.java
 │   └── TelegramBotService.java
@@ -176,7 +177,12 @@ db/changelog/
     ├── 026-opponent-left.sql         # bookings status cancelled_opponent_left + notification game_opponent_left
     ├── 027-admin-password-login.sql  # pgcrypto + users.username/password_hash/lockout columns; audit_log.entity_id nullable
     ├── 028-password-changed-at.sql   # users.password_changed_at — tokens issued earlier are refused
-    └── 029-audit-log-structure.sql   # audit_log actor_type, actor_name, entity_label, changes, reason
+    ├── 029-audit-log-structure.sql   # audit_log actor_type, actor_name, entity_label, changes, reason
+    ├── 030-card-fee-settings.sql     # platform_settings card_fee_bps, payment_rounding_step
+    ├── 031-card-fee-payments.sql     # payments card_fee_expected, provider_commission; bookings.card_price
+    ├── 032-atmos-operations.sql      # processing status, provider ids, ofd_url, hold_expires_at; saved card id/expiry; users.atmos_recipient_id
+    ├── 033-payment-pending-steps.sql # return_pending / capture_pending statuses
+    └── 034-saved-card-token-encrypted.sql # provider_token widened for AES-GCM
 ```
 
 ### Adding New Migrations
@@ -248,16 +254,20 @@ When you need to change the schema (add column, new table, alter constraint):
 
 | `paymentOption` | Charged | Allowed when |
 |---|---|---|
-| `FULL` | the whole price | always |
-| `MINIMUM` | `stadium.min_booking_amount` | the stadium has one **and** it is below this booking's price |
+| `FULL` | the booking's card price: the sum of each hour's card price | always |
+| `MINIMUM` | `playerAmount(stadium.min_booking_amount)` | the stadium has one **and** it is below this booking's price |
+
+Both include the card fee (see "Payments → The card fee"); cash never does.
 
 There are no other amounts. `min_booking_amount` is nullable — null means full
 payment is required — and when set must be at least 50 000 tiyin (500 so'm, the
 smallest payment ATMOS takes).
 
 - `bookings.payment_status` is `unpaid` / `partially_paid` / `paid`, and
-  `paid_amount` is the running total of successful payments. Responses carry
-  `price`, `paidAmount` and `remainingAmount` (all tiyin).
+  `paid_amount` is the running total of the **net** successful payments cover.
+  Responses carry `price` (card), `cardFee`, `netPrice` (owner/admin only),
+  `paidAmount` and `remainingAmount` (net), `remainderByCard` and `remainderInCash`
+  (all tiyin).
 - A successful charge confirms the booking. A **declined** card leaves it
   `pending` with a `failed` payment row, so the usual hold timeout expires it;
   the create call still answers 200 with `paymentStatus: unpaid`, and the
@@ -378,10 +388,11 @@ when the stadium has no minimum) — all tiyin, see `util/TeamGameSplit.java`:
 
 Where a halving is odd the extra tiyin goes to the **second** team, so the two
 advances add up to exactly `base` and the two remainders to exactly `P − base`.
-The ATMOS split of a joining payment is `ownerAmount = advance`,
-`platformAmount = fee`; **no booking commission is applied to a team game**,
-because the fee *is* the platform's cut, and a remainder is therefore all the
-owner's (`platformAmount = 0`).
+By card each team pays `playerAmount(fee + advance)`, split so the owner nets the
+advance and the platform nets the fee after the card fee; **no booking commission is
+applied to a team game**, because the fee *is* the platform's cut, and a remainder is
+therefore all the owner's (the platform's split of it is only the rounding remainder).
+See "Payments → Team game money → ATMOS operations" for holds, captures and reversals.
 
 *The two deadlines.*
 - **the deadline** — `starts_at − stadium.cancellation_hours` (default 24).
@@ -505,8 +516,9 @@ pay for the pitch.
   back (team games through `TeamGameService`, casual through participants)
 - Game statuses: `open` → `confirmed` → `completed`
 - Cancel statuses: `cancelled_slot_taken`, `cancelled_by_creator`, `cancelled_not_filled`
-- `POST /api/games/{id}/pay` is the **casual** hosted checkout and refuses a team
-  game: a team pays when creating or joining, from a saved card
+- `POST /api/games/{id}/pay` is the **casual** payment and refuses a team game (a team
+  pays when creating or joining). With `cardId` it charges that saved card through
+  ATMOS (`playerAmount(share + service fee)`); without it, the legacy hosted checkout.
 
 ### Platform Settings
 
@@ -518,53 +530,215 @@ config. Admins read and change them at `GET` / `PUT /api/admin/settings`.
 | `booking_commission_percent` | 0 | Percent of a booking price the platform keeps |
 | `team_game_platform_fee` | 2 500 000 tiyin (25 000 so'm) | Charged per team on a team game |
 | `casual_game_service_fee` | 0 | Charged per player on a casual game |
+| `card_fee_bps` | 150 (1.5%) | The card fee ATMOS takes; card prices are grossed up by it (0–1000) |
+| `payment_rounding_step` | 10 000 tiyin (100 so'm) | Card prices are rounded up to a multiple of it (1–1 000 000) |
 
 - The row is seeded by changeset 021; `singleton` is UNIQUE and CHECKed true, so a
   second row is impossible.
-- Validation: commission 0–50, fees not negative. A rejected value writes nothing.
+- Validation: commission 0–50, fees not negative, card fee 0–1000 bps, rounding step
+  1–1 000 000 tiyin. A rejected value writes nothing.
 - Every change writes one `SETTINGS_CHANGED` audit entry listing each changed
   field with its old and new value (see "Audit log").
 
 ### Payments
 
-**Provider.** ATMOS is the card provider. Every new flow goes through the
-`PaymentProvider` interface in `provider/`: bind a card once
-(`startCardBinding` → `confirmCardBinding` with the SMS code), then `charge`,
-`hold`, `capture`, `release` and `refund` it by token. Amounts are tiyin.
+#### The card fee
 
-- `FakePaymentProvider` stands in until the ATMOS docs land. It is active only
-  when `app.payments.provider=fake` and **refuses to start under the `prod`
-  profile**. Its SMS code is always `111111`, and a card number ending in `0002`
-  is always declined so failure paths can be tested.
-- A declined card comes back as a `FAILED` `ProviderTransaction`, not an
-  exception. Malformed input (unknown binding or transaction, wrong SMS code,
-  a hold settled twice) throws.
-- **Refunds are always for the whole transaction** — ATMOS cannot refund part of
-  one.
-- `LegacyCheckoutProvider` (Payme/Click hosted checkout) is **legacy**. It now
-  survives only for the casual game payment path (`POST /api/games/{id}/pay`),
-  which refuses team games. Never use it in a new flow.
+ATMOS takes a commission from every card payment (`card_fee_bps`, default 150 =
+1.5%). Card prices are grossed up so the owner and the platform still net their full
+amounts, then rounded up to `payment_rounding_step` (default 10 000 tiyin = 100 so'm).
+One pure function, integer math only (`PriceCalculator.playerAmount`):
 
-**Saved cards** (`saved_cards`): the provider token, a masked number
-(`8600 •••• 1234`), card type and an active flag. The full card number is passed
-straight to the provider and is **never stored or logged**; `AddCardRequest`
-overrides `toString` to keep it out of stray log lines, and `SavedCardResponse`
-has no token field at all. Deleting a card sets `is_active = false` so past
-payments stay explainable. Endpoints: `POST /api/cards`,
-`POST /api/cards/confirm`, `GET /api/cards`, `DELETE /api/cards/{id}`.
+```
+playerAmount(net) = roundUp( ceil(net * 10000 / (10000 - card_fee_bps)), payment_rounding_step )
 
-**Payment rows**
+200 000 so'm:  20 000 000 * 10000 / 9850 = 20 304 568.5 → 20 304 569 → 20 310 000 tiyin = 203 100 so'm
+```
 
-- `provider_txn_id` is UNIQUE — handles duplicate webhook calls (idempotent)
-- Payment types: `booking`, `remainder`, `team_game`, `game_share`, `service_fee`, `refund`
-  (`team_game` is one team's fee + advance; `remainder` is either a booking's or a
-  team's outstanding balance; `game_share` is the legacy casual flow)
-- `game_team_id` ties a team game's payments to the (game, team) that made them,
-  so they survive the booking being cancelled and recreated when an opponent changes
-- Amounts and the owner/platform split never change after a row is created
-- Status only moves forward (`held` → `captured` or `released`)
-- Refunds create a NEW payment row with negative amount and refund_reason; the
-  original may be marked refunded but is never otherwise rewritten
+Each card payment is split (`CardFeeSplit`):
+
+- `owner_gross = ceil(owner_net * 10000 / (10000 - bps))` — after ATMOS takes its
+  fee, the owner gets exactly `owner_net`;
+- `platform_gross = player_amount - owner_gross` — the platform's own net share grossed
+  up, plus the rounding remainder. `player_amount = owner_gross + platform_gross`, always.
+
+Where it applies — **card payments only, never cash**:
+
+| Payment | Charged by card |
+|---|---|
+| Booking, paid in full | the **sum** of each hour's `playerAmount`, so the slot prices the player saw add up exactly; stored as `bookings.card_price` |
+| Booking, deposit | `playerAmount(min_booking_amount)` |
+| Booking remainder, in the app | `playerAmount(net remainder)` |
+| Booking remainder, cash to the owner | the net remainder — no fee |
+| Team game, per team | `playerAmount(owner advance + platform fee)`; the owner nets the advance, the platform its 25 000 so'm |
+| Team remainder, in the app / cash | `playerAmount(remainder)` / the net remainder |
+| Friends game, per player | `playerAmount(pitch share + service fee)` |
+
+The booking commission (`booking_commission_percent`, 0 today) comes off the owner's
+net before grossing up. `bookings.price` stays the owner's **net** price, and
+`paid_amount` counts the **net** each payment covers (`amount - card_fee_expected`), so
+`payment_status` works as before.
+
+**API.** Player-facing prices show what the player pays by card; the owner always sees
+and edits net prices.
+
+- Public stadium list/detail, availability slots and public pricing rules:
+  `pricePerHour` (and a slot's `originalPrice`) is the card price; a stadium's
+  `minBookingAmount` is the deposit by card; `price` and `cardFee` are added.
+- Owner stadium and pricing-rule responses: `pricePerHour` and `minBookingAmount` stay
+  net, with `price` (card), `netPrice` and `cardFee` alongside.
+- Bookings: `price` is the card price, `cardFee = price - netPrice`, `netPrice` only in
+  owner/admin views; `paidAmount` and `remainingAmount` stay net; `remainderByCard`
+  and `remainderInCash` offer the rest both ways. `refundIfCancelledNow` is the full
+  gross paid by card — the fee comes back too.
+- Games: the challenge board's `amountToPayNow` is the card amount (with `cardFee`);
+  each team carries `price`, `cardFee`, `remainderByCard`, `remainderInCash`, and
+  `paidInApp` is the gross on the card; a friends game's detail carries the share's
+  `price` and `cardFee`. `totalPrice` stays the pitch's net price.
+- The public search's `maxPrice` is a card price, converted to the largest fitting net.
+
+#### The provider
+
+Every flow goes through `PaymentProvider` (`provider/`), shaped around the ATMOS
+operations. Amounts are tiyin; **there is no partial refund anywhere**.
+
+| Operation | ATMOS |
+|---|---|
+| `bindCardInit(cardNumber, expiry)` → bindingId, maskedPhone | `POST /partner/bind-card/init` |
+| `bindCardConfirm(bindingId, otp)` → cardToken, cardId, maskedPan, expiry | `POST /partner/bind-card/confirm` |
+| `removeCard(cardId, cardToken)` | `POST /partner/remove-card` |
+| `charge(splits, token \| number+expiry, account)` → transaction ids, needs OTP without a token | `POST /merchant/bulk/pay/create` + `pre-apply` |
+| `confirmCharge(transactionIds, otp)` → successTransIds, commission, ofdUrl | `POST /merchant/bulk/pay/apply` |
+| `getCharge(transactionId)` — after a lost answer | `POST /merchant/pay/get` |
+| `reverse(successTransId, reason)` — the whole transaction | `POST /merchant/pay/reverse` |
+| `hold(splits, cardToken, account, durationMinutes)` → holdId | `POST /hold/multiple/create` |
+| `confirmHold(holdId, otp)` | `PUT /hold/multiple/apply/{id}` |
+| `captureHold(holdId)` — always the full amount | `POST /hold/{id}` |
+| `releaseHold(holdId)` | `DELETE /hold/{id}` (`send_cancel_sms=true`) |
+| `getHold(holdId)` | `GET /hold/{id}` |
+
+- A split names the stadium owner's ATMOS recipient (`users.atmos_recipient_id`) or
+  the platform, whose recipient the provider takes from `ATMOS_PLATFORM_RECIPIENT_ID`.
+- `account` is our payment row id: the row is written first (`processing`), so a retry
+  never charges twice.
+- A declined card is a `FAILED` outcome. `STPIMS-ERR-092` (transaction closed),
+  `-145` (hold cancelled) and `-144` (hold expired) are `TransactionClosedException`,
+  `HoldCancelledException`, `HoldExpiredException`; any other code is a
+  `PaymentProviderException` carrying it — logged, never shown raw to a player. No
+  answer is a `ProviderTimeoutException`: the payment stays `processing`, never assumed
+  failed, never sent again.
+- **`AtmosPaymentProvider`** is active only under the `atmos` profile and refuses to
+  start unless `ATMOS_BASE_URL`, `ATMOS_CONSUMER_KEY`, `ATMOS_CONSUMER_SECRET`,
+  `ATMOS_STORE_ID` and `ATMOS_PLATFORM_RECIPIENT_ID` are set. Token from `POST /token`
+  (Basic auth, `client_credentials`), cached until `expires_in` − 5 min; a 401 refreshes
+  it once. `ofd_items` are sent only when `ATMOS_OFD_CODE_RENTAL` and
+  `ATMOS_OFD_CODE_SERVICE` are both set; `ofd_url` is saved on the payment. It never
+  logs a request or response body — only operation names, ids and result codes.
+- **`FakePaymentProvider`** is the default in dev and tests (`app.payments.provider=fake`,
+  not `atmos`) and refuses the `prod` profile: SMS code `111111`, a card ending in `0002`
+  is declined, 1.5% commission per split, a hold lapses after its duration (capture then
+  fails with `HOLD_EXPIRED`), the same account never charges twice.
+- `LegacyCheckoutProvider` (Payme/Click hosted checkout) is **legacy**, kept only as the
+  no-`cardId` branch of the friends-game pay endpoint. Never use it in a new flow.
+
+#### Payment rows
+
+- `amount` is the gross charged (or the cash taken); `owner_amount + platform_amount =
+  amount`; `card_fee_expected` is what the fee and rounding added (0 for cash);
+  `provider_commission` is what ATMOS reports. **Amounts never change after insert**;
+  only statuses move forward.
+- Statuses: `processing` (provider called, answer not in) → `paid` / `held` / `failed`;
+  `held` → `captured` or `released`; a give-back goes through `return_pending` →
+  `refunded` / `released`; a capture through `capture_pending` → `captured`.
+- `provider_txn_id`: the charge's transaction ids (comma-separated, one per split) or the
+  hold id. `provider_success_txn_ids`: what a reverse needs. `hold_expires_at`: when an
+  unsettled hold lapses.
+- A refund is a NEW row with the negative gross (fee included) and `refund_reason`.
+- Payment types: `booking`, `remainder`, `team_game`, `game_share`, `service_fee`,
+  `refund`; `game_team_id` ties a team game's payments to its (game, team).
+
+#### Team game money → ATMOS operations
+
+| Rule | The creating team (hold) | The other team (charged) |
+|---|---|---|
+| Creating a game | **hold** for (minutes to the 3-hour point) + 120, capped at `app.payments.hold-max-minutes` (43 200); longer → the game cannot be created | — |
+| Waiting, slot taken by a booking | **release** | — |
+| Waiting, 3-hour point (`GameTimeoutJob`) | **release** (already released counts as done) | — |
+| Waiting, leader cancels before the deadline | **release** | — |
+| Waiting, leader cancels after the deadline | **capture** (money kept) | — |
+| Waiting, leader cancels past the 3-hour point | **release** | — |
+| Opponent joins | **capture**, last | **charge** |
+| Confirmed, a leader cancels before the deadline | the leaver's money: **reverse** | the team that stays: nothing |
+| Confirmed, a leader cancels after the deadline | the leaver's money: kept | the team that stays: nothing |
+| Confirmed, a leader cancels past the 3-hour point | the leaver's money: kept | the team that stays: **reverse** |
+| Owner cancels the booking / admin blocks the stadium | **reverse** | **reverse** |
+| A team's remainder in the app | **charge**; reversed with the rest of that team's money when it is given back | |
+
+Each row is tested in `TeamGameOperationMappingTest`. Joining goes in this order: (1)
+book the slot (EXCLUDE constraint), (2) charge the joiner, (3) capture the waiting
+team's hold. If (2) is declined the booking is removed and the game keeps waiting; if
+(2) goes unanswered the same, but the `processing` row is committed for reconciliation.
+If (3) fails (expired, cancelled or unanswered) the joiner's charge is reversed, the
+hold given back, the booking deleted, the game cancelled, an error logged and both
+teams notified — and that is committed (`PaymentStepFailedException`, a 400 with
+`noRollbackFor`), never rolled back over money that already moved. A join waits while
+the creating team's hold is still `processing`.
+
+Ordinary bookings and friends games use **charge / reverse**: a refund (player before
+the deadline, owner at any time, admin block) reverses every split's transaction in
+full. Friends games never held money — each player pays as they go and the slot is
+booked once everyone has — so they pay by card (`POST /api/games/{id}/pay?cardId=`)
+and are reversed if the game is called off. Cash is never touched.
+
+#### Reconciliation
+
+`PaymentReconcileJob` runs every five minutes and settles every payment stuck for over
+five minutes in `processing`, `return_pending` or `capture_pending`, each in its own
+transaction:
+
+- `processing` charge → `getCharge`: paid → the booking is confirmed (through
+  `applySuccessfulBookingPayment`), the friends game told, the team's remainder settled
+  — or the money given straight back if what it paid for has gone (an abandoned join);
+  unconfirmed after 30 minutes → failed, no money moved.
+- `processing` hold → `getHold`: held, or failed (the waiting game it was for ends).
+- `return_pending` → reversed if the money was taken, released if it is held.
+- `capture_pending` → captured if still held; released with an error if it lapsed.
+
+Idempotent: settled rows are not picked up, and a reverse or release of something
+already gone counts as done.
+
+#### Saved cards
+
+`saved_cards` keeps the provider token **encrypted at rest** (AES-256-GCM,
+`CARD_TOKEN_KEY`; required under the `prod` and `atmos` profiles), the provider's card
+id, a masked number (`8600 •••• 1234`), the expiry ATMOS reports and an active flag. The
+card number and the expiry the player typed go straight to ATMOS and are **never stored
+or logged**; the token never appears in any API response. The player sees only the
+masked number and expiry; deleting a card removes it at ATMOS (`removeCard`) and sets
+`is_active = false`. Endpoints: `POST /api/cards`, `POST /api/cards/confirm`,
+`GET /api/cards`, `DELETE /api/cards/{id}`.
+
+**Never logged or returned**: card numbers, expiry dates, SMS codes, card tokens, ATMOS
+credentials or access tokens. The request DTOs and provider records override
+`toString` to mask them, and a test checks it.
+
+#### Open ATMOS questions
+
+- [ ] `store_id` vs `terminal_id`: which identifies a split's recipient (the bulk and
+      hold requests use `store_id`, the responses `terminal_id`).
+- [ ] Bulk `pay/create`: `store_id` per `params` item (the table) or one at the top (the
+      example)? We send both. Are `ofd_items` accepted per item?
+- [ ] `amount`: a number (bulk example) or a string (hold examples)? We follow each example.
+- [ ] The OTP to send when applying a token payment or hold — the docs show `111111`.
+- [ ] Do hold capture/cancel/get take the multi-hold `parent_id` or each item's `hold_id`?
+      We use `parent_id`.
+- [ ] How is a captured hold reversed — which transaction id? We send the hold id.
+- [ ] `pay/get` and `hold/{id}` status values are not listed; `confirmed: true` is read as
+      success / held.
+- [ ] `hold_till`'s format; and whether `DELETE /hold/{id}` answering `STPIMS-ERR-145`
+      means "released" (its example) or an error.
+- [ ] The token lifetime: the text says 3600 s, the example 2525.
+- [ ] `/token`: `grant_type` in the form body (the docs) or the query string?
 
 ### Availability Calculation
 
@@ -870,6 +1044,16 @@ DB_USERNAME=postgres
 DB_PASSWORD=...
 JWT_SECRET=...        # at least 32 bytes — HS256 refuses a shorter key at startup
 BOT_TOKEN=...
+CARD_TOKEN_KEY=...    # 32 bytes, base64; encrypts saved card tokens (required under prod/atmos)
+
+# ATMOS — used only with SPRING_PROFILES_ACTIVE=atmos
+ATMOS_BASE_URL=https://apigw.atmos.uz
+ATMOS_CONSUMER_KEY=...
+ATMOS_CONSUMER_SECRET=...
+ATMOS_STORE_ID=...
+ATMOS_PLATFORM_RECIPIENT_ID=...
+ATMOS_OFD_CODE_RENTAL=      # optional: fiscal receipts are sent only when both are set
+ATMOS_OFD_CODE_SERVICE=
 ```
 
 - Spring reads it itself: `application.yaml` has
@@ -937,9 +1121,12 @@ forwarded headers — and then every admin shares one 20-attempt budget.
 - `JWT_SECRET`: random, at least 32 bytes (`openssl rand -base64 48`), different
   from every other environment. Rotating it signs everyone out.
 - `BOT_TOKEN`, `DB_PASSWORD`: never in Git, Postman, logs or tickets.
-- `SPRING_PROFILES_ACTIVE=prod`. `FakePaymentProvider` refuses to start under it,
-  so **a real payment provider (ATMOS) must be wired before production** —
-  `PAYMENTS_PROVIDER=fake` will not boot.
+- `SPRING_PROFILES_ACTIVE=prod,atmos`. `FakePaymentProvider` refuses to start under
+  `prod`, and the `atmos` profile wires `AtmosPaymentProvider`, which refuses to start
+  without every `ATMOS_*` variable. Set `CARD_TOKEN_KEY` (`openssl rand -base64 32`)
+  and keep it: losing it makes every saved card unusable. Give each stadium owner their
+  `users.atmos_recipient_id` before they take card payments. Settle the "Open ATMOS
+  questions" (see "Payments") against the real API first.
 - The Payme/Click webhooks are still mocks that trust the body without checking a
   signature (see "Deferred until the payment model is final"). Don't expose
   `/webhooks/payme` and `/webhooks/click` until they verify it — block them in

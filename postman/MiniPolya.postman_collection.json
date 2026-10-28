@@ -2247,6 +2247,12 @@
                   "});",
                   "pm.test('shows the cancellation policy before booking', function () {",
                   "    pm.expect(pm.response.json().data.cancellationPolicy).to.have.property('cancellationHours');",
+                  "});",
+                  "pm.test('shows the card price, never the owner net', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.price).to.eql(d.pricePerHour);",
+                  "    pm.expect(d.cardFee, 'cardFee').to.be.a('number');",
+                  "    pm.expect(d).to.not.have.property('netPrice');",
                   "});"
                 ]
               }
@@ -2373,6 +2379,16 @@
                   "});",
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('the owner sees net prices, with the card price alongside', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    var list = Array.isArray(d) ? d : d.content;",
+                  "    pm.expect(list).to.be.an('array').that.is.not.empty;",
+                  "    list.forEach(function (s) {",
+                  "        pm.expect(s.netPrice).to.eql(s.pricePerHour);",
+                  "        pm.expect(s.price).to.eql(s.netPrice + s.cardFee);",
+                  "        pm.expect(s.price).to.be.at.least(s.netPrice);",
+                  "    });",
                   "});"
                 ]
               }
@@ -4132,9 +4148,17 @@
                   "        if (s.available) {",
                   "            pm.expect(s.pricePerHour % 1).to.eql(0);",
                   "            if (s.discountPercent) {",
-                  "                pm.expect(s.pricePerHour).to.eql(Math.round(s.originalPrice * (100 - s.discountPercent) / 100));",
+                  "                pm.expect(s.pricePerHour).to.be.below(s.originalPrice);",
                   "            }",
                   "        }",
+                  "    });",
+                  "});",
+                  "pm.test('slot prices are what the player pays by card', function () {",
+                  "    pm.response.json().data.slots.filter(function (s) { return s.available; }).forEach(function (s) {",
+                  "        pm.expect(s.price).to.eql(s.pricePerHour);",
+                  "        pm.expect(s.cardFee, 'cardFee').to.be.a('number');",
+                  "        pm.expect(s.cardFee).to.be.above(0);",
+                  "        pm.expect(s).to.not.have.property('netPrice');",
                   "    });",
                   "});"
                 ]
@@ -4405,9 +4429,16 @@
                   "    var d = pm.response.json().data;",
                   "    pm.expect(d.status).to.eql('confirmed');",
                   "    pm.expect(d.paymentStatus).to.eql('paid');",
-                  "    pm.expect(d.paidAmount).to.eql(d.price);",
+                  "    pm.expect(d.paidAmount).to.eql(d.price - d.cardFee);   // paidAmount is net, price is by card",
+                  "    pm.expect(d.remainderByCard).to.eql(0);",
+                  "    pm.expect(d.remainderInCash).to.eql(0);",
                   "    pm.expect(d.remainingAmount).to.eql(0);",
                   "    pm.expect(d.source).to.eql('app');",
+                  "});",
+                  "pm.test('a player sees the card price and fee, not the owner net', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.cardFee).to.be.above(0);",
+                  "    pm.expect(d).to.not.have.property('netPrice');",
                   "});"
                 ]
               }
@@ -5005,7 +5036,9 @@
                   "    var d = pm.response.json().data;",
                   "    pm.expect(d.paymentStatus).to.eql('paid');",
                   "    pm.expect(d.remainingAmount).to.eql(0);",
-                  "    pm.expect(d.paidAmount).to.eql(d.price);",
+                  "    pm.expect(d.paidAmount).to.eql(d.price - d.cardFee);   // paidAmount is net, price is by card",
+                  "    pm.expect(d.remainderByCard).to.eql(0);",
+                  "    pm.expect(d.remainderInCash).to.eql(0);",
                   "});",
                   "pm.test('money stays whole tiyin', function () {",
                   "    var d = pm.response.json().data;",
@@ -5143,6 +5176,13 @@
                   "    pm.expect(hours).to.eql(d.cancellationPolicy.cancellationHours);",
                   "    // Captured so the cancel request can check it was honoured.",
                   "    pm.environment.set('refundIfCancelledNow', d.refundIfCancelledNow);",
+                  "});",
+                  "pm.test('offers the rest by card or in cash', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.remainderInCash).to.eql(d.remainingAmount);",
+                  "    pm.expect(d.remainderByCard).to.be.at.least(d.remainderInCash);",
+                  "    pm.expect(d.price - d.cardFee, 'net price').to.eql(d.paidAmount + d.remainingAmount);",
+                  "    pm.expect(d).to.not.have.property('netPrice');",
                   "});"
                 ]
               }
@@ -8683,7 +8723,7 @@
                                                                }
                                                            ]
                                              },
-                                     "description":  "Confirm with POST /webhooks/payme using txnId mock-{{gamePaymentId}}. The slot stays free until every share is paid."
+                                     "description":  "Legacy hosted checkout (no cardId). Confirm with POST /webhooks/payme using txnId mock-{{gamePaymentId}}. The slot stays free until every share is paid. The ATMOS path is POST /api/games/{id}/pay?cardId=<saved card>: it charges playerAmount(share + service fee) to that card at once and answers with status paid / failed / processing."
                                  }
                  },
                  {
@@ -9436,6 +9476,9 @@
                                                                    "    pm.expect(teams[0].feeAmount, \u0027feeAmount\u0027).to.be.a(\u0027number\u0027);",
                                                                    "    pm.expect(teams[0].advanceAmount, \u0027advanceAmount\u0027).to.be.a(\u0027number\u0027);",
                                                                    "    pm.expect(teams[0].remainderStatus).to.eql(\u0027unpaid\u0027);",
+                                                                   "    pm.expect(teams[0].price - teams[0].cardFee).to.be.at.least(teams[0].feeAmount + teams[0].advanceAmount);",
+                                                                   "    pm.expect(teams[0].remainderInCash).to.eql(teams[0].remainderAmount);",
+                                                                   "    pm.expect(teams[0].remainderByCard).to.be.at.least(teams[0].remainderInCash);",
                                                                    "});"
                                                                ]
                                                   }
@@ -9501,7 +9544,9 @@
                                                                    "    var mine = pm.response.json().data.content.filter(function (c) {",
                                                                    "        return c.gameId === pm.environment.get(\u0027tvtGameId\u0027);",
                                                                    "    })[0];",
-                                                                   "    pm.expect(mine.amountToPayNow).to.eql(mine.feeAmount + mine.advanceAmount);",
+                                                                   "    // By card: fee + advance grossed up for the card fee.",
+                                                                   "    pm.expect(mine.amountToPayNow - mine.cardFee).to.be.at.least(mine.feeAmount + mine.advanceAmount);",
+                                                                   "    pm.expect(mine.cardFee).to.be.above(0);",
                                                                    "    pm.expect(mine.waitingTeamName, \u0027waitingTeamName\u0027).to.be.a(\u0027string\u0027);",
                                                                    "});"
                                                                ]
@@ -13445,6 +13490,8 @@
                   "    pm.expect(d).to.have.property('bookingCommissionPercent');",
                   "    pm.expect(d).to.have.property('teamGamePlatformFee');",
                   "    pm.expect(d).to.have.property('casualGameServiceFee');",
+                  "    pm.expect(d.cardFeeBps, 'cardFeeBps').to.be.within(0, 1000);",
+                  "    pm.expect(d.paymentRoundingStep, 'paymentRoundingStep').to.be.within(1, 1000000);",
                   "});",
                   "pm.test('fees are whole integers of tiyin', function () {",
                   "    var d = pm.response.json().data;",
