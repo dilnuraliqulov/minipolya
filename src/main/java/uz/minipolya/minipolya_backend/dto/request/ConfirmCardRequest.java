@@ -18,4 +18,10 @@ public class ConfirmCardRequest {
 
     @NotBlank
     private String smsCode;
+
+    /** Never render the SMS code. */
+    @Override
+    public String toString() {
+        return "ConfirmCardRequest(bindingId=" + bindingId + ", smsCode=****)";
+    }
 }

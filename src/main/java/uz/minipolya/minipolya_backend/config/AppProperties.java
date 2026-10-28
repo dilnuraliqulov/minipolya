@@ -18,6 +18,7 @@ public class AppProperties {
     private Payments payments = new Payments();
     private AdminLogin adminLogin = new AdminLogin();
     private Atmos atmos = new Atmos();
+    private Security security = new Security();
 
     @Getter
     @Setter
@@ -99,6 +100,18 @@ public class AppProperties {
         @Override
         public String toString() {
             return "Atmos(baseUrl=" + baseUrl + ", storeId=" + storeId + ")";
+        }
+    }
+
+    @Getter
+    @Setter
+    public static class Security {
+        /** CARD_TOKEN_KEY: 32 bytes, base64. Encrypts saved card tokens at rest. */
+        private String cardTokenKey;
+
+        @Override
+        public String toString() {
+            return "Security(cardTokenKey=****)";
         }
     }
 

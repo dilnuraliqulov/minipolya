@@ -751,6 +751,19 @@ public class TeamGameService {
         }
     }
 
+    /**
+     * A remainder paid by card whose answer came in late (the reconcile job): the team is
+     * settled exactly as if the answer had arrived at once.
+     */
+    @Transactional
+    public void settleRemainderPaidLate(GameTeam team) {
+        if (team.getRemainderStatus() == GameTeam.RemainderStatus.PAID) {
+            return;
+        }
+        settleRemainder(team.getGame(), team);
+        log.info("Team remainder settled after a late answer: gameTeamId={}", team.getId());
+    }
+
     /** Marks this team settled and brings the booking's paid amount up to date. */
     private void settleRemainder(Game game, GameTeam team) {
         team.setRemainderStatus(GameTeam.RemainderStatus.PAID);

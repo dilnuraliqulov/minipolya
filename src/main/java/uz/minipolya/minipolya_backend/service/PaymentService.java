@@ -491,6 +491,8 @@ public class PaymentService {
 
     /** As {@link #chargeCard}, for a hold of {@code minutes}. */
     private Payment holdCard(Payment row, SavedCard card, CardFeeSplit split, User owner, int minutes) {
+        // Set before the call, so even a hold whose creation went unanswered is known to be a hold.
+        row.setHoldExpiresAt(java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(minutes));
         Payment saved = paymentRepository.save(row);
         try {
             HoldOutcome created = paymentProvider.hold(new HoldRequest(
@@ -553,7 +555,7 @@ public class PaymentService {
      * <p>TODO(ATMOS): a captured hold has no success transaction id in the documented
      * answers; it is reversed by its hold id here until ATMOS says what to send.
      */
-    private void reverseInFull(Payment original, String reason) {
+    void reverseInFull(Payment original, String reason) {
         List<String> ids = original.getProviderSuccessTxnIds() == null || original.getProviderSuccessTxnIds().isBlank()
                 ? List.of(original.getProviderTxnId())
                 : Arrays.asList(original.getProviderSuccessTxnIds().split(","));
@@ -879,7 +881,7 @@ public class PaymentService {
      * Money arrived — reported by the provider, so SYSTEM. {@code statusBefore} is null for
      * a synchronous charge, whose row is born settled. Never the card token or number.
      */
-    private void auditPaymentCompleted(Payment payment, Payment.Status statusBefore) {
+    void auditPaymentCompleted(Payment payment, Payment.Status statusBefore) {
         auditService.record(AuditEntry.system(AuditAction.PAYMENT_COMPLETED)
                 .entity(AuditEntityType.PAYMENT, payment.getId(), AuditLabels.payment(payment))
                 .change("status", statusBefore, payment.getStatus())

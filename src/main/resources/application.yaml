@@ -51,6 +51,10 @@ app:
     hold-max-minutes: 43200
   # The real ATMOS client, active only under the "atmos" profile (it then refuses to start
   # unless every value except the two OFD codes is set). Never commit real values.
+  security:
+    # 32 bytes, base64 (openssl rand -base64 32): encrypts saved card tokens at rest.
+    # Required under the prod and atmos profiles; elsewhere a fixed dev key is used.
+    card-token-key: ${CARD_TOKEN_KEY:}
   atmos:
     base-url: ${ATMOS_BASE_URL:}
     consumer-key: ${ATMOS_CONSUMER_KEY:}
