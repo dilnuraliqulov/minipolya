@@ -48,7 +48,8 @@ public class AuditLog {
     @Column(name = "entity_type", nullable = false, length = 50)
     private String entityType;
 
-    @Column(name = "entity_id", nullable = false)
+    /** Null when the action concerns no stored entity, e.g. a sign-in with an unknown username. */
+    @Column(name = "entity_id")
     private UUID entityId;
 
     @Column(columnDefinition = "text")

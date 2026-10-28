@@ -62,6 +62,30 @@ public class User {
     @Column(name = "is_blocked", nullable = false)
     private boolean isBlocked = false;
 
+    /**
+     * Admin password sign-in only (see AdminAuthService); null for everyone who signs in
+     * through Telegram. Unique case-insensitively in the database.
+     */
+    @Column(length = 64)
+    private String username;
+
+    /** BCrypt hash, never the password itself. Admin password sign-in only. */
+    @Column(name = "password_hash", length = 100)
+    private String passwordHash;
+
+    /** Wrong passwords in a row since the last success or lockout. */
+    @Builder.Default
+    @Column(name = "failed_login_attempts", nullable = false)
+    private int failedLoginAttempts = 0;
+
+    /** Password sign-in is refused until this moment; null when not locked. */
+    @Column(name = "locked_until")
+    private OffsetDateTime lockedUntil;
+
+    /** Latest successful password sign-in. */
+    @Column(name = "last_login_at")
+    private OffsetDateTime lastLoginAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
