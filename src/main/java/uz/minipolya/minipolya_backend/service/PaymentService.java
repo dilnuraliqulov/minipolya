@@ -155,9 +155,7 @@ public class PaymentService {
             return payment;
         }
 
-        auditService.log(booking.getUser() == null ? null : booking.getUser().getId(),
-                "PAYMENT_COMPLETED", "payment", payment.getId(),
-                "{\"amount\":" + amount + ",\"method\":\"card\",\"type\":\"" + type.getValue() + "\"}");
+        auditPaymentCompleted(payment, null);
         return applySuccessfulBookingPayment(booking, payment);
     }
 
@@ -291,11 +289,15 @@ public class PaymentService {
                 log.error("Hold {} could not be released ({}); marking it released anyway",
                         original.getProviderTxnId(), ex.toString());
             }
+            Payment.Status statusBefore = original.getStatus();
             original.setStatus(Payment.Status.RELEASED);
             paymentRepository.save(original);
-            auditService.log(original.getUser() == null ? null : original.getUser().getId(),
-                    "PAYMENT_RELEASED", "payment", original.getId(),
-                    "{\"amount\":" + original.getAmount() + ",\"reason\":\"" + reason + "\"}");
+            // No money moved, so no refund row: the hold on the card is simply let go.
+            auditService.record(AuditEntry.system(AuditAction.PAYMENT_RELEASED)
+                    .entity(AuditEntityType.PAYMENT, original.getId(), AuditLabels.payment(original))
+                    .change("status", statusBefore, original.getStatus())
+                    .created("releasedAmount", original.getAmount())
+                    .reason(reason));
             log.info("Hold released: paymentId={} amount={} reason={}",
                     original.getId(), original.getAmount(), reason);
             return null;
@@ -405,8 +407,10 @@ public class PaymentService {
             return refundBecauseSlotIsGone(booking, payment);
         }
 
-        long paid = (booking.getPaidAmount() == null ? 0L : booking.getPaidAmount()) + payment.getAmount();
+        long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
+        long paid = paidBefore + payment.getAmount();
         String previousStatus = booking.getStatus();
+        Booking.PaymentStatus paymentStatusBefore = booking.getPaymentStatus();
         booking.setPaidAmount(paid);
         booking.setPaymentStatus(paid >= booking.getPrice()
                 ? Booking.PaymentStatus.PAID
@@ -430,10 +434,16 @@ public class PaymentService {
             return refundBecauseSlotIsGone(booking, payment);
         }
 
-        auditService.log(booking.getUser() == null ? null : booking.getUser().getId(),
-                "BOOKING_CONFIRMED", "booking", booking.getId(),
-                "{\"paidAmount\":" + paid + ",\"paymentStatus\":\""
-                        + booking.getPaymentStatus().getValue() + "\"}");
+        // Only when the money is what confirmed it. A later payment on a live booking
+        // (a remainder, the owner's cash) is recorded by that action's own entry.
+        if (!"confirmed".equals(previousStatus) && "confirmed".equals(booking.getStatus())) {
+            auditService.record(AuditEntry.system(AuditAction.BOOKING_CONFIRMED)
+                    .entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
+                    .change("status", previousStatus, booking.getStatus())
+                    .change("paidAmount", paidBefore, booking.getPaidAmount())
+                    .change("paymentStatus", paymentStatusBefore, booking.getPaymentStatus())
+                    .reason("Payment received"));
+        }
         notifyBookingConfirmed(booking);
         log.info("Booking confirmed by payment: id={} paid={} of {} status={}",
                 booking.getId(), paid, booking.getPrice(), booking.getPaymentStatus().getValue());
@@ -489,12 +499,17 @@ public class PaymentService {
                 .refundOfPayment(original)
                 .build());
 
+        Payment.Status statusBefore = original.getStatus();
         original.setStatus(Payment.Status.REFUNDED);
         paymentRepository.save(original);
 
-        auditService.log(original.getUser() == null ? null : original.getUser().getId(),
-                "REFUND_CREATED", "payment", refund.getId(),
-                "{\"originalPaymentId\":\"" + original.getId() + "\",\"amount\":" + refund.getAmount() + "}");
+        // On the payment that was refunded; the new negative row is named in the changes.
+        auditService.record(AuditEntry.system(AuditAction.REFUND_CREATED)
+                .entity(AuditEntityType.PAYMENT, original.getId(), AuditLabels.payment(original))
+                .change("status", statusBefore, original.getStatus())
+                .created("refundAmount", refund.getAmount())
+                .created("refundPaymentId", refund.getId())
+                .reason(reason));
         log.info("Refunded in full: originalId={} amount={} reason={}",
                 original.getId(), refund.getAmount(), reason);
         return refund;
@@ -573,10 +588,10 @@ public class PaymentService {
         }
 
         if (isSuccess(providerStatus)) {
+            Payment.Status statusBefore = payment.getStatus();
             payment.setStatus(Payment.Status.COMPLETED);
             paymentRepository.save(payment);
-            auditService.log(payment.getUser().getId(), "PAYMENT_COMPLETED", "payment", payment.getId(),
-                    "{\"amount\":" + payment.getAmount() + ",\"provider\":\"" + payment.getProvider().getValue() + "\"}");
+            auditPaymentCompleted(payment, statusBefore);
             onPaymentCompleted(payment);
             log.info("Payment completed: id={} type={} provider={} txn={}",
                     payment.getId(), payment.getPaymentType().getValue(), provider.getValue(), providerTxnId);
@@ -597,6 +612,19 @@ public class PaymentService {
      * <p>This is the list a cancellation refunds, so summing it answers "what
      * would I get back if I cancelled now?" without guessing.
      */
+    /**
+     * Money arrived — reported by the provider, so SYSTEM. {@code statusBefore} is null for
+     * a synchronous charge, whose row is born settled. Never the card token or number.
+     */
+    private void auditPaymentCompleted(Payment payment, Payment.Status statusBefore) {
+        auditService.record(AuditEntry.system(AuditAction.PAYMENT_COMPLETED)
+                .entity(AuditEntityType.PAYMENT, payment.getId(), AuditLabels.payment(payment))
+                .change("status", statusBefore, payment.getStatus())
+                .created("amount", payment.getAmount())
+                .created("method", payment.getMethod())
+                .created("provider", payment.getProvider()));
+    }
+
     @Transactional(readOnly = true)
     public List<Payment> refundableCardPayments(UUID bookingId) {
         return paymentRepository.findByBookingId(bookingId).stream()

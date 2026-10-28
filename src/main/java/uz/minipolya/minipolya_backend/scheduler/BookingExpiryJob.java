@@ -5,9 +5,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Notification;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
+import uz.minipolya.minipolya_backend.service.AuditService;
 import uz.minipolya.minipolya_backend.service.NotificationService;
 
 import java.time.OffsetDateTime;
@@ -26,6 +31,7 @@ public class BookingExpiryJob {
 
     private final BookingRepository bookingRepository;
     private final NotificationService notificationService;
+    private final AuditService auditService;
 
     @Scheduled(fixedRate = 60_000)
     @Transactional
@@ -39,6 +45,10 @@ public class BookingExpiryJob {
         bookingRepository.saveAll(expired);
 
         for (Booking booking : expired) {
+            auditService.record(AuditEntry.system(AuditAction.BOOKING_EXPIRED)
+                    .entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
+                    .change("status", "pending", booking.getStatus())
+                    .reason("Not paid within the hold time"));
             if (booking.getUser() != null) {
                 safeNotify(booking);
             }

@@ -4,6 +4,7 @@ import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.BookingSeries;
 import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.OwnerApplication;
+import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.PricingRule;
 import uz.minipolya.minipolya_backend.entity.Promotion;
 import uz.minipolya.minipolya_backend.entity.Stadium;
@@ -78,6 +79,18 @@ public final class AuditLabels {
     public static String ownerApplication(OwnerApplication application) {
         String applicant = application.getUser() == null ? null : application.getUser().getName();
         return applicant + " — " + application.getBusinessName();
+    }
+
+    /** "booking — Chilonzor Arena, 2026-11-02 20:00 (1h)": the payment's type and what it paid for. */
+    public static String payment(Payment payment) {
+        String type = payment.getPaymentType() == null ? "payment" : payment.getPaymentType().getValue();
+        if (payment.getBooking() != null) {
+            return type + " — " + booking(payment.getBooking());
+        }
+        if (payment.getGame() != null) {
+            return type + " — " + game(payment.getGame());
+        }
+        return type;
     }
 
     private static String local(OffsetDateTime time) {

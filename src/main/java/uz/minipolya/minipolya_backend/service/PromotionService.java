@@ -120,6 +120,12 @@ public class PromotionService {
         ended.forEach(p -> p.setActive(false));
         if (!ended.isEmpty()) {
             promotionRepository.saveAll(ended);
+            for (Promotion promotion : ended) {
+                auditService.record(AuditEntry.system(AuditAction.PROMOTION_EXPIRED)
+                        .entity(AuditEntityType.PROMOTION, promotion.getId(), AuditLabels.promotion(promotion))
+                        .change("isActive", true, false)
+                        .reason("Promotion ended"));
+            }
             log.info("Expired {} promotion(s)", ended.size());
         }
         return ended.size();
