@@ -82,6 +82,13 @@ public class User {
     @Column(name = "locked_until")
     private OffsetDateTime lockedUntil;
 
+    /**
+     * When the password last changed. Tokens issued before this are refused by
+     * JwtAuthFilter, so a password change signs out every older session.
+     */
+    @Column(name = "password_changed_at")
+    private OffsetDateTime passwordChangedAt;
+
     /** Latest successful password sign-in. */
     @Column(name = "last_login_at")
     private OffsetDateTime lastLoginAt;

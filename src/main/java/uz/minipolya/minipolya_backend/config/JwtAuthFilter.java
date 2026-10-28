@@ -21,6 +21,8 @@ import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -36,6 +38,11 @@ import java.util.UUID;
  * <p>The user is loaded on every authenticated request so that blocking takes
  * effect at once rather than when the token expires: a blocked user's token is
  * rejected here with 403, whatever the endpoint.
+ *
+ * <p>The same lookup revokes tokens on a password change: a token issued before
+ * {@code users.password_changed_at} is refused with 401 {@code TOKEN_REVOKED}. Both are
+ * compared to the millisecond ({@link JwtProvider#getIssuedAt}); the fresh token handed
+ * out with the change is issued after the stamp, so it stays valid.
  */
 @Component
 @RequiredArgsConstructor
@@ -67,6 +74,10 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 writeBlocked(response);
                 return;
             }
+            if (issuedBeforePasswordChange(token, user.get())) {
+                writeRevoked(response);
+                return;
+            }
 
             List<SimpleGrantedAuthority> authorities = new ArrayList<>();
             authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
@@ -91,6 +102,22 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         response.setStatus(HttpStatus.FORBIDDEN.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         objectMapper.writeValue(response.getWriter(), ApiResponse.error("Account is blocked"));
+    }
+
+    private boolean issuedBeforePasswordChange(String token, User user) {
+        if (user.getPasswordChangedAt() == null) {
+            return false;
+        }
+        Instant changedAt = user.getPasswordChangedAt().toInstant().truncatedTo(ChronoUnit.MILLIS);
+        return jwtProvider.getIssuedAt(token).isBefore(changedAt);
+    }
+
+    /** 401 with a code, so the panel can tell "sign in again" from a plain missing token. */
+    private void writeRevoked(HttpServletResponse response) throws IOException {
+        response.setStatus(HttpStatus.UNAUTHORIZED.value());
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        objectMapper.writeValue(response.getWriter(), ApiResponse.error("TOKEN_REVOKED",
+                "Session ended because the password was changed; sign in again", null));
     }
 
     private String resolveToken(HttpServletRequest request) {

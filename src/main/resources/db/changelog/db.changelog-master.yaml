@@ -53,3 +53,5 @@ databaseChangeLog:
       file: db/changelog/changes/026-opponent-left.sql
   - include:
       file: db/changelog/changes/027-admin-password-login.sql
+  - include:
+      file: db/changelog/changes/028-password-changed-at.sql
