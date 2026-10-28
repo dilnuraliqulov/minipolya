@@ -18,12 +18,11 @@ Football pitch booking platform for Telegram Mini App. Built for the Uzbekistan 
 
 ```
 src/main/java/uz/minipolya/minipolya_backend/
-├── config/                  # Security, JWT, CORS, app properties config
+├── config/                  # Security, JWT, app properties config (no CORS configuration yet — see "Deployment checklist")
 │   ├── SecurityConfig.java
 │   ├── JwtProvider.java
 │   ├── JwtAuthFilter.java
-│   ├── AppProperties.java          # @ConfigurationProperties for app.*
-│   └── CorsConfig.java
+│   └── AppProperties.java          # @ConfigurationProperties for app.*
 ├── controller/              # REST controllers (thin — delegate to services)
 │   ├── AuthController.java
 │   ├── StadiumController.java
