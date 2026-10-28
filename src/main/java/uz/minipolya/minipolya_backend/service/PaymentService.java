@@ -81,6 +81,7 @@ public class PaymentService {
     private final AuditService auditService;
     private final PaymentProvider paymentProvider;
     private final PlatformSettingsService platformSettingsService;
+    private final CardPricing cardPricing;
 
     public PaymentService(PaymentRepository paymentRepository,
                           BookingRepository bookingRepository,
@@ -106,6 +107,7 @@ public class PaymentService {
         this.auditService = auditService;
         this.paymentProvider = paymentProvider;
         this.platformSettingsService = platformSettingsService;
+        this.cardPricing = new CardPricing(platformSettingsService::current);
     }
 
     /**
@@ -177,20 +179,19 @@ public class PaymentService {
      */
     @Transactional
     public Payment holdForTeamGame(GameTeam gameTeam, SavedCard card) {
-        long advance = gameTeam.getAdvanceAmount();
-        long fee = gameTeam.getFeeAmount();
-        ProviderTransaction txn = paymentProvider.hold(new ChargeCommand(
-                card.getProviderToken(), advance + fee, advance, fee, UUID.randomUUID().toString()));
+        CardFeeSplit split = joinSplit(gameTeam);
+        ProviderTransaction txn = paymentProvider.hold(new ChargeCommand(card.getProviderToken(),
+                split.playerAmount(), split.ownerGross(), split.platformGross(), UUID.randomUUID().toString()));
 
-        Payment payment = paymentRepository.save(teamGameRow(gameTeam, advance, fee, txn,
+        Payment payment = paymentRepository.save(teamGameRow(gameTeam, split, txn,
                 Payment.PaymentType.TEAM_GAME,
                 txn.failed() ? Payment.Status.FAILED : Payment.Status.HELD));
 
         if (txn.failed()) {
-            log.info("Team game hold declined: gameTeamId={} amount={}", gameTeam.getId(), advance + fee);
+            log.info("Team game hold declined: gameTeamId={} amount={}", gameTeam.getId(), split.playerAmount());
         } else {
             log.info("Team game hold placed: gameTeamId={} amount={} txn={}",
-                    gameTeam.getId(), advance + fee, txn.providerTxnId());
+                    gameTeam.getId(), split.playerAmount(), txn.providerTxnId());
         }
         return payment;
     }
@@ -207,21 +208,32 @@ public class PaymentService {
      */
     @Transactional
     public Payment chargeForTeamGame(GameTeam gameTeam, SavedCard card, Payment.PaymentType type) {
-        boolean remainder = type == Payment.PaymentType.REMAINDER;
-        long ownerAmount = remainder ? gameTeam.getRemainderAmount() : gameTeam.getAdvanceAmount();
-        long platformAmount = remainder ? 0L : gameTeam.getFeeAmount();
+        CardFeeSplit split = type == Payment.PaymentType.REMAINDER
+                ? cardPricing.split(gameTeam.getRemainderAmount(), 0L)
+                : joinSplit(gameTeam);
 
-        ProviderTransaction txn = paymentProvider.charge(new ChargeCommand(
-                card.getProviderToken(), ownerAmount + platformAmount, ownerAmount, platformAmount,
-                UUID.randomUUID().toString()));
+        ProviderTransaction txn = paymentProvider.charge(new ChargeCommand(card.getProviderToken(),
+                split.playerAmount(), split.ownerGross(), split.platformGross(), UUID.randomUUID().toString()));
 
-        Payment payment = paymentRepository.save(teamGameRow(gameTeam, ownerAmount, platformAmount, txn, type,
+        Payment payment = paymentRepository.save(teamGameRow(gameTeam, split, txn, type,
                 txn.failed() ? Payment.Status.FAILED : Payment.Status.PAID));
 
         log.info("Team game charge {}: gameTeamId={} type={} amount={}",
-                txn.failed() ? "declined" : "taken", gameTeam.getId(), type.getValue(),
-                ownerAmount + platformAmount);
+                txn.failed() ? "declined" : "taken", gameTeam.getId(), type.getValue(), split.playerAmount());
         return payment;
+    }
+
+    /** What the player pays by card for this net amount (no split): a quote. */
+    public long cardPrice(long net) {
+        return cardPricing.playerAmount(net);
+    }
+
+    /**
+     * What a team's card is charged (or held) on joining: {@code playerAmount(advance + fee)},
+     * split so the owner nets the advance and the platform nets its fee after the card fee.
+     */
+    public CardFeeSplit joinSplit(GameTeam gameTeam) {
+        return cardPricing.joinSplit(gameTeam);
     }
 
     /** Settles a hold by taking the reserved money. */
@@ -375,15 +387,16 @@ public class PaymentService {
     }
 
     /** One team-game payment row. Amounts and split never change once written. */
-    private Payment teamGameRow(GameTeam gameTeam, long ownerAmount, long platformAmount,
+    private Payment teamGameRow(GameTeam gameTeam, CardFeeSplit split,
                                 ProviderTransaction txn, Payment.PaymentType type, Payment.Status status) {
         return Payment.builder()
                 .game(gameTeam.getGame())
                 .gameTeam(gameTeam)
                 .user(gameTeam.getLeader())
-                .amount(ownerAmount + platformAmount)
-                .ownerAmount(ownerAmount)
-                .platformAmount(platformAmount)
+                .amount(split.playerAmount())
+                .ownerAmount(split.ownerGross())
+                .platformAmount(split.platformGross())
+                .cardFeeExpected(split.cardFee())
                 .commissionPercent(0)
                 .method(Payment.Method.CARD)
                 .paymentType(type)
@@ -564,10 +577,16 @@ public class PaymentService {
         GameParticipant participant = gameParticipantRepository.findByGameIdAndUserId(gameId, userId)
                 .orElseThrow(() -> new BadRequestException("Join the game before paying"));
 
+        CardFeeSplit share = gameShareSplit(game);
         Payment payment = Payment.builder()
                 .game(game)
                 .user(participant.getUser())
-                .amount(gameShareAmount(game))
+                .amount(share.playerAmount())
+                .ownerAmount(share.ownerGross())
+                .platformAmount(share.platformGross())
+                .cardFeeExpected(share.cardFee())
+                .commissionPercent(0)
+                .method(Payment.Method.CARD)
                 .paymentType(Payment.PaymentType.GAME_SHARE)
                 .provider(provider)
                 .status(Payment.Status.PENDING)
@@ -791,14 +810,13 @@ public class PaymentService {
     }
 
     /**
-     * One player's share of a casual game. Team games never reach here — their
-     * money is held on creation and charged on joining, per team rather than
-     * per player, by {@code TeamGameService}.
+     * One player's share of a casual game, by card: the pitch share is the owner's and
+     * the service fee the platform's, both grossed up — {@code playerAmount(share + fee)}.
+     * Team games never reach here — their money is held on creation and charged on
+     * joining, per team rather than per player, by {@code TeamGameService}.
      */
-    private long gameShareAmount(Game game) {
-        long fee = game.getServiceFeePerPerson() == null ? 0 : game.getServiceFeePerPerson();
-        int players = game.getMaxPlayers() == null || game.getMaxPlayers() < 1 ? 1 : game.getMaxPlayers();
-        return game.getTotalPrice() / players + fee;
+    public CardFeeSplit gameShareSplit(Game game) {
+        return cardPricing.gameShareSplit(game);
     }
 
     private PaymentInitResponse initResponse(Payment saved, Payment.Provider provider, String checkoutUrl) {

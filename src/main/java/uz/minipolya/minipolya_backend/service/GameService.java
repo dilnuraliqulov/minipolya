@@ -505,6 +505,11 @@ public class GameService {
         }
     }
 
+    /** The card fee with the settings in force now; a quote never asks the payment service. */
+    private CardPricing cardPricing() {
+        return new CardPricing(platformSettingsService::current);
+    }
+
     private GameDetailResponse toDetail(Game game) {
         GameDetailResponse dto = gameMapper.toDetailResponse(game);
         List<GameParticipant> participants = participantRepository.findByGameId(game.getId());
@@ -513,6 +518,11 @@ public class GameService {
         dto.setInviteLink(inviteLink(game.getId()));
         if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
             dto.setTeams(teamGameService.teamsOf(game));
+        } else if (game.getTotalPrice() != null) {
+            // What one player's share costs by card.
+            uz.minipolya.minipolya_backend.util.CardFeeSplit share = cardPricing().gameShareSplit(game);
+            dto.setPrice(share.playerAmount());
+            dto.setCardFee(share.cardFee());
         }
         return dto;
     }

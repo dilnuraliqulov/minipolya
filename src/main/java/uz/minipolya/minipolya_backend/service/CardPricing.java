@@ -2,6 +2,8 @@ package uz.minipolya.minipolya_backend.service;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import uz.minipolya.minipolya_backend.entity.Game;
+import uz.minipolya.minipolya_backend.entity.GameTeam;
 import uz.minipolya.minipolya_backend.entity.PlatformSettings;
 import uz.minipolya.minipolya_backend.util.CardFeeSplit;
 import uz.minipolya.minipolya_backend.util.PriceCalculator;
@@ -67,6 +69,24 @@ public class CardPricing {
     public CardFeeSplit bookingSplit(long playerAmount, long net) {
         long platformNet = bookingCommission(net);
         return split(playerAmount, net - platformNet, platformNet);
+    }
+
+    /**
+     * What a team's card is charged (or held) on joining: {@code playerAmount(advance + fee)},
+     * split so the owner nets the advance and the platform nets its fee after the card fee.
+     */
+    public CardFeeSplit joinSplit(GameTeam team) {
+        return split(team.getAdvanceAmount(), team.getFeeAmount());
+    }
+
+    /**
+     * One player's share of a casual game, by card: the pitch share is the owner's and the
+     * service fee the platform's, both grossed up — {@code playerAmount(share + fee)}.
+     */
+    public CardFeeSplit gameShareSplit(Game game) {
+        long fee = game.getServiceFeePerPerson() == null ? 0 : game.getServiceFeePerPerson();
+        int players = game.getMaxPlayers() == null || game.getMaxPlayers() < 1 ? 1 : game.getMaxPlayers();
+        return split(game.getTotalPrice() / players, fee);
     }
 
     /** The platform's share of a booking's net, by the booking commission in force. */

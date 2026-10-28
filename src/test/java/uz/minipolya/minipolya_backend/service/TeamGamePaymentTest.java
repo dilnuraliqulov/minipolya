@@ -94,9 +94,13 @@ class TeamGamePaymentTest {
 
         ArgumentCaptor<ChargeCommand> command = ArgumentCaptor.forClass(ChargeCommand.class);
         verifyHeld(command);
-        assertThat(command.getValue().amount()).isEqualTo(FEE + ADVANCE);
-        assertThat(command.getValue().ownerAmount()).isEqualTo(ADVANCE);
-        assertThat(command.getValue().platformAmount()).isEqualTo(FEE);
+        // fee + advance, grossed up: the owner's split nets the advance after the card fee,
+        // the platform's split the fee (plus the rounding remainder).
+        assertThat(command.getValue().amount()).isEqualTo(TestPrices.card(FEE + ADVANCE));
+        assertThat(command.getValue().ownerAmount())
+                .isEqualTo(uz.minipolya.minipolya_backend.util.PriceCalculator.grossUp(ADVANCE, 150));
+        assertThat(command.getValue().platformAmount())
+                .isEqualTo(command.getValue().amount() - command.getValue().ownerAmount());
         assertThat(command.getValue().cardToken()).isEqualTo("tok-a");
     }
 
@@ -144,9 +148,14 @@ class TeamGamePaymentTest {
 
         ArgumentCaptor<ChargeCommand> command = ArgumentCaptor.forClass(ChargeCommand.class);
         org.mockito.Mockito.verify(paymentProvider).charge(command.capture());
-        assertThat(command.getValue().amount()).isEqualTo(FEE + ADVANCE);
-        assertThat(command.getValue().ownerAmount()).isEqualTo(ADVANCE);
-        assertThat(command.getValue().platformAmount()).isEqualTo(FEE);
+        // fee + advance, grossed up: the owner's split nets the advance after the card fee,
+        // the platform's split the fee (plus the rounding remainder).
+        assertThat(command.getValue().amount()).isEqualTo(TestPrices.card(FEE + ADVANCE));
+        assertThat(command.getValue().ownerAmount())
+                .isEqualTo(uz.minipolya.minipolya_backend.util.PriceCalculator.grossUp(ADVANCE, 150));
+        assertThat(command.getValue().platformAmount())
+                .isEqualTo(command.getValue().amount() - command.getValue().ownerAmount());
+        assertThat(payment.getCardFeeExpected()).isEqualTo(TestPrices.card(FEE + ADVANCE) - FEE - ADVANCE);
         assertThat(payment.getStatus()).isEqualTo(Payment.Status.PAID);
     }
 
@@ -159,9 +168,14 @@ class TeamGamePaymentTest {
 
         ArgumentCaptor<ChargeCommand> command = ArgumentCaptor.forClass(ChargeCommand.class);
         org.mockito.Mockito.verify(paymentProvider).charge(command.capture());
-        assertThat(command.getValue().amount()).isEqualTo(7_500_000L);   // the remainder, no fee again
-        assertThat(command.getValue().ownerAmount()).isEqualTo(7_500_000L);
-        assertThat(command.getValue().platformAmount()).isZero();
+        // The remainder grossed up, all of it the owner's: no platform fee again — the
+        // platform's split is only what the rounding step added.
+        assertThat(command.getValue().amount()).isEqualTo(TestPrices.card(7_500_000L));
+        assertThat(command.getValue().ownerAmount())
+                .isEqualTo(uz.minipolya.minipolya_backend.util.PriceCalculator.grossUp(7_500_000L, 150));
+        assertThat(command.getValue().platformAmount())
+                .isEqualTo(command.getValue().amount() - command.getValue().ownerAmount())
+                .isLessThan(10_000L);
         assertThat(payment.getPaymentType()).isEqualTo(Payment.PaymentType.REMAINDER);
     }
 

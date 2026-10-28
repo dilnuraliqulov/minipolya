@@ -136,7 +136,9 @@ class TeamGameChallengesTest {
         // 25 000 fee + 25 000 advance = 50 000 so'm, with 75 000 to come later.
         assertThat(card.getFeeAmount()).isEqualTo(FEE);
         assertThat(card.getAdvanceAmount()).isEqualTo(ADVANCE);
-        assertThat(card.getAmountToPayNow()).isEqualTo(FEE + ADVANCE);
+        // ... paid by card, so grossed up by the card fee.
+        assertThat(card.getAmountToPayNow()).isEqualTo(TestPrices.card(FEE + ADVANCE));
+        assertThat(card.getCardFee()).isEqualTo(TestPrices.card(FEE + ADVANCE) - FEE - ADVANCE);
         assertThat(card.getRemainderAmount()).isEqualTo(REMAINDER);
     }
 

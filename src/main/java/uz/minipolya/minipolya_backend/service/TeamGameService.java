@@ -444,6 +444,11 @@ public class TeamGameService {
                 .map(this::toChallenge);
     }
 
+    /** The card fee with the settings in force now; a quote never asks the payment service. */
+    private CardPricing cardPricing() {
+        return new CardPricing(platformSettingsService::current);
+    }
+
     /** Each team's money, for the game response. */
     @Transactional(readOnly = true)
     public List<GameTeamResponse> teamsOf(Game game) {
@@ -459,7 +464,13 @@ public class TeamGameService {
                         .advanceAmount(team.getAdvanceAmount())
                         .remainderAmount(team.getRemainderAmount())
                         .remainderStatus(team.getRemainderStatus().getValue())
-                        .paidInApp(team.getFeeAmount() + team.paidTowardsPitch())
+                        // What is on the card now, gross: holds and settled charges not given back.
+                        .paidInApp(paymentService.refundableTeamTotal(team.getId()))
+                        .price(cardPricing().joinSplit(team).playerAmount())
+                        .cardFee(cardPricing().joinSplit(team).cardFee())
+                        .remainderByCard(team.owesRemainder()
+                                ? cardPricing().playerAmount(team.getRemainderAmount()) : 0L)
+                        .remainderInCash(team.owesRemainder() ? team.getRemainderAmount() : 0L)
                         .cancellationDeadline(cancellationPolicy.deadline(
                                 game.getStartsAt(), game.getStadium().getCancellationHours()))
                         .refundIfCancelledNow(refundIfCancelledNow(game, team, now))
@@ -779,7 +790,8 @@ public class TeamGameService {
                 .totalPrice(game.getTotalPrice())
                 .feeAmount(split.fee())
                 .advanceAmount(split.advanceFor(freeSide))
-                .amountToPayNow(split.joinAmountFor(freeSide))
+                .amountToPayNow(cardPricing().playerAmount(split.joinAmountFor(freeSide)))
+                .cardFee(cardPricing().cardFee(split.joinAmountFor(freeSide)))
                 .remainderAmount(split.remainderFor(freeSide))
                 .build();
     }

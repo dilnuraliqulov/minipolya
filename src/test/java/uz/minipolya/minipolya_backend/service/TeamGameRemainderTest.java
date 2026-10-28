@@ -248,7 +248,16 @@ class TeamGameRemainderTest {
         assertThat(a.getRemainderStatus()).isEqualTo("paid");
         assertThat(a.getTeamName()).isEqualTo("Team A");
 
+        // Joining cost fee + advance by card, grossed up; settled, nothing is left to pay.
+        assertThat(a.getPrice()).isEqualTo(TestPrices.card(FEE + ADVANCE));
+        assertThat(a.getCardFee()).isEqualTo(TestPrices.card(FEE + ADVANCE) - FEE - ADVANCE);
+        assertThat(a.getRemainderByCard()).isZero();
+        assertThat(a.getRemainderInCash()).isZero();
+
         GameTeamResponse b = teams.stream().filter(t -> t.getSide() == Side.B).findFirst().orElseThrow();
         assertThat(b.getRemainderStatus()).isEqualTo("unpaid");
+        // Still owed: as it is in cash, grossed up by card.
+        assertThat(b.getRemainderInCash()).isEqualTo(b.getRemainderAmount());
+        assertThat(b.getRemainderByCard()).isEqualTo(TestPrices.card(b.getRemainderAmount()));
     }
 }
