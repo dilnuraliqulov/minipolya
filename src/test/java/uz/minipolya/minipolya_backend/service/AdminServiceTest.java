@@ -4,6 +4,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateStadiumStatusRequest;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateUserRequest;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumResponse;
@@ -148,7 +152,9 @@ class AdminServiceTest {
         service.updateUser(TARGET_USER_ID, AdminUpdateUserRequest.builder().isOwner(true).build(), ADMIN_ID);
 
         assertThat(user.isOwner()).isTrue();
-        verify(auditService).log(eq(ADMIN_ID), eq("USER_ROLE_CHANGED"), eq("user"), eq(TARGET_USER_ID), anyString());
+        AuditEntry entry = Audited.one(auditService, AuditAction.USER_ROLE_CHANGED);
+        assertThat(entry.getEntityId()).isEqualTo(TARGET_USER_ID);
+        assertThat(entry.getChanges()).containsExactly(AuditChange.of("isOwner", false, true));
     }
 
     @Test
@@ -172,7 +178,11 @@ class AdminServiceTest {
         assertThat(user.isBlocked()).isTrue();
         assertThat(response.isBlocked()).isTrue();
         verify(userRepository).save(user);
-        verify(auditService).log(ADMIN_ID, "USER_BLOCKED", "user", TARGET_USER_ID, "{\"isBlocked\":true}");
+        AuditEntry entry = Audited.one(auditService, AuditAction.USER_BLOCKED);
+        assertThat(entry.getActorType()).isEqualTo(uz.minipolya.minipolya_backend.audit.AuditActorType.ADMIN);
+        assertThat(entry.getActorId()).isEqualTo(ADMIN_ID);
+        assertThat(entry.getEntityLabel()).isEqualTo("U");
+        assertThat(entry.getChanges()).containsExactly(AuditChange.of("isBlocked", false, true));
     }
 
     @Test
@@ -186,7 +196,8 @@ class AdminServiceTest {
 
         assertThat(user.isBlocked()).isFalse();
         assertThat(response.isBlocked()).isFalse();
-        verify(auditService).log(ADMIN_ID, "USER_UNBLOCKED", "user", TARGET_USER_ID, "{\"isBlocked\":false}");
+        assertThat(Audited.one(auditService, AuditAction.USER_UNBLOCKED).getChanges())
+                .containsExactly(AuditChange.of("isBlocked", true, false));
     }
 
     @Test
@@ -197,7 +208,7 @@ class AdminServiceTest {
 
         service.updateUser(TARGET_USER_ID, AdminUpdateUserRequest.builder().isBlocked(true).build(), ADMIN_ID);
 
-        verify(auditService, never()).log(any(), eq("USER_BLOCKED"), any(), any(), anyString());
+        assertThat(Audited.entries(auditService)).isEmpty();
     }
 
     @Test
@@ -257,7 +268,12 @@ class AdminServiceTest {
         assertThat(stadium.getOwner().isOwner()).isTrue();
         verify(notificationService).notify(eq(OWNER_ID), eq(Notification.Type.STADIUM_APPROVED),
                 anyString(), anyString(), eq(Notification.ReferenceType.STADIUM), eq(STADIUM_ID));
-        verify(auditService).log(ADMIN_ID, "STADIUM_APPROVED", "stadium", STADIUM_ID);
+        AuditEntry approved = Audited.one(auditService, AuditAction.STADIUM_APPROVED);
+        assertThat(approved.getEntityId()).isEqualTo(STADIUM_ID);
+        assertThat(approved.getChanges()).containsExactly(AuditChange.of("status", "pending", "approved"));
+        // The owner flag the approval switched on is its own entry.
+        assertThat(Audited.one(auditService, AuditAction.USER_ROLE_CHANGED).getChanges())
+                .containsExactly(AuditChange.of("isOwner", false, true));
     }
 
     @Test
@@ -276,6 +292,73 @@ class AdminServiceTest {
         assertThat(stadium.getStatus()).isEqualTo("blocked");
         assertThat(future.getStatus()).isEqualTo("cancelled_by_owner");
         verify(paymentService).refundAllCardPayments(BOOKING_ID, "fraud");
+
+        AuditEntry blocked = Audited.one(auditService, AuditAction.STADIUM_BLOCKED);
+        assertThat(blocked.getEntityLabel()).isEqualTo("Arena");
+        assertThat(blocked.getChanges()).containsExactly(AuditChange.of("status", "approved", "blocked"));
+        assertThat(blocked.getReason()).isEqualTo("fraud");
+        // Each booking the block cancelled is a SYSTEM consequence, with the same reason.
+        AuditEntry cancelled = Audited.one(auditService, AuditAction.BOOKING_CANCELLED_BY_OWNER);
+        assertThat(cancelled.getActorType()).isEqualTo(uz.minipolya.minipolya_backend.audit.AuditActorType.SYSTEM);
+        assertThat(cancelled.getActorId()).isNull();
+        assertThat(cancelled.getEntityId()).isEqualTo(BOOKING_ID);
+        assertThat(cancelled.getChanges())
+                .containsExactly(AuditChange.of("status", "confirmed", "cancelled_by_owner"));
+        assertThat(cancelled.getReason()).isEqualTo("fraud");
+    }
+
+    @Test
+    void blockingAStadiumNeverApprovedIsARejection() {
+        Stadium stadium = stadium("pending");
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateStadiumStatus(STADIUM_ID,
+                AdminUpdateStadiumStatusRequest.builder().status("blocked").reason("Fake photos").build(), ADMIN_ID);
+
+        AuditEntry entry = Audited.one(auditService, AuditAction.STADIUM_REJECTED);
+        assertThat(entry.getChanges()).containsExactly(AuditChange.of("status", "pending", "blocked"));
+        assertThat(entry.getReason()).isEqualTo("Fake photos");
+        assertThat(Audited.entries(auditService, AuditAction.STADIUM_BLOCKED)).isEmpty();
+    }
+
+    @Test
+    void approvingABlockedStadiumIsAnUnblock() {
+        Stadium stadium = stadium("blocked");
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateStadiumStatus(STADIUM_ID,
+                AdminUpdateStadiumStatusRequest.builder().status("approved").build(), ADMIN_ID);
+
+        assertThat(Audited.one(auditService, AuditAction.STADIUM_UNBLOCKED).getChanges())
+                .containsExactly(AuditChange.of("status", "blocked", "approved"));
+        // The owner was an owner already: no role change to record.
+        assertThat(Audited.entries(auditService, AuditAction.USER_ROLE_CHANGED)).isEmpty();
+    }
+
+    @Test
+    void settingTheSameStatusAgainRecordsNothing() {
+        Stadium stadium = stadium("approved");
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateStadiumStatus(STADIUM_ID,
+                AdminUpdateStadiumStatusRequest.builder().status("approved").build(), ADMIN_ID);
+
+        assertThat(Audited.entries(auditService)).isEmpty();
+    }
+
+    @Test
+    void aBlockKeepsTheReasonTheAdminGave() {
+        User user = User.builder().id(TARGET_USER_ID).name("U").isBlocked(false).build();
+        when(userRepository.findById(TARGET_USER_ID)).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateUser(TARGET_USER_ID,
+                AdminUpdateUserRequest.builder().isBlocked(true).reason("Spam bookings").build(), ADMIN_ID);
+
+        assertThat(Audited.one(auditService, AuditAction.USER_BLOCKED).getReason()).isEqualTo("Spam bookings");
     }
 
     @Test

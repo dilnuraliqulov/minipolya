@@ -6,6 +6,10 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateStadiumStatusRequest;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateUserRequest;
 import uz.minipolya.minipolya_backend.dto.response.AdminPlatformStatsResponse;
@@ -150,9 +154,9 @@ public class AdminService {
             throw new BadRequestException("You cannot block yourself");
         }
 
-        boolean ownerChanged = request.getIsOwner() != null && request.getIsOwner() != user.isOwner();
-        boolean adminChanged = request.getIsAdmin() != null && request.getIsAdmin() != user.isAdmin();
-        boolean blockedChanged = request.getIsBlocked() != null && request.getIsBlocked() != user.isBlocked();
+        boolean wasOwner = user.isOwner();
+        boolean wasAdmin = user.isAdmin();
+        boolean wasBlocked = user.isBlocked();
         if (request.getIsOwner() != null) {
             user.setOwner(request.getIsOwner());
         }
@@ -164,15 +168,20 @@ public class AdminService {
         }
         userRepository.save(user);
 
-        if (ownerChanged) {
-            auditService.log(adminUserId, "USER_ROLE_CHANGED", "user", userId, "{\"isOwner\":" + user.isOwner() + "}");
+        String label = AuditLabels.user(user);
+        if (wasOwner != user.isOwner() || wasAdmin != user.isAdmin()) {
+            auditService.record(AuditEntry.admin(adminUserId, AuditAction.USER_ROLE_CHANGED)
+                    .entity(AuditEntityType.USER, userId, label)
+                    .change("isOwner", wasOwner, user.isOwner())
+                    .change("isAdmin", wasAdmin, user.isAdmin())
+                    .reason(request.getReason()));
         }
-        if (adminChanged) {
-            auditService.log(adminUserId, "USER_ROLE_CHANGED", "user", userId, "{\"isAdmin\":" + user.isAdmin() + "}");
-        }
-        if (blockedChanged) {
-            auditService.log(adminUserId, user.isBlocked() ? "USER_BLOCKED" : "USER_UNBLOCKED", "user", userId,
-                    "{\"isBlocked\":" + user.isBlocked() + "}");
+        if (wasBlocked != user.isBlocked()) {
+            auditService.record(AuditEntry.admin(adminUserId,
+                            user.isBlocked() ? AuditAction.USER_BLOCKED : AuditAction.USER_UNBLOCKED)
+                    .entity(AuditEntityType.USER, userId, label)
+                    .change("isBlocked", wasBlocked, user.isBlocked())
+                    .reason(request.getReason()));
         }
         log.info("Admin {} updated user {}: owner={} admin={} blocked={}",
                 adminUserId, userId, user.isOwner(), user.isAdmin(), user.isBlocked());
@@ -211,9 +220,16 @@ public class AdminService {
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
         String status = request.getStatus().trim();
         String reason = request.getReason();
+        String oldStatus = stadium.getStatus();
         stadium.setStatus(status);
         stadiumRepository.save(stadium);
         UUID ownerId = stadium.getOwner().getId();
+        if (!status.equals(oldStatus)) {
+            auditService.record(AuditEntry.admin(adminUserId, statusAction(oldStatus, status))
+                    .entity(AuditEntityType.STADIUM, stadiumId, AuditLabels.stadium(stadium))
+                    .change("status", oldStatus, status)
+                    .reason(reason));
+        }
 
         switch (status) {
             case "approved" -> {
@@ -221,11 +237,14 @@ public class AdminService {
                 if (!owner.isOwner()) {
                     owner.setOwner(true);
                     userRepository.save(owner);
+                    auditService.record(AuditEntry.admin(adminUserId, AuditAction.USER_ROLE_CHANGED)
+                            .entity(AuditEntityType.USER, owner.getId(), AuditLabels.user(owner))
+                            .change("isOwner", false, true)
+                            .reason("Stadium approved: " + stadium.getName()));
                 }
                 notify(ownerId, Notification.Type.STADIUM_APPROVED, "Стадион одобрен",
                         "Ваш стадион «" + stadium.getName() + "» одобрен!",
                         Notification.ReferenceType.STADIUM, stadiumId);
-                auditService.log(adminUserId, "STADIUM_APPROVED", "stadium", stadiumId);
             }
             case "blocked" -> {
                 notify(ownerId, Notification.Type.STADIUM_REJECTED, "Стадион заблокирован",
@@ -233,16 +252,25 @@ public class AdminService {
                                 + (reason == null ? "не указана" : reason),
                         Notification.ReferenceType.STADIUM, stadiumId);
                 cancelFutureBookings(stadium, reason);
-                auditService.log(adminUserId, "STADIUM_BLOCKED", "stadium", stadiumId);
             }
-            default -> auditService.log(adminUserId, "STADIUM_STATUS_CHANGED", "stadium", stadiumId,
-                    "{\"status\":\"" + status + "\"}");
+            default -> {
+                // pending: nothing beyond the status itself, which is audited above.
+            }
         }
         log.info("Admin {} set stadium {} status to {}", adminUserId, stadiumId, status);
         return buildStadium(stadium);
     }
 
     // ---- Helpers ----
+
+    /** Which code a stadium status change gets: the same "blocked" is a rejection for a stadium never approved. */
+    private static AuditAction statusAction(String oldStatus, String newStatus) {
+        return switch (newStatus) {
+            case "approved" -> "blocked".equals(oldStatus) ? AuditAction.STADIUM_UNBLOCKED : AuditAction.STADIUM_APPROVED;
+            case "blocked" -> "pending".equals(oldStatus) ? AuditAction.STADIUM_REJECTED : AuditAction.STADIUM_BLOCKED;
+            default -> AuditAction.STADIUM_STATUS_CHANGED;
+        };
+    }
 
     private void cancelFutureBookings(Stadium stadium, String reason) {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
@@ -252,10 +280,16 @@ public class AdminService {
             if (!"pending".equals(booking.getStatus()) && !"confirmed".equals(booking.getStatus())) {
                 continue;
             }
+            String oldStatus = booking.getStatus();
             booking.setStatus("cancelled_by_owner");
             booking.setCancelledAt(now);
             booking.setCancellationReason(cancelReason);
             bookingRepository.save(booking);
+            // A consequence of the block, not something anyone did to this booking by hand.
+            auditService.record(AuditEntry.system(AuditAction.BOOKING_CANCELLED_BY_OWNER)
+                    .entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
+                    .change("status", oldStatus, booking.getStatus())
+                    .reason(cancelReason));
             // Blocking a stadium is the platform's doing, so it follows the
             // owner rule: every card payment back in full, whatever the window.
             // A game booking holds none of its teams' money, so the game gives

@@ -3,13 +3,15 @@ package uz.minipolya.minipolya_backend.service;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import tools.jackson.databind.ObjectMapper;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.config.JwtProvider;
 import uz.minipolya.minipolya_backend.dto.request.AdminLoginRequest;
@@ -80,7 +82,7 @@ class AdminAuthServiceTest {
         AppProperties properties = new AppProperties();
         service = new AdminAuthService(userRepository, passwordEncoder,
                 new LoginRateLimiter(clock, properties), jwtProvider, userMapper, auditService,
-                new ObjectMapper(), clock, properties);
+                clock, properties);
         when(jwtProvider.generateToken(any(User.class))).thenReturn("jwt-token");
         when(userMapper.toResponse(any(User.class)))
                 .thenAnswer(inv -> UserResponse.builder().id(((User) inv.getArgument(0)).getId()).build());
@@ -101,8 +103,13 @@ class AdminAuthServiceTest {
         assertThat(admin.getFailedLoginAttempts()).isZero();
         assertThat(admin.getLastLoginAt()).isEqualTo(now());
         verify(userRepository).save(admin);
-        verify(auditService).log(eq(ADMIN_ID), eq("ADMIN_LOGIN_SUCCEEDED"), eq("user"), eq(ADMIN_ID),
-                eq("{\"username\":\"dilnur\",\"ip\":\"203.0.113.7\"}"), eq(IP));
+        AuditEntry entry = Audited.one(auditService, AuditAction.ADMIN_LOGIN_SUCCEEDED);
+        assertThat(entry.getActorId()).isEqualTo(ADMIN_ID);
+        assertThat(entry.getEntityLabel()).isEqualTo("Dilnur (dilnur)");
+        assertThat(entry.getIp()).isEqualTo(IP);
+        assertThat(entry.getChanges()).containsExactly(
+                AuditChange.of("failedLoginAttempts", 3, 0),
+                AuditChange.of("lastLoginAt", null, now()));
     }
 
     @Test
@@ -125,8 +132,11 @@ class AdminAuthServiceTest {
         assertThat(admin.getLockedUntil()).isNull();
         assertThat(admin.getLastLoginAt()).isNull();
         verify(jwtProvider, never()).generateToken(any(User.class));
-        verify(auditService).log(eq(ADMIN_ID), eq("ADMIN_LOGIN_FAILED"), eq("user"), eq(ADMIN_ID),
-                eq("{\"username\":\"dilnur\",\"ip\":\"203.0.113.7\",\"reason\":\"INVALID_CREDENTIALS\"}"), eq(IP));
+        AuditEntry entry = Audited.one(auditService, AuditAction.ADMIN_LOGIN_FAILED);
+        assertThat(entry.getActorId()).isEqualTo(ADMIN_ID);
+        assertThat(entry.getReason()).isEqualTo("INVALID_CREDENTIALS");
+        assertThat(entry.getIp()).isEqualTo(IP);
+        assertThat(entry.getChanges()).containsExactly(AuditChange.of("failedLoginAttempts", 0, 1));
     }
 
     @Test
@@ -139,8 +149,13 @@ class AdminAuthServiceTest {
         assertThat(unknown).hasMessage("Login yoki parol noto'g'ri");
         // One BCrypt verification, the same work a real account costs.
         verify(passwordEncoder, times(1)).matches(eq(PASSWORD), anyString());
-        verify(auditService).log(isNull(), eq("ADMIN_LOGIN_FAILED"), eq("user"), isNull(),
-                eq("{\"username\":\"ghost\",\"ip\":\"203.0.113.7\",\"reason\":\"INVALID_CREDENTIALS\"}"), eq(IP));
+        // No such admin: no actor, and the attempted username is the label so it is still visible.
+        AuditEntry entry = Audited.one(auditService, AuditAction.ADMIN_LOGIN_FAILED);
+        assertThat(entry.getActorId()).isNull();
+        assertThat(entry.getEntityId()).isNull();
+        assertThat(entry.getEntityLabel()).isEqualTo("ghost");
+        assertThat(entry.getReason()).isEqualTo("INVALID_CREDENTIALS");
+        assertThat(entry.getChanges()).isEmpty();
     }
 
     @Test
@@ -258,8 +273,7 @@ class AdminAuthServiceTest {
                 .extracting("code").isEqualTo("ACCOUNT_BLOCKED");
 
         verify(jwtProvider, never()).generateToken(any(User.class));
-        verify(auditService).log(eq(ADMIN_ID), eq("ADMIN_LOGIN_FAILED"), eq("user"), eq(ADMIN_ID),
-                eq("{\"username\":\"dilnur\",\"ip\":\"203.0.113.7\",\"reason\":\"ACCOUNT_BLOCKED\"}"), eq(IP));
+        assertThat(Audited.one(auditService, AuditAction.ADMIN_LOGIN_FAILED).getReason()).isEqualTo("ACCOUNT_BLOCKED");
     }
 
     @Test
@@ -306,12 +320,11 @@ class AdminAuthServiceTest {
         catchThrowableOfType(InvalidCredentialsException.class,
                 () -> service.login(login("ghost", "ghost-password-456"), IP));
 
-        ArgumentCaptor<String> details = ArgumentCaptor.forClass(String.class);
-        verify(auditService, atLeastOnce()).log(any(), anyString(), anyString(), any(), details.capture(), any());
-        assertThat(details.getAllValues())
+        assertThat(Audited.entries(auditService))
                 .hasSize(3)
-                .noneMatch(d -> d.contains(PASSWORD) || d.contains("wrong-password-123")
-                        || d.contains("ghost-password-456"));
+                .map(e -> e.getEntityLabel() + " " + e.getReason() + " " + e.getChanges())
+                .noneMatch(text -> text.contains(PASSWORD) || text.contains("wrong-password-123")
+                        || text.contains("ghost-password-456"));
     }
 
     @Test

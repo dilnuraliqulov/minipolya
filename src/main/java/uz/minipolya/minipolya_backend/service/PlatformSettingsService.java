@@ -4,6 +4,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
 import uz.minipolya.minipolya_backend.dto.request.UpdatePlatformSettingsRequest;
 import uz.minipolya.minipolya_backend.dto.response.PlatformSettingsResponse;
 import uz.minipolya.minipolya_backend.entity.PlatformSettings;
@@ -11,8 +14,6 @@ import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.mapper.PlatformSettingsMapper;
 import uz.minipolya.minipolya_backend.repository.PlatformSettingsRepository;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 
 /**
@@ -29,9 +30,6 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class PlatformSettingsService {
-
-    private static final String AUDIT_ACTION = "PLATFORM_SETTINGS_UPDATED";
-    private static final String AUDIT_ENTITY = "platform_settings";
 
     private final PlatformSettingsRepository repository;
     private final PlatformSettingsMapper mapper;
@@ -58,34 +56,33 @@ public class PlatformSettingsService {
         validate(request);
 
         PlatformSettings settings = current();
-        List<String> changes = new ArrayList<>();
+        AuditEntry audit = AuditEntry.admin(adminUserId, AuditAction.SETTINGS_CHANGED);
 
         Integer commission = request.getBookingCommissionPercent();
         if (commission != null && commission != settings.getBookingCommissionPercent()) {
-            changes.add(change("bookingCommissionPercent", settings.getBookingCommissionPercent(), commission));
+            audit.change("bookingCommissionPercent", settings.getBookingCommissionPercent(), commission);
             settings.setBookingCommissionPercent(commission);
         }
 
         Long teamFee = request.getTeamGamePlatformFee();
         if (teamFee != null && teamFee != settings.getTeamGamePlatformFee()) {
-            changes.add(change("teamGamePlatformFee", settings.getTeamGamePlatformFee(), teamFee));
+            audit.change("teamGamePlatformFee", settings.getTeamGamePlatformFee(), teamFee);
             settings.setTeamGamePlatformFee(teamFee);
         }
 
         Long casualFee = request.getCasualGameServiceFee();
         if (casualFee != null && casualFee != settings.getCasualGameServiceFee()) {
-            changes.add(change("casualGameServiceFee", settings.getCasualGameServiceFee(), casualFee));
+            audit.change("casualGameServiceFee", settings.getCasualGameServiceFee(), casualFee);
             settings.setCasualGameServiceFee(casualFee);
         }
 
-        if (changes.isEmpty()) {
+        if (audit.getChanges().isEmpty()) {
             return mapper.toResponse(settings);
         }
 
         PlatformSettings saved = repository.save(settings);
-        auditService.log(adminUserId, AUDIT_ACTION, AUDIT_ENTITY, saved.getId(),
-                "{" + String.join(",", changes) + "}");
-        log.info("Platform settings updated by admin {}: {}", adminUserId, changes);
+        auditService.record(audit.entity(AuditEntityType.PLATFORM_SETTINGS, saved.getId(), "Platform settings"));
+        log.info("Platform settings updated by admin {}: {}", adminUserId, audit.getChanges());
         return mapper.toResponse(saved);
     }
 
@@ -107,9 +104,5 @@ public class PlatformSettingsService {
         if (value != null && value < 0) {
             throw new BadRequestException(field + " must not be negative");
         }
-    }
-
-    private String change(String field, long oldValue, long newValue) {
-        return "\"" + field + "\":{\"old\":" + oldValue + ",\"new\":" + newValue + "}";
     }
 }

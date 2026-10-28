@@ -6,6 +6,10 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.request.CreateOwnerApplicationRequest;
 import uz.minipolya.minipolya_backend.dto.request.ReviewApplicationRequest;
 import uz.minipolya.minipolya_backend.dto.response.OwnerApplicationResponse;
@@ -102,6 +106,7 @@ public class OwnerApplicationService {
         }
 
         boolean approved = "approved".equalsIgnoreCase(request.getStatus().trim());
+        OwnerApplication.Status oldStatus = application.getStatus();
         application.setReviewedBy(admin);
         application.setReviewNote(request.getReviewNote());
         application.setReviewedAt(OffsetDateTime.now(ZoneOffset.UTC));
@@ -109,16 +114,28 @@ public class OwnerApplicationService {
         User applicant = application.getUser();
         if (approved) {
             application.setStatus(OwnerApplication.Status.APPROVED);
+            boolean wasOwner = applicant.isOwner();
             applicant.setOwner(true);
             userRepository.save(applicant);
-            auditService.log(adminUserId, "APPLICATION_APPROVED", "owner_application", applicationId);
-            auditService.log(adminUserId, "USER_ROLE_CHANGED", "user", applicant.getId(), "{\"isOwner\":true}");
+            auditService.record(AuditEntry.admin(adminUserId, AuditAction.APPLICATION_APPROVED)
+                    .entity(AuditEntityType.OWNER_APPLICATION, applicationId, AuditLabels.ownerApplication(application))
+                    .change("status", oldStatus, application.getStatus())
+                    .reason(request.getReviewNote()));
+            if (!wasOwner) {
+                auditService.record(AuditEntry.admin(adminUserId, AuditAction.USER_ROLE_CHANGED)
+                        .entity(AuditEntityType.USER, applicant.getId(), AuditLabels.user(applicant))
+                        .change("isOwner", false, true)
+                        .reason("Owner application approved"));
+            }
             notifyApplicant(applicant.getId(), applicationId,
                     "Заявка одобрена",
                     "Ваша заявка на владельца одобрена! Теперь вы можете добавлять стадионы.");
         } else {
             application.setStatus(OwnerApplication.Status.REJECTED);
-            auditService.log(adminUserId, "APPLICATION_REJECTED", "owner_application", applicationId);
+            auditService.record(AuditEntry.admin(adminUserId, AuditAction.APPLICATION_REJECTED)
+                    .entity(AuditEntityType.OWNER_APPLICATION, applicationId, AuditLabels.ownerApplication(application))
+                    .change("status", oldStatus, application.getStatus())
+                    .reason(request.getReviewNote()));
             notifyApplicant(applicant.getId(), applicationId,
                     "Заявка отклонена",
                     "Ваша заявка на владельца не одобрена. Причина: "

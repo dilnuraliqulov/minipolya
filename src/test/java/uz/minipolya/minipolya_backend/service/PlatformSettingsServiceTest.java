@@ -3,6 +3,10 @@ package uz.minipolya.minipolya_backend.service;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.dto.request.UpdatePlatformSettingsRequest;
 import uz.minipolya.minipolya_backend.dto.response.PlatformSettingsResponse;
 import uz.minipolya.minipolya_backend.entity.PlatformSettings;
@@ -126,22 +130,21 @@ class PlatformSettingsServiceTest {
                 .teamGamePlatformFee(3_000_000L)
                 .build(), ADMIN_ID);
 
-        ArgumentCaptor<String> details = ArgumentCaptor.forClass(String.class);
-        verify(auditService).log(eq(ADMIN_ID), eq("PLATFORM_SETTINGS_UPDATED"), eq("platform_settings"),
-                eq(SETTINGS_ID), details.capture());
-
-        assertThat(details.getValue())
-                .contains("\"bookingCommissionPercent\":{\"old\":0,\"new\":5}")
-                .contains("\"teamGamePlatformFee\":{\"old\":2500000,\"new\":3000000}")
-                // Untouched fields are not reported as changes.
-                .doesNotContain("casualGameServiceFee");
+        AuditEntry entry = Audited.one(auditService, AuditAction.SETTINGS_CHANGED);
+        assertThat(entry.getActorId()).isEqualTo(ADMIN_ID);
+        assertThat(entry.getEntityType()).isEqualTo("platform_settings");
+        assertThat(entry.getEntityId()).isEqualTo(SETTINGS_ID);
+        // Untouched fields are not reported as changes.
+        assertThat(entry.getChanges()).containsExactly(
+                new AuditChange("bookingCommissionPercent", 0L, 5L),
+                new AuditChange("teamGamePlatformFee", 2_500_000L, 3_000_000L));
     }
 
     @Test
     void updateThatChangesNothingIsNotAudited() {
         service.update(UpdatePlatformSettingsRequest.builder().bookingCommissionPercent(0).build(), ADMIN_ID);
 
-        verify(auditService, never()).log(any(), any(), any(), any(), any());
+        assertThat(Audited.entries(auditService)).isEmpty();
     }
 
     @Test

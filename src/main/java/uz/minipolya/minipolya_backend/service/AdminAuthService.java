@@ -4,7 +4,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import tools.jackson.databind.ObjectMapper;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.config.JwtProvider;
 import uz.minipolya.minipolya_backend.dto.request.AdminLoginRequest;
@@ -19,8 +22,6 @@ import uz.minipolya.minipolya_backend.repository.UserRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.OffsetDateTime;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -47,17 +48,12 @@ import java.util.UUID;
 @Service
 public class AdminAuthService {
 
-    static final String AUDIT_LOGIN_SUCCEEDED = "ADMIN_LOGIN_SUCCEEDED";
-    static final String AUDIT_LOGIN_FAILED = "ADMIN_LOGIN_FAILED";
-    static final String AUDIT_ENTITY = "user";
-
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final LoginRateLimiter loginRateLimiter;
     private final JwtProvider jwtProvider;
     private final UserMapper userMapper;
     private final AuditService auditService;
-    private final ObjectMapper objectMapper;
     private final Clock clock;
     private final int maxFailedAttempts;
     private final Duration lockDuration;
@@ -70,7 +66,6 @@ public class AdminAuthService {
                             JwtProvider jwtProvider,
                             UserMapper userMapper,
                             AuditService auditService,
-                            ObjectMapper objectMapper,
                             Clock clock,
                             AppProperties appProperties) {
         this.userRepository = userRepository;
@@ -79,7 +74,6 @@ public class AdminAuthService {
         this.jwtProvider = jwtProvider;
         this.userMapper = userMapper;
         this.auditService = auditService;
-        this.objectMapper = objectMapper;
         this.clock = clock;
         this.maxFailedAttempts = appProperties.getAdminLogin().getMaxFailedAttempts();
         this.lockDuration = Duration.ofMinutes(appProperties.getAdminLogin().getLockMinutes());
@@ -96,7 +90,7 @@ public class AdminAuthService {
                 .filter(u -> u.isAdmin() && u.getPasswordHash() != null);
         if (candidate.isEmpty()) {
             passwordEncoder.matches(request.getPassword(), dummyHash);
-            auditFailure(null, username, ip, "INVALID_CREDENTIALS");
+            auditFailure(null, username, ip, "INVALID_CREDENTIALS", null, null);
             log.warn("Admin sign-in failed from {}: no password admin with that username", ip);
             throw new InvalidCredentialsException();
         }
@@ -105,7 +99,7 @@ public class AdminAuthService {
         OffsetDateTime now = OffsetDateTime.now(clock);
 
         if (isLocked(user, now)) {
-            auditFailure(user, username, ip, "ACCOUNT_LOCKED");
+            auditFailure(user, username, ip, "ACCOUNT_LOCKED", null, null);
             log.warn("Admin sign-in refused, account locked: userId={} ip={}", user.getId(), ip);
             throw new AccountLockedException(minutesUntil(now, user.getLockedUntil()));
         }
@@ -117,18 +111,22 @@ public class AdminAuthService {
         }
 
         if (user.isBlocked()) {
-            auditFailure(user, username, ip, "ACCOUNT_BLOCKED");
+            auditFailure(user, username, ip, "ACCOUNT_BLOCKED", null, null);
             log.warn("Blocked admin attempted to sign in: userId={} ip={}", user.getId(), ip);
             throw new AccountBlockedException();
         }
 
+        AuditEntry audit = AuditEntry.admin(user.getId(), AuditAction.ADMIN_LOGIN_SUCCEEDED)
+                .entity(AuditEntityType.USER, user.getId(), AuditLabels.user(user))
+                .change("failedLoginAttempts", user.getFailedLoginAttempts(), 0)
+                .change("lockedUntil", user.getLockedUntil(), null)
+                .change("lastLoginAt", user.getLastLoginAt(), now)
+                .ip(ip);
         user.setFailedLoginAttempts(0);
         user.setLockedUntil(null);
         user.setLastLoginAt(now);
         userRepository.save(user);
-
-        auditService.log(user.getId(), AUDIT_LOGIN_SUCCEEDED, AUDIT_ENTITY, user.getId(),
-                details(username, ip, null), ip);
+        auditService.record(audit);
         log.info("Admin signed in with a password: userId={} ip={}", user.getId(), ip);
         return AuthResponse.builder()
                 .token(jwtProvider.generateToken(user))
@@ -144,37 +142,43 @@ public class AdminAuthService {
 
     /** Counts the failure; the one that reaches the limit locks the account and answers 423. */
     private void recordWrongPassword(User user, String username, String ip, OffsetDateTime now) {
-        int attempts = user.getFailedLoginAttempts() + 1;
+        int before = user.getFailedLoginAttempts();
+        OffsetDateTime lockedBefore = user.getLockedUntil();
+        int attempts = before + 1;
         if (attempts >= maxFailedAttempts) {
             user.setFailedLoginAttempts(0);
             user.setLockedUntil(now.plus(lockDuration));
             userRepository.save(user);
-            auditFailure(user, username, ip, "ACCOUNT_LOCKED");
+            auditFailure(user, username, ip, "ACCOUNT_LOCKED", before, lockedBefore);
             log.warn("Admin account locked after {} wrong passwords: userId={} ip={}",
                     maxFailedAttempts, user.getId(), ip);
             throw new AccountLockedException(minutesUntil(now, user.getLockedUntil()));
         }
         user.setFailedLoginAttempts(attempts);
         userRepository.save(user);
-        auditFailure(user, username, ip, "INVALID_CREDENTIALS");
+        auditFailure(user, username, ip, "INVALID_CREDENTIALS", before, lockedBefore);
         log.warn("Admin sign-in failed, wrong password ({} of {}): userId={} ip={}",
                 attempts, maxFailedAttempts, user.getId(), ip);
     }
 
-    private void auditFailure(User user, String username, String ip, String reason) {
-        UUID userId = user == null ? null : user.getId();
-        auditService.log(userId, AUDIT_LOGIN_FAILED, AUDIT_ENTITY, userId, details(username, ip, reason), ip);
-    }
-
-    /** JSON with the username and IP — never a password. Built by Jackson, so input is escaped. */
-    private String details(String username, String ip, String reason) {
-        Map<String, String> details = new LinkedHashMap<>();
-        details.put("username", username);
-        details.put("ip", ip);
-        if (reason != null) {
-            details.put("reason", reason);
+    /**
+     * One ADMIN_LOGIN_FAILED entry with the reason, the IP and — never a password — the
+     * username: as the entity label when no such admin exists, so attempts on made-up
+     * names are still visible. {@code attemptsBefore} is set when the attempt changed the
+     * lockout counter, which then appears in the changes (and lockedUntil, when it locks).
+     */
+    private void auditFailure(User user, String username, String ip, String reason,
+                              Integer attemptsBefore, OffsetDateTime lockedBefore) {
+        AuditEntry entry = AuditEntry.admin(user == null ? null : user.getId(), AuditAction.ADMIN_LOGIN_FAILED)
+                .entity(AuditEntityType.USER, user == null ? null : user.getId(),
+                        user == null ? username : AuditLabels.user(user))
+                .reason(reason)
+                .ip(ip);
+        if (user != null && attemptsBefore != null) {
+            entry.change("failedLoginAttempts", attemptsBefore, user.getFailedLoginAttempts())
+                    .change("lockedUntil", lockedBefore, user.getLockedUntil());
         }
-        return objectMapper.writeValueAsString(details);
+        auditService.record(entry);
     }
 
     private static long minutesUntil(OffsetDateTime now, OffsetDateTime until) {

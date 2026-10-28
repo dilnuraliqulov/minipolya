@@ -1,5 +1,6 @@
 package uz.minipolya.minipolya_backend.dto.request;
 
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -16,4 +17,7 @@ public class AdminUpdateUserRequest {
     private Boolean isAdmin;
     /** Blocks the user from the platform. An admin cannot block themselves. */
     private Boolean isBlocked;
+    /** Why — e.g. why the user is blocked. Stored in the audit log only. */
+    @Size(max = 500, message = "reason must be at most 500 characters")
+    private String reason;
 }
