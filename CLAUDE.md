@@ -598,6 +598,10 @@ not Telegram. They are a handful of people the platform owner creates directly i
 the database. Players and stadium owners keep signing in through Telegram; nothing
 changes for them. All of this lives in `service/AdminAuthService.java`.
 
+**Passwords are managed only in the database.** There is deliberately no API to
+set or change one — not even an admin's own: the platform owner creates, resets
+and unlocks accounts with the SQL below. Don't add such an endpoint.
+
 - `POST /api/auth/admin/login` with `{ "username", "password" }` (public) returns
   the same `{ token, user }` as the Telegram sign-in. Only a user with
   `is_admin = true` **and** a `password_hash` can sign in this way. Usernames
@@ -617,18 +621,16 @@ changes for them. All of this lives in `service/AdminAuthService.java`.
 - Success resets `failed_login_attempts`, clears `locked_until` and stores
   `last_login_at`. Successes and failures write `ADMIN_LOGIN_SUCCEEDED` /
   `ADMIN_LOGIN_FAILED` audit entries with the username and IP.
-- `POST /api/admin/me/password` with `{ "currentPassword", "newPassword" }`:
-  a wrong current password → 400; the new one needs 10+ characters and at most
-  72 bytes (BCrypt ignores the rest). Writes `ADMIN_PASSWORD_CHANGED`. It answers
-  with a fresh `{ token, user }`, which the panel must swap in.
-- **A password change signs out every older session.** It stamps
-  `users.password_changed_at`, and `JwtAuthFilter` (which already loads the user
-  for the blocked check) refuses any token issued before that with
-  **401 `TOKEN_REVOKED`** — the caller's old token too, hence the fresh one. Tokens
+- **A password reset in the database signs out every session.** The reset SQL
+  stamps `users.password_changed_at`, and `JwtAuthFilter` (which already loads the
+  user for the blocked check) refuses any token issued before that with
+  **401 `TOKEN_REVOKED`**; the admin signs in again with the new password. Tokens
   carry an `iatMs` claim (issue time in milliseconds) because the standard `iat` is
   whole seconds and could not tell apart a token issued in the same second as the
-  change; a token without `iatMs` falls back to `iat`. Telegram-issued tokens of the
-  same user are refused as well. Users with no `password_changed_at` are never checked.
+  reset; a token without `iatMs` falls back to `iat`. Telegram-issued tokens of the
+  same user are refused as well. Users with no `password_changed_at` are never
+  checked. `now()` is the database clock, so keep the app and database hosts in
+  time sync (NTP).
 - Limits are `app.admin-login.*` (`max-failed-attempts`, `lock-minutes`,
   `max-attempts-per-ip`, `ip-window-minutes`), defaults 5 / 15 / 20 / 15.
 - Error responses here carry an extra `code` key in the envelope. It appears only
@@ -636,11 +638,12 @@ changes for them. All of this lives in `service/AdminAuthService.java`.
 
 **Passwords are never stored or logged in plain text.** Only the BCrypt hash goes
 into `users.password_hash`; audit entries and log lines carry the username and IP,
-never a password; `AdminLoginRequest` and `ChangePasswordRequest` override
-`toString` to mask them. The SQL below necessarily contains the plain password
-in the statement itself: don't save it in a script file or in `psql` history
-(`\set HISTFILE /dev/null` before running it, or clear the history afterwards),
-and have the admin change it from the panel after the first sign-in.
+never a password; `AdminLoginRequest` overrides `toString` to mask it. The SQL
+below necessarily contains the plain password in the statement itself: don't save
+it in a script file or in `psql` history (`\set HISTFILE /dev/null` before running
+it, or clear the history afterwards), and hand the password to the admin over a
+private channel. A new password needs at least 10 characters and at most 72 bytes
+(BCrypt ignores the rest).
 
 **Create an admin** (pgcrypto is enabled by changeset 027; `id`, `language` and
 the other flags take their defaults; `telegram_id` and `phone` stay null):
@@ -865,8 +868,8 @@ forwarded headers — and then every admin shares one 20-attempt budget.
 
 ### After the first deploy
 
-- Create the first admin with the SQL in "Admin accounts", sign in, and change the
-  password from the panel (that also revokes the session made with the SQL one).
+- Create the first admin with the SQL in "Admin accounts" and sign in. Passwords
+  are changed only with the reset SQL there, never through the panel.
 - Point the Telegram bot webhook at `https://<domain>/webhooks/telegram` and the
   Mini App URL at the HTTPS origin.
 - Smoke-test: sign in via Telegram, list stadiums, admin sign-in, and check that

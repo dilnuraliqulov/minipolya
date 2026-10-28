@@ -13,13 +13,11 @@ import tools.jackson.databind.ObjectMapper;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.config.JwtProvider;
 import uz.minipolya.minipolya_backend.dto.request.AdminLoginRequest;
-import uz.minipolya.minipolya_backend.dto.request.ChangePasswordRequest;
 import uz.minipolya.minipolya_backend.dto.response.AuthResponse;
 import uz.minipolya.minipolya_backend.dto.response.UserResponse;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.AccountBlockedException;
 import uz.minipolya.minipolya_backend.exception.AccountLockedException;
-import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.InvalidCredentialsException;
 import uz.minipolya.minipolya_backend.mapper.UserMapper;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
@@ -321,97 +319,6 @@ class AdminAuthServiceTest {
         assertThat(login("dilnur", PASSWORD).toString()).doesNotContain(PASSWORD).contains("dilnur");
     }
 
-    // ---- Changing the password ----
-
-    @Test
-    void anAdminChangesTheirPassword() {
-        User admin = admin(PASSWORD);
-        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
-
-        service.changePassword(ADMIN_ID, change(PASSWORD, "a-brand-new-password"), IP);
-
-        assertThat(passwordEncoder.matches("a-brand-new-password", admin.getPasswordHash())).isTrue();
-        assertThat(passwordEncoder.matches(PASSWORD, admin.getPasswordHash())).isFalse();
-        assertThat(admin.getPasswordHash()).doesNotContain("a-brand-new-password");
-        verify(userRepository).save(admin);
-        verify(auditService).log(eq(ADMIN_ID), eq("ADMIN_PASSWORD_CHANGED"), eq("user"), eq(ADMIN_ID),
-                eq("{\"username\":\"dilnur\",\"ip\":\"203.0.113.7\"}"), eq(IP));
-    }
-
-    @Test
-    void changingThePasswordStampsTheTimeAndHandsBackAFreshToken() {
-        User admin = admin(PASSWORD);
-        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
-
-        AuthResponse response = service.changePassword(ADMIN_ID, change(PASSWORD, "a-brand-new-password"), IP);
-
-        assertThat(admin.getPasswordChangedAt()).isEqualTo(now());
-        assertThat(response.getToken()).isEqualTo("jwt-token");
-        assertThat(response.getUser().getId()).isEqualTo(ADMIN_ID);
-        // The token is made from the user as saved, i.e. after the stamp.
-        verify(jwtProvider).generateToken(admin);
-    }
-
-    @Test
-    void aRejectedChangeLeavesThePasswordChangedAtAlone() {
-        User admin = admin(PASSWORD);
-        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
-
-        catchThrowableOfType(BadRequestException.class,
-                () -> service.changePassword(ADMIN_ID, change("not-it", "a-brand-new-password"), IP));
-
-        assertThat(admin.getPasswordChangedAt()).isNull();
-        verify(jwtProvider, never()).generateToken(any(User.class));
-    }
-
-    @Test
-    void theNewPasswordWorksForSigningIn() {
-        User admin = admin(PASSWORD);
-        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
-        givenUser("dilnur", admin);
-
-        service.changePassword(ADMIN_ID, change(PASSWORD, "a-brand-new-password"), IP);
-
-        assertThat(service.login(login("dilnur", "a-brand-new-password"), IP).getToken()).isEqualTo("jwt-token");
-        assertThatThrownBy(() -> service.login(login("dilnur", PASSWORD), IP))
-                .isInstanceOf(InvalidCredentialsException.class);
-    }
-
-    @Test
-    void aWrongCurrentPasswordIs400AndChangesNothing() {
-        User admin = admin(PASSWORD);
-        String before = admin.getPasswordHash();
-        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
-
-        assertThatThrownBy(() -> service.changePassword(ADMIN_ID, change("not-it", "a-brand-new-password"), IP))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessage("Joriy parol noto'g'ri");
-
-        assertThat(admin.getPasswordHash()).isEqualTo(before);
-        verify(userRepository, never()).save(any(User.class));
-        verify(auditService, never()).log(any(), anyString(), anyString(), any(), any(), any());
-    }
-
-    @Test
-    void anAdminWithoutAPasswordCannotSetOneThisWay() {
-        User admin = admin(PASSWORD);
-        admin.setPasswordHash(null);
-        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
-
-        assertThatThrownBy(() -> service.changePassword(ADMIN_ID, change("anything", "a-brand-new-password"), IP))
-                .isInstanceOf(BadRequestException.class);
-    }
-
-    @Test
-    void aNewPasswordBeyondBcryptsSeventyTwoBytesIsRejected() {
-        User admin = admin(PASSWORD);
-        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
-
-        assertThatThrownBy(() -> service.changePassword(ADMIN_ID, change(PASSWORD, "x".repeat(73)), IP))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("72 bytes");
-    }
-
     // ---- Helpers ----
 
     private User admin(String password) {
@@ -441,10 +348,6 @@ class AdminAuthServiceTest {
 
     private static AdminLoginRequest login(String username, String password) {
         return AdminLoginRequest.builder().username(username).password(password).build();
-    }
-
-    private static ChangePasswordRequest change(String current, String next) {
-        return ChangePasswordRequest.builder().currentPassword(current).newPassword(next).build();
     }
 
     /** A clock the test moves forward by hand. */

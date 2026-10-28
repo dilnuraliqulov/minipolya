@@ -121,7 +121,7 @@ class JwtAuthFilterTest {
         verify(filterChain).doFilter(request, response);
     }
 
-    // ---- Revocation on a password change ----
+    // ---- Revocation after a password reset in the database ----
 
     /** A real provider, so the token carries a real, whole-second iat claim. */
     private final JwtProvider realProvider = realProvider();
@@ -193,7 +193,7 @@ class JwtAuthFilterTest {
     }
 
     @Test
-    void theFreshTokenIssuedInTheSameMillisecondAsTheChangeIsAccepted() throws Exception {
+    void aSignInInTheSameMillisecondAsTheResetIsAccepted() throws Exception {
         // password_changed_at keeps microseconds; the token has milliseconds.
         Instant stamp = Instant.parse("2026-10-28T10:00:00.700400Z");
         HttpServletRequest request = requestWithToken();

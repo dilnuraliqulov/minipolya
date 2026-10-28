@@ -8,18 +8,14 @@ import tools.jackson.databind.ObjectMapper;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.config.JwtProvider;
 import uz.minipolya.minipolya_backend.dto.request.AdminLoginRequest;
-import uz.minipolya.minipolya_backend.dto.request.ChangePasswordRequest;
 import uz.minipolya.minipolya_backend.dto.response.AuthResponse;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.AccountBlockedException;
 import uz.minipolya.minipolya_backend.exception.AccountLockedException;
-import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.InvalidCredentialsException;
-import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.UserMapper;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -31,7 +27,9 @@ import java.util.UUID;
 /**
  * Username + password sign-in for platform admins, who are created directly in the
  * database (see CLAUDE.md, "Admin accounts"). Players and owners sign in through
- * Telegram in {@link AuthService}; nothing here touches that flow.
+ * Telegram in {@link AuthService}; nothing here touches that flow. There is deliberately
+ * no way to change a password through the API: passwords are set and reset only in the
+ * database, and a reset that stamps {@code password_changed_at} signs out every session.
  *
  * <p>Order of checks on a sign-in, each chosen so a caller learns nothing it should not:
  * <ol>
@@ -51,11 +49,7 @@ public class AdminAuthService {
 
     static final String AUDIT_LOGIN_SUCCEEDED = "ADMIN_LOGIN_SUCCEEDED";
     static final String AUDIT_LOGIN_FAILED = "ADMIN_LOGIN_FAILED";
-    static final String AUDIT_PASSWORD_CHANGED = "ADMIN_PASSWORD_CHANGED";
     static final String AUDIT_ENTITY = "user";
-
-    /** BCrypt ignores everything past 72 bytes, and Spring's encoder refuses longer input. */
-    private static final int BCRYPT_MAX_BYTES = 72;
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -136,37 +130,6 @@ public class AdminAuthService {
         auditService.log(user.getId(), AUDIT_LOGIN_SUCCEEDED, AUDIT_ENTITY, user.getId(),
                 details(username, ip, null), ip);
         log.info("Admin signed in with a password: userId={} ip={}", user.getId(), ip);
-        return AuthResponse.builder()
-                .token(jwtProvider.generateToken(user))
-                .user(userMapper.toResponse(user))
-                .build();
-    }
-
-    /**
-     * Sets a new password and stamps {@code password_changed_at}, which makes JwtAuthFilter
-     * refuse every token issued before now — including the caller's. The returned token is
-     * issued after the stamp, so the caller stays signed in.
-     */
-    @Transactional
-    public AuthResponse changePassword(UUID adminUserId, ChangePasswordRequest request, String ip) {
-        User user = userRepository.findById(adminUserId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-
-        if (user.getPasswordHash() == null
-                || !passwordEncoder.matches(request.getCurrentPassword(), user.getPasswordHash())) {
-            throw new BadRequestException("Joriy parol noto'g'ri");
-        }
-        if (request.getNewPassword().getBytes(StandardCharsets.UTF_8).length > BCRYPT_MAX_BYTES) {
-            throw new BadRequestException("newPassword must be at most " + BCRYPT_MAX_BYTES + " bytes");
-        }
-
-        user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
-        user.setPasswordChangedAt(OffsetDateTime.now(clock));
-        userRepository.save(user);
-
-        auditService.log(user.getId(), AUDIT_PASSWORD_CHANGED, AUDIT_ENTITY, user.getId(),
-                details(user.getUsername(), ip, null), ip);
-        log.info("Admin changed their password: userId={} ip={}", user.getId(), ip);
         return AuthResponse.builder()
                 .token(jwtProvider.generateToken(user))
                 .user(userMapper.toResponse(user))

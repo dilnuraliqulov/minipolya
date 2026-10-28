@@ -39,10 +39,10 @@ import java.util.UUID;
  * effect at once rather than when the token expires: a blocked user's token is
  * rejected here with 403, whatever the endpoint.
  *
- * <p>The same lookup revokes tokens on a password change: a token issued before
- * {@code users.password_changed_at} is refused with 401 {@code TOKEN_REVOKED}. Both are
- * compared to the millisecond ({@link JwtProvider#getIssuedAt}); the fresh token handed
- * out with the change is issued after the stamp, so it stays valid.
+ * <p>The same lookup revokes tokens when a password is reset in the database: a token
+ * issued before {@code users.password_changed_at} is refused with 401 {@code TOKEN_REVOKED}.
+ * Both are compared to the millisecond ({@link JwtProvider#getIssuedAt}), so a sign-in
+ * made right after the reset stays valid.
  */
 @Component
 @RequiredArgsConstructor
