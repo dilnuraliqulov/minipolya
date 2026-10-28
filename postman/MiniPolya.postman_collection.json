@@ -13769,6 +13769,21 @@
                   "    pm.response.json().data.content.forEach(function (row) {",
                   "        if (row.details) { JSON.parse(row.details); }",
                   "    });",
+                  "});",
+                  "pm.test('every item has the audit shape', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        ['id', 'time', 'action', 'entity', 'changes'].forEach(function (k) { pm.expect(i, k).to.have.property(k); });",
+                  "        pm.expect(i.changes).to.be.an('array');",
+                  "        i.changes.forEach(function (c) {",
+                  "            pm.expect(c).to.have.all.keys('field', 'oldValue', 'newValue');",
+                  "        });",
+                  "    });",
+                  "});",
+                  "pm.test('no secret ever appears', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', 'providertoken', 'eyjhbgci'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
                   "});"
                 ]
               }
@@ -13841,7 +13856,7 @@
           }
         },
         {
-          "name": "200 audit log by user",
+          "name": "200 audit action codes",
           "event": [
             {
               "listen": "test",
@@ -13857,6 +13872,13 @@
                   "});",
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('lists the action codes', function () {",
+                  "    var codes = pm.response.json().data;",
+                  "    pm.expect(codes).to.be.an('array');",
+                  "    ['SETTINGS_CHANGED', 'STADIUM_APPROVED', 'ADMIN_LOGIN_FAILED', 'BOOKING_EXPIRED'].forEach(function (c) {",
+                  "        pm.expect(codes).to.include(c);",
+                  "    });",
                   "});"
                 ]
               }
@@ -13871,7 +13893,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/admin/audit-log/user/{{player1Id}}",
+              "raw": "{{baseUrl}}/api/admin/audit-log/actions",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -13879,15 +13901,14 @@
                 "api",
                 "admin",
                 "audit-log",
-                "user",
-                "{{player1Id}}"
+                "actions"
               ]
             },
-            "description": ""
+            "description": "Every code the audit log uses, for a filter dropdown."
           }
         },
         {
-          "name": "200 audit log by entity",
+          "name": "200 the settings change is recorded with old and new values",
           "event": [
             {
               "listen": "test",
@@ -13903,6 +13924,31 @@
                   "});",
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('every item has the audit shape', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        ['id', 'time', 'action', 'entity', 'changes'].forEach(function (k) { pm.expect(i, k).to.have.property(k); });",
+                  "        pm.expect(i.changes).to.be.an('array');",
+                  "        i.changes.forEach(function (c) {",
+                  "            pm.expect(c).to.have.all.keys('field', 'oldValue', 'newValue');",
+                  "        });",
+                  "    });",
+                  "});",
+                  "pm.test('no secret ever appears', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', 'providertoken', 'eyjhbgci'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "});",
+                  "pm.test('newest SETTINGS_CHANGED by an admin, with its changes', function () {",
+                  "    var i = pm.response.json().data.content[0];",
+                  "    pm.expect(i.action).to.eql('SETTINGS_CHANGED');",
+                  "    pm.expect(i.actor.type).to.eql('ADMIN');",
+                  "    pm.expect(i.actor.id).to.eql(pm.environment.get('adminId'));",
+                  "    pm.expect(i.entity.type).to.eql('platform_settings');",
+                  "    pm.expect(i.changes.length).to.be.above(0);",
+                  "    pm.expect(i.changes[0].oldValue).to.not.eql(i.changes[0].newValue);",
+                  "    pm.expect(i).to.have.property('ip');",
                   "});"
                 ]
               }
@@ -13917,24 +13963,410 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/admin/audit-log/entity/stadium/{{stadiumId}}",
+              "raw": "{{baseUrl}}/api/admin/audit-log?actorType=ADMIN&action=SETTINGS_CHANGED&size=1",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "admin",
-                "audit-log",
-                "entity",
-                "stadium",
-                "{{stadiumId}}"
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "actorType",
+                  "value": "ADMIN"
+                },
+                {
+                  "key": "action",
+                  "value": "SETTINGS_CHANGED"
+                },
+                {
+                  "key": "size",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "Written by \"200 update platform settings\" earlier in this folder."
+          }
+        },
+        {
+          "name": "200 several actions at once",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('every item has the audit shape', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        ['id', 'time', 'action', 'entity', 'changes'].forEach(function (k) { pm.expect(i, k).to.have.property(k); });",
+                  "        pm.expect(i.changes).to.be.an('array');",
+                  "        i.changes.forEach(function (c) {",
+                  "            pm.expect(c).to.have.all.keys('field', 'oldValue', 'newValue');",
+                  "        });",
+                  "    });",
+                  "});",
+                  "pm.test('no secret ever appears', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', 'providertoken', 'eyjhbgci'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "});",
+                  "pm.test('only the asked-for actions', function () {",
+                  "    var items = pm.response.json().data.content;",
+                  "    pm.expect(items.length).to.be.above(0);",
+                  "    items.forEach(function (i) { pm.expect(['STADIUM_APPROVED', 'APPLICATION_APPROVED']).to.include(i.action); });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log?action=STADIUM_APPROVED,APPLICATION_APPROVED",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "STADIUM_APPROVED,APPLICATION_APPROVED"
+                }
               ]
             },
             "description": ""
           }
         },
         {
-          "name": "400 audit log by entity, malformed id",
+          "name": "200 everything about one stadium",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('every item has the audit shape', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        ['id', 'time', 'action', 'entity', 'changes'].forEach(function (k) { pm.expect(i, k).to.have.property(k); });",
+                  "        pm.expect(i.changes).to.be.an('array');",
+                  "        i.changes.forEach(function (c) {",
+                  "            pm.expect(c).to.have.all.keys('field', 'oldValue', 'newValue');",
+                  "        });",
+                  "    });",
+                  "});",
+                  "pm.test('no secret ever appears', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', 'providertoken', 'eyjhbgci'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "});",
+                  "pm.test('only that stadium, created and approved', function () {",
+                  "    var items = pm.response.json().data.content;",
+                  "    items.forEach(function (i) { pm.expect(i.entity.id).to.eql(pm.environment.get('stadiumId')); });",
+                  "    var actions = items.map(function (i) { return i.action; });",
+                  "    pm.expect(actions).to.include('STADIUM_CREATED');",
+                  "    pm.expect(actions).to.include('STADIUM_APPROVED');",
+                  "});",
+                  "pm.test('newest first', function () {",
+                  "    var times = pm.response.json().data.content.map(function (i) { return i.time; });",
+                  "    pm.expect(times.slice().sort().reverse()).to.eql(times);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log?entityType=stadium&entityId={{stadiumId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "entityType",
+                  "value": "stadium"
+                },
+                {
+                  "key": "entityId",
+                  "value": "{{stadiumId}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "200 search by actor name",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('every item has the audit shape', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        ['id', 'time', 'action', 'entity', 'changes'].forEach(function (k) { pm.expect(i, k).to.have.property(k); });",
+                  "        pm.expect(i.changes).to.be.an('array');",
+                  "        i.changes.forEach(function (c) {",
+                  "            pm.expect(c).to.have.all.keys('field', 'oldValue', 'newValue');",
+                  "        });",
+                  "    });",
+                  "});",
+                  "pm.test('no secret ever appears', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', 'providertoken', 'eyjhbgci'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "});",
+                  "pm.test('every entry was made by a matching actor', function () {",
+                  "    var items = pm.response.json().data.content;",
+                  "    pm.expect(items.length).to.be.above(0);",
+                  "    items.forEach(function (i) { pm.expect(i.actor.name.toLowerCase()).to.include('player1'); });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log?actor=player1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "actor",
+                  "value": "player1"
+                }
+              ]
+            },
+            "description": "Matches the actor’s name, username or phone, case-insensitively."
+          }
+        },
+        {
+          "name": "200 only today (Tashkent)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Today in Asia/Tashkent (UTC+5, no DST), the zone the from/to filters use.",
+                  "var d = new Date(Date.now() + 5 * 3600000);",
+                  "pm.collectionVariables.set('auditToday', d.toISOString().slice(0, 10));",
+                  "pm.collectionVariables.set('auditYesterday', new Date(d.getTime() - 86400000).toISOString().slice(0, 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('every item has the audit shape', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        ['id', 'time', 'action', 'entity', 'changes'].forEach(function (k) { pm.expect(i, k).to.have.property(k); });",
+                  "        pm.expect(i.changes).to.be.an('array');",
+                  "        i.changes.forEach(function (c) {",
+                  "            pm.expect(c).to.have.all.keys('field', 'oldValue', 'newValue');",
+                  "        });",
+                  "    });",
+                  "});",
+                  "pm.test('no secret ever appears', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', 'providertoken', 'eyjhbgci'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "});",
+                  "pm.test('this run’s entries are there', function () {",
+                  "    pm.expect(pm.response.json().data.totalElements).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log?from={{auditToday}}&to={{auditToday}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{auditToday}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{auditToday}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "200 SYSTEM entries have no user",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('every item has the audit shape', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        ['id', 'time', 'action', 'entity', 'changes'].forEach(function (k) { pm.expect(i, k).to.have.property(k); });",
+                  "        pm.expect(i.changes).to.be.an('array');",
+                  "        i.changes.forEach(function (c) {",
+                  "            pm.expect(c).to.have.all.keys('field', 'oldValue', 'newValue');",
+                  "        });",
+                  "    });",
+                  "});",
+                  "pm.test('no secret ever appears', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', 'providertoken', 'eyjhbgci'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "});",
+                  "pm.test('system actor, no id or name', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        pm.expect(i.actor.type).to.eql('SYSTEM');",
+                  "        pm.expect(i.actor).to.not.have.property('id');",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log?actorType=SYSTEM",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "actorType",
+                  "value": "SYSTEM"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "400 unknown actorType",
           "event": [
             {
               "listen": "test",
@@ -13964,20 +14396,183 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/admin/audit-log/entity/stadium/not-a-uuid",
+              "raw": "{{baseUrl}}/api/admin/audit-log?actorType=robot",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "admin",
-                "audit-log",
-                "entity",
-                "stadium",
-                "not-a-uuid"
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "actorType",
+                  "value": "robot"
+                }
               ]
             },
             "description": ""
+          }
+        },
+        {
+          "name": "400 a range ending before it starts",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Today in Asia/Tashkent (UTC+5, no DST), the zone the from/to filters use.",
+                  "var d = new Date(Date.now() + 5 * 3600000);",
+                  "pm.collectionVariables.set('auditToday', d.toISOString().slice(0, 10));",
+                  "pm.collectionVariables.set('auditYesterday', new Date(d.getTime() - 86400000).toISOString().slice(0, 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log?from={{auditToday}}&to={{auditYesterday}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{auditToday}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{auditYesterday}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "400 malformed entityId",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log?entityId=not-a-uuid",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "entityId",
+                  "value": "not-a-uuid"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "405 audit entries cannot be deleted",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 405', function () { pm.response.to.have.status(405); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ]
+            },
+            "description": "There is no endpoint that changes or deletes an entry."
           }
         }
       ]
