@@ -769,6 +769,110 @@ BOT_TOKEN=...
   in the environment and needs no `.env` file at all (`optional:` means a missing
   file is fine).
 
+## Deployment checklist
+
+Go through this before the first production deploy and again whenever the
+infrastructure changes. The app is built to run as **one instance behind Nginx**.
+
+### Reverse proxy and client IPs
+
+The admin sign-in limits (per-IP attempts, audit IPs) use `request.getRemoteAddr()`.
+Behind a proxy that is the proxy's address unless Spring is told to read the
+forwarded headers — and then every admin shares one 20-attempt budget.
+
+- Set `server.forward-headers-strategy: native` (env `SERVER_FORWARD_HEADERS_STRATEGY=native`).
+  Tomcat's `RemoteIpValve` then takes the client IP from `X-Forwarded-For` and the
+  scheme from `X-Forwarded-Proto`.
+- It only trusts those headers from **internal proxies** (by default loopback and the
+  private ranges: 10/8, 172.16/12, 192.168/16, 127/8, ::1, …). If Nginx reaches the app from any other
+  address, list it in `server.tomcat.remoteip.internal-proxies`, or the headers are
+  ignored.
+- Bind the app so nothing but Nginx can reach it (`server.address: 127.0.0.1`, or a
+  private network / firewall). Anyone who can talk to the app directly can forge
+  `X-Forwarded-For`.
+- Nginx, as the edge, **replaces** the header instead of appending what the client
+  sent:
+
+  ```nginx
+  location / {
+      proxy_pass         http://127.0.0.1:8080;
+      proxy_set_header   Host              $host;
+      proxy_set_header   X-Forwarded-For   $remote_addr;
+      proxy_set_header   X-Forwarded-Proto $scheme;
+  }
+  ```
+
+  (Behind another proxy or a CDN, use `$proxy_add_x_forwarded_for` and add that
+  hop to `internal-proxies` / Nginx `set_real_ip_from` instead.)
+
+### HTTPS only
+
+- Nginx terminates TLS (TLS 1.2+); the app itself speaks plain HTTP on localhost.
+- Port 80 only redirects: `return 301 https://$host$request_uri;`.
+- Send HSTS: `add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;`.
+- Telegram requires HTTPS anyway, for the Mini App URL and for the bot webhook.
+- JWTs and admin passwords travel in every request, so there is no "internal HTTP"
+  exception, admin panel included.
+
+### Secrets and configuration
+
+- Real environment variables in production, no `.env` file (if one is used, it is
+  `chmod 600` and owned by the service user). Real env vars beat `.env` anyway.
+- `JWT_SECRET`: random, at least 32 bytes (`openssl rand -base64 48`), different
+  from every other environment. Rotating it signs everyone out.
+- `BOT_TOKEN`, `DB_PASSWORD`: never in Git, Postman, logs or tickets.
+- `SPRING_PROFILES_ACTIVE=prod`. `FakePaymentProvider` refuses to start under it,
+  so **a real payment provider (ATMOS) must be wired before production** —
+  `PAYMENTS_PROVIDER=fake` will not boot.
+- The Payme/Click webhooks are still mocks that trust the body without checking a
+  signature (see "Deferred until the payment model is final"). Don't expose
+  `/webhooks/payme` and `/webhooks/click` until they verify it — block them in
+  Nginx otherwise.
+
+### Build and run
+
+- Run the packaged jar (`./mvnw clean package`, then `java -jar target/*.jar`),
+  not `spring-boot:run`. The repackaged jar leaves out `spring-boot-devtools`,
+  whose automatic restarts and dev defaults must not run in production.
+- Run as an unprivileged service user under systemd (or a container) with
+  `Restart=on-failure`.
+- **Exactly one instance.** The `@Scheduled` jobs (booking expiry, game timeouts,
+  reminders, series, promotions, completion) run on every instance, and
+  `LoginRateLimiter` keeps its counts in memory. A second instance needs ShedLock
+  (or similar) and a shared rate limiter first.
+
+### Database
+
+- The app connects as a dedicated role that owns the `minipolya` database — not
+  the `postgres` superuser. `btree_gist` and `pgcrypto` are trusted extensions, so
+  the owner can create them during the Liquibase run.
+- Liquibase applies pending changesets on startup; take a backup before deploying
+  a release that contains new ones.
+- Automated daily backups (`pg_dump` or PITR) and a restore you have actually tried.
+- PostgreSQL listens only on localhost / the private network, with TLS if it is on
+  another host.
+
+### Application settings worth checking
+
+- CORS: none is configured, so browsers only allow same-origin calls. Serve the
+  admin panel and the Mini App from the API's origin (via Nginx), or add a CORS
+  config that allows exactly those origins — never `*` with credentials.
+- Logging at `INFO`, `spring.jpa.show-sql: false` (already). Check that no log line
+  carries tokens, card numbers or passwords before raising any level to DEBUG.
+- `server.error.include-stacktrace` stays at its default (`never`);
+  `GlobalExceptionHandler` already answers 500 with a generic message.
+- Rate-limit `/api/auth/**` in Nginx too (`limit_req`) — a cheap outer layer in
+  front of the in-app limits.
+
+### After the first deploy
+
+- Create the first admin with the SQL in "Admin accounts", sign in, and change the
+  password from the panel (that also revokes the session made with the SQL one).
+- Point the Telegram bot webhook at `https://<domain>/webhooks/telegram` and the
+  Mini App URL at the HTTPS origin.
+- Smoke-test: sign in via Telegram, list stadiums, admin sign-in, and check that
+  the audit log shows the real client IP and not Nginx's.
+
 ## Commands
 
 ```bash
