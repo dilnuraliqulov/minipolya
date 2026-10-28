@@ -14402,6 +14402,844 @@
           }
         }
       ]
+    },
+    {
+      "name": "15 Admin login",
+      "description": "Username + password sign-in for the admin web panel (CLAUDE.md, \"Admin accounts\").\n\nSetup: create a password admin with the SQL in CLAUDE.md and put its username and\npassword into adminUsername / adminPassword in your local environment only. Never\ncommit a real password. The folder changes the password and then changes it back.\n\nThe account lockout (5 wrong passwords -> 423 for 15 minutes) is covered by unit\ntests, not here: running it would lock the admin used by this folder. This folder\nmakes 6 sign-in attempts that count, so a fourth run within 15 minutes reaches the\nper-IP limit of 20 (429 TOO_MANY_ATTEMPTS); restart the app to reset it.",
+      "item": [
+        {
+          "name": "400 sign in without a password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/admin/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "admin",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{adminUsername}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "401 sign in with an unknown username",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('code is INVALID_CREDENTIALS', function () {",
+                  "    pm.expect(pm.response.json().code).to.eql('INVALID_CREDENTIALS');",
+                  "});",
+                  "pm.test('same message for a wrong username and a wrong password', function () {",
+                  "    pm.expect(pm.response.json().message).to.eql(\"Login yoki parol noto'g'ri\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/admin/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "admin",
+                "login"
+              ]
+            },
+            "description": "Same answer as a wrong password, so usernames cannot be discovered.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"no-such-admin-{{$randomUUID}}\",\n  \"password\": \"whatever-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "401 sign in with a wrong password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('code is INVALID_CREDENTIALS', function () {",
+                  "    pm.expect(pm.response.json().code).to.eql('INVALID_CREDENTIALS');",
+                  "});",
+                  "pm.test('same message for a wrong username and a wrong password', function () {",
+                  "    pm.expect(pm.response.json().message).to.eql(\"Login yoki parol noto'g'ri\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/admin/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "admin",
+                "login"
+              ]
+            },
+            "description": "Counts one failed attempt; the successful sign-in that follows resets it.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{adminUsername}}\",\n  \"password\": \"definitely-not-the-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "401 a Telegram-only player cannot sign in this way",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('code is INVALID_CREDENTIALS', function () {",
+                  "    pm.expect(pm.response.json().code).to.eql('INVALID_CREDENTIALS');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/admin/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "admin",
+                "login"
+              ]
+            },
+            "description": "Players have no username or password; any such attempt is INVALID_CREDENTIALS.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"Player1\",\n  \"password\": \"whatever-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "200 sign in with username and password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('captured adminPasswordToken', function () {",
+                  "    var v = pm.response.json().data.token;",
+                  "    pm.expect(v, 'adminPasswordToken').to.be.a('string');",
+                  "    pm.environment.set('adminPasswordToken', v);",
+                  "});",
+                  "pm.test('the user is an admin', function () {",
+                  "    pm.expect(pm.response.json().data.user.isAdmin).to.eql(true);",
+                  "});",
+                  "pm.test('no password or hash in the response', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', '$2b$'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "    var pw = pm.environment.get('adminPassword');",
+                  "    if (pw) { pm.expect(pm.response.text()).to.not.include(pw); }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/admin/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "admin",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{adminUsername}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "200 an admin endpoint accepts the password-login token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminPasswordToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "settings"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "401 change password without a token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/me/password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "me",
+                "password"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{adminPassword}}\",\n  \"newPassword\": \"a-brand-new-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "403 change password as a player",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/me/password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "me",
+                "password"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{adminPassword}}\",\n  \"newPassword\": \"a-brand-new-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "400 change password with a wrong current password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminPasswordToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/me/password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "me",
+                "password"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"definitely-not-the-password\",\n  \"newPassword\": \"a-brand-new-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "400 change password to one under 10 characters",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminPasswordToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/me/password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "me",
+                "password"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{adminPassword}}\",\n  \"newPassword\": \"short\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "200 change password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminPasswordToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/me/password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "me",
+                "password"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{adminPassword}}\",\n  \"newPassword\": \"{{adminPassword}}-rotated\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "401 the old password no longer works",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('code is INVALID_CREDENTIALS', function () {",
+                  "    pm.expect(pm.response.json().code).to.eql('INVALID_CREDENTIALS');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/admin/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "admin",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{adminUsername}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "200 sign in with the new password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('no password or hash in the response', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', '$2b$'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "    var pw = pm.environment.get('adminPassword');",
+                  "    if (pw) { pm.expect(pm.response.text()).to.not.include(pw); }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/admin/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "admin",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{adminUsername}}\",\n  \"password\": \"{{adminPassword}}-rotated\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "200 change the password back",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminPasswordToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/me/password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "me",
+                "password"
+              ]
+            },
+            "description": "Restores the original password so the folder can run again.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{adminPassword}}-rotated\",\n  \"newPassword\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   ],
   "event": [
