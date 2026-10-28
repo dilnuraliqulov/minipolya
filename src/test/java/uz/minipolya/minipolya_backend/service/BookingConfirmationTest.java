@@ -4,6 +4,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.dao.DataIntegrityViolationException;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditActorType;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Notification;
 import uz.minipolya.minipolya_backend.entity.Payment;
@@ -304,5 +309,13 @@ class BookingConfirmationTest {
         assertThat(cash.getAmount()).isEqualTo(PRICE - MINIMUM);
         assertThat(cash.getMethod()).isEqualTo(Payment.Method.CASH);
         assertThat(partly.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);
+
+        AuditEntry entry = Audited.one(auditService, AuditAction.CASH_RECEIVED);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.OWNER);
+        assertThat(entry.getActorId()).isEqualTo(OWNER_ID);
+        assertThat(entry.getEntityId()).isEqualTo(BOOKING_ID);
+        assertThat(entry.getChanges()).containsExactly(
+                AuditChange.of("paidAmount", MINIMUM, PRICE),
+                AuditChange.of("paymentStatus", "partially_paid", "paid"));
     }
 }

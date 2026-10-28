@@ -7,6 +7,11 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import uz.minipolya.minipolya_backend.config.AppProperties;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditActorType;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.dto.request.CreateBookingRequest;
 import uz.minipolya.minipolya_backend.dto.request.CreateManualBookingRequest;
 import uz.minipolya.minipolya_backend.dto.request.PaymentOption;
@@ -475,6 +480,12 @@ class BookingServiceTest {
         assertThat(booking.getStatus()).isEqualTo("cancelled_by_owner");
         assertThat(resp.getRefundAmount()).isEqualTo(80_000);
         verify(paymentService).refundAllCardPayments(BOOKING_ID, "pitch flooded");
+
+        AuditEntry entry = Audited.one(auditService, AuditAction.BOOKING_CANCELLED_BY_OWNER);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.OWNER);
+        assertThat(entry.getActorId()).isEqualTo(OWNER_ID);
+        assertThat(entry.getChanges()).containsExactly(AuditChange.of("status", "confirmed", "cancelled_by_owner"));
+        assertThat(entry.getReason()).isEqualTo("pitch flooded");
     }
 
     @Test
@@ -564,6 +575,14 @@ class BookingServiceTest {
         assertThat(saved.getClientName()).isEqualTo("Walk-in");
         verify(gameService).cancelGamesOnSlot(eq(STADIUM_ID), any(), any());
         verify(paymentService).recordCashPayment(MANUAL_BOOKING_ID, OWNER_ID);
+
+        AuditEntry entry = Audited.one(auditService, AuditAction.MANUAL_BOOKING_CREATED);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.OWNER);
+        assertThat(entry.getEntityId()).isEqualTo(MANUAL_BOOKING_ID);
+        assertThat(entry.getEntityLabel()).endsWith(", Walk-in");
+        assertThat(entry.getChanges()).extracting(AuditChange::field)
+                .containsExactly("status", "startsAt", "durationHours", "price", "clientName");
+        assertThat(entry.getChanges()).contains(AuditChange.of("price", null, 100_000L));
     }
 
     @Test

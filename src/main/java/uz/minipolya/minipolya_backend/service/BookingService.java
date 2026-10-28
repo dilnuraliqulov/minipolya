@@ -8,6 +8,10 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.config.AppProperties;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.request.CreateBookingRequest;
 import uz.minipolya.minipolya_backend.dto.request.CreateManualBookingRequest;
 import uz.minipolya.minipolya_backend.dto.request.PaymentOption;
@@ -238,7 +242,13 @@ public class BookingService {
             paymentService.recordCashPayment(saved.getId(), ownerUserId);
         }
 
-        auditService.log(ownerUserId, "MANUAL_BOOKING_CREATED", "booking", saved.getId());
+        auditService.record(AuditEntry.owner(ownerUserId, AuditAction.MANUAL_BOOKING_CREATED)
+                .entity(AuditEntityType.BOOKING, saved.getId(), AuditLabels.booking(saved))
+                .created("status", saved.getStatus())
+                .created("startsAt", saved.getStartsAt())
+                .created("durationHours", saved.getDurationHours())
+                .created("price", saved.getPrice())
+                .created("clientName", saved.getClientName()));
         log.info("Manual booking created: id={} stadiumId={} ownerId={} client='{}'",
                 saved.getId(), stadium.getId(), ownerUserId, request.getClientName());
         return bookingResponseFactory.of(saved);
@@ -300,6 +310,7 @@ public class BookingService {
             throw new ForbiddenException("You do not own this stadium");
         }
         requireCancellable(booking);
+        String oldStatus = booking.getStatus();
 
         // The owner cancelling is never the player's fault: everything back,
         // whatever the window says. A game booking holds none of its teams'
@@ -320,7 +331,10 @@ public class BookingService {
                             + "». Возврат средств оформлен.",
                     Notification.ReferenceType.BOOKING, booking.getId()));
         }
-        auditService.log(ownerId, "BOOKING_CANCELLED_BY_OWNER", "booking", booking.getId());
+        auditService.record(AuditEntry.owner(ownerId, AuditAction.BOOKING_CANCELLED_BY_OWNER)
+                .entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
+                .change("status", oldStatus, booking.getStatus())
+                .reason(reason));
         log.info("Booking cancelled by owner: id={} ownerId={} refundAmount={}", bookingId, ownerId, refundAmount);
         return withRefund(booking, refundAmount);
     }

@@ -4,6 +4,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.request.CreateStadiumClosureRequest;
 import uz.minipolya.minipolya_backend.dto.response.StadiumClosureResponse;
 import uz.minipolya.minipolya_backend.entity.Stadium;
@@ -32,6 +36,7 @@ public class StadiumClosureService {
     private final StadiumClosureRepository closureRepository;
     private final StadiumRepository stadiumRepository;
     private final StadiumClosureMapper closureMapper;
+    private final AuditService auditService;
 
     @Transactional
     public StadiumClosureResponse createClosure(CreateStadiumClosureRequest request, UUID ownerUserId) {
@@ -50,6 +55,13 @@ public class StadiumClosureService {
         StadiumClosure closure = closureMapper.toEntity(request);
         closure.setStadium(stadium);
         StadiumClosure saved = closureRepository.save(closure);
+        auditService.record(AuditEntry.owner(ownerUserId, AuditAction.CLOSURE_CREATED)
+                .entity(AuditEntityType.CLOSURE, saved.getId(), AuditLabels.closure(saved))
+                .created("startDate", saved.getStartDate())
+                .created("endDate", saved.getEndDate())
+                .created("startTime", saved.getStartTime())
+                .created("endTime", saved.getEndTime())
+                .reason(saved.getReason()));
         log.info("Closure created: id={} stadiumId={} {}..{}",
                 saved.getId(), stadium.getId(), saved.getStartDate(), saved.getEndDate());
         return closureMapper.toResponse(saved);
@@ -71,6 +83,14 @@ public class StadiumClosureService {
             throw new ForbiddenException("You do not own this stadium");
         }
         closureRepository.delete(closure);
+        // The row is gone, so the label and the removed values are all that is left of it.
+        auditService.record(AuditEntry.owner(ownerUserId, AuditAction.CLOSURE_DELETED)
+                .entity(AuditEntityType.CLOSURE, closureId, AuditLabels.closure(closure))
+                .change("startDate", closure.getStartDate(), null)
+                .change("endDate", closure.getEndDate(), null)
+                .change("startTime", closure.getStartTime(), null)
+                .change("endTime", closure.getEndTime(), null)
+                .reason(closure.getReason()));
         log.info("Closure deleted: id={} ownerId={}", closureId, ownerUserId);
     }
 

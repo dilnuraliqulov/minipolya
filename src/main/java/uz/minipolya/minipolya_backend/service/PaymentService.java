@@ -7,6 +7,10 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.dto.response.PaymentResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
@@ -250,9 +254,6 @@ public class PaymentService {
                 .status(Payment.Status.PAID)
                 .build());
 
-        auditService.log(owner.getId(), "PAYMENT_COMPLETED", "payment", payment.getId(),
-                "{\"amount\":" + amount + ",\"method\":\"cash\",\"gameTeamId\":\""
-                        + gameTeam.getId() + "\"}");
         log.info("Team remainder taken in cash: gameTeamId={} amount={}", gameTeam.getId(), amount);
         return payment;
     }
@@ -666,9 +667,13 @@ public class PaymentService {
                 .build();
         Payment saved = paymentRepository.save(payment);
 
-        auditService.log(ownerUserId, "PAYMENT_COMPLETED", "payment", saved.getId(),
-                "{\"amount\":" + saved.getAmount() + ",\"method\":\"cash\"}");
+        long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
+        Booking.PaymentStatus statusBefore = booking.getPaymentStatus();
         applySuccessfulBookingPayment(booking, saved);
+        auditService.record(AuditEntry.owner(ownerUserId, AuditAction.CASH_RECEIVED)
+                .entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
+                .change("paidAmount", paidBefore, booking.getPaidAmount())
+                .change("paymentStatus", statusBefore, booking.getPaymentStatus()));
         log.info("Cash payment recorded: id={} bookingId={} ownerId={}", saved.getId(), bookingId, ownerUserId);
         return saved;
     }

@@ -8,6 +8,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.config.AppProperties;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.response.GameChallengeResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameTeamResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
@@ -375,11 +379,14 @@ public class TeamGameService {
                 .orElseThrow(() -> new ResourceNotFoundException("No team is on side " + side.getValue()));
         requireOwing(team);
 
+        GameTeam.RemainderStatus statusBefore = team.getRemainderStatus();
         paymentService.recordCashTeamRemainder(team, game.getStadium().getOwner());
         settleRemainder(game, team);
-        auditService.log(ownerUserId, "GAME_REMAINDER_PAID", "game", gameId,
-                "{\"side\":\"" + side.getValue() + "\",\"amount\":"
-                        + team.getRemainderAmount() + ",\"method\":\"cash\"}");
+        auditService.record(AuditEntry.owner(ownerUserId, AuditAction.CASH_RECEIVED)
+                .entity(AuditEntityType.GAME, gameId, AuditLabels.game(game))
+                .change("team" + side.getValue().toUpperCase() + ".remainderStatus",
+                        statusBefore, team.getRemainderStatus())
+                .created("team" + side.getValue().toUpperCase() + ".cashAmount", team.getRemainderAmount()));
         log.info("Team remainder taken in cash: gameId={} side={} amount={}",
                 gameId, side.getValue(), team.getRemainderAmount());
         return team;

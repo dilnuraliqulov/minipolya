@@ -8,6 +8,11 @@ import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditActorType;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.dto.request.CreateStadiumRequest;
 import uz.minipolya.minipolya_backend.dto.request.UpdateStadiumRequest;
 import uz.minipolya.minipolya_backend.dto.response.StadiumDetailResponse;
@@ -101,6 +106,44 @@ class StadiumServiceTest {
         inOrder.verify(stadiumRepository).saveAndFlush(stadium);
         inOrder.verify(entityManager).refresh(stadium);
         inOrder.verify(stadiumMapper).toDetailResponse(stadium);
+    }
+
+    @Test
+    void anEditRecordsOnlyTheFieldsThatChanged() {
+        User owner = User.builder().id(OWNER_ID).name("Owner").build();
+        Stadium stadium = Stadium.builder().id(STADIUM_ID).owner(owner).name("Arena")
+                .pricePerHour(15_000_000L).cancellationHours(24).build();
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.saveAndFlush(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+        // The mapper is a mock here, so apply the request the way the real one would.
+        org.mockito.Mockito.doAnswer(inv -> {
+            Stadium target = inv.getArgument(1);
+            target.setName("Arena");                 // sent, but the same value
+            target.setMinBookingAmount(5_000_000L);  // null → 50 000 so'm
+            target.setCancellationHours(12);         // 24 → 12
+            return null;
+        }).when(stadiumMapper).updateStadiumFromRequest(any(), any());
+
+        stadiumService.update(OWNER_ID, STADIUM_ID, new UpdateStadiumRequest());
+
+        AuditEntry entry = Audited.one(auditService, AuditAction.STADIUM_UPDATED);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.OWNER);
+        assertThat(entry.getEntityLabel()).isEqualTo("Arena");
+        assertThat(entry.getChanges()).containsExactly(
+                AuditChange.of("minBookingAmount", null, 5_000_000L),
+                AuditChange.of("cancellationHours", 24, 12));
+    }
+
+    @Test
+    void anEditThatChangesNothingRecordsNothing() {
+        User owner = User.builder().id(OWNER_ID).name("Owner").build();
+        Stadium stadium = Stadium.builder().id(STADIUM_ID).owner(owner).name("Arena").build();
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.saveAndFlush(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        stadiumService.update(OWNER_ID, STADIUM_ID, new UpdateStadiumRequest());
+
+        assertThat(Audited.entries(auditService)).isEmpty();
     }
 
     @Test
