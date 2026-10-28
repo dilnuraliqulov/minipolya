@@ -59,3 +59,5 @@ databaseChangeLog:
       file: db/changelog/changes/029-audit-log-structure.sql
   - include:
       file: db/changelog/changes/030-card-fee-settings.sql
+  - include:
+      file: db/changelog/changes/031-card-fee-payments.sql

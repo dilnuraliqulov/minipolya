@@ -27,13 +27,27 @@ public class BookingResponseFactory {
     private final BookingMapper bookingMapper;
     private final CancellationPolicy cancellationPolicy;
     private final PaymentService paymentService;
+    private final CardPricing cardPricing;
 
+    /** The player's view: card prices, no netPrice. */
     public BookingResponse of(Booking booking) {
         return of(booking, OffsetDateTime.now(ZoneOffset.UTC));
     }
 
+    /** The owner's and admin's view: the same, plus the owner's netPrice. */
+    public BookingResponse forOwner(Booking booking) {
+        BookingResponse response = of(booking);
+        response.setNetPrice(booking.getPrice());
+        return response;
+    }
+
+    public List<BookingResponse> forOwner(List<Booking> bookings) {
+        return bookings.stream().map(this::forOwner).toList();
+    }
+
     public BookingResponse of(Booking booking, OffsetDateTime now) {
         BookingResponse response = bookingMapper.toResponse(booking);
+        applyCardPrices(response, booking);
         if (booking.getStartsAt() == null || booking.getStadium() == null) {
             return response; // not enough to say anything about cancelling
         }
@@ -42,6 +56,23 @@ public class BookingResponseFactory {
                 ? paymentService.refundableCardTotal(booking.getId())
                 : 0L);
         return response;
+    }
+
+    /**
+     * {@code price} becomes the card price — stored at booking time, or worked out from
+     * the net price for manual and older bookings — and the remainder is offered both ways.
+     */
+    private void applyCardPrices(BookingResponse response, Booking booking) {
+        if (booking.getPrice() == null) {
+            return;
+        }
+        long net = booking.getPrice();
+        long card = booking.getCardPrice() != null ? booking.getCardPrice() : cardPricing.playerAmount(net);
+        response.setPrice(card);
+        response.setCardFee(card - net);
+        long remainingNet = booking.getRemainingAmount();
+        response.setRemainderInCash(remainingNet);
+        response.setRemainderByCard(remainingNet > 0 ? cardPricing.playerAmount(remainingNet) : 0L);
     }
 
     public List<BookingResponse> of(List<Booking> bookings) {

@@ -122,9 +122,9 @@ class GameBookingPriceParityTest {
         PaymentService bookingPayments = mock(PaymentService.class);
         bookingService = new BookingService(bookingRepository, stadiumRepository, userRepository,
                 priceCalculator, new CancellationPolicy(),
-                new BookingResponseFactory(bookingMapper, new CancellationPolicy(), bookingPayments),
+                new BookingResponseFactory(bookingMapper, new CancellationPolicy(), bookingPayments, CardPricing.withDefaults()),
                 new AppProperties(), bookingPayments, mock(GameService.class),
-                mock(NotificationService.class), mock(AuditService.class), windowValidator, savedCardService);
+                mock(NotificationService.class), mock(AuditService.class), windowValidator, savedCardService, CardPricing.withDefaults());
 
         PlatformSettingsService platformSettings = mock(PlatformSettingsService.class);
         when(platformSettings.current()).thenReturn(PlatformSettings.builder().build());

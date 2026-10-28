@@ -67,7 +67,7 @@ class BookingCancellationRefundTest {
 
         BookingMapper bookingMapper = mock(BookingMapper.class);
         when(bookingMapper.toResponse(any(Booking.class))).thenAnswer(inv -> new BookingResponse());
-        responseFactory = new BookingResponseFactory(bookingMapper, policy, paymentService);
+        responseFactory = new BookingResponseFactory(bookingMapper, policy, paymentService, CardPricing.withDefaults());
 
         when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
         when(paymentProvider.refund(anyString())).thenAnswer(inv ->

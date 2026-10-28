@@ -9,6 +9,8 @@ import uz.minipolya.minipolya_backend.audit.AuditActorType;
 import uz.minipolya.minipolya_backend.audit.AuditChange;
 import uz.minipolya.minipolya_backend.audit.AuditEntry;
 import uz.minipolya.minipolya_backend.audit.Audited;
+import uz.minipolya.minipolya_backend.util.CardFeeSplit;
+import uz.minipolya.minipolya_backend.util.PriceCalculator;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Notification;
 import uz.minipolya.minipolya_backend.entity.Payment;
@@ -119,7 +121,7 @@ class BookingConfirmationTest {
         providerCharges();
         Booking pending = booking("pending");
 
-        service.chargeForBooking(pending, card, PRICE);
+        service.chargeForBooking(pending, card, TestPrices.net(PRICE));
 
         assertThat(pending.getStatus()).isEqualTo("confirmed");
         assertThat(pending.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);
@@ -132,7 +134,7 @@ class BookingConfirmationTest {
         providerCharges();
         Booking pending = booking("pending");
 
-        service.chargeForBooking(pending, card, MINIMUM);
+        service.chargeForBooking(pending, card, TestPrices.net(MINIMUM));
 
         assertThat(pending.getStatus()).isEqualTo("confirmed");
         assertThat(pending.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PARTIALLY_PAID);
@@ -146,11 +148,17 @@ class BookingConfirmationTest {
         when(platformSettingsService.current())
                 .thenReturn(PlatformSettings.builder().bookingCommissionPercent(10).build());
 
-        Payment payment = service.chargeForBooking(booking("pending"), card, PRICE);
+        CardFeeSplit charge = new CardPricing(() -> PlatformSettings.builder().bookingCommissionPercent(10).build())
+                .bookingSplit(PRICE);
 
-        assertThat(payment.getAmount()).isEqualTo(PRICE);
-        assertThat(payment.getPlatformAmount()).isEqualTo(PRICE / 10);
-        assertThat(payment.getOwnerAmount()).isEqualTo(PRICE - PRICE / 10);
+        Payment payment = service.chargeForBooking(booking("pending"), card, charge);
+
+        // The card is charged the grossed-up price; the owner's split is grossed up so that
+        // after the card fee they net exactly the price less the commission.
+        assertThat(payment.getAmount()).isEqualTo(TestPrices.card(PRICE));
+        assertThat(payment.getOwnerAmount()).isEqualTo(PriceCalculator.grossUp(PRICE - PRICE / 10, 150));
+        assertThat(payment.getPlatformAmount()).isEqualTo(payment.getAmount() - payment.getOwnerAmount());
+        assertThat(payment.getCardFeeExpected()).isEqualTo(TestPrices.card(PRICE) - PRICE);
         assertThat(payment.getCommissionPercent()).isEqualTo(10);
         assertThat(payment.getOwnerAmount() + payment.getPlatformAmount()).isEqualTo(payment.getAmount());
     }
@@ -159,7 +167,7 @@ class BookingConfirmationTest {
     void aPaymentRecordsItsMethodTypeAndProviderTransaction() {
         providerCharges();
 
-        Payment payment = service.chargeForBooking(booking("pending"), card, PRICE);
+        Payment payment = service.chargeForBooking(booking("pending"), card, TestPrices.net(PRICE));
 
         assertThat(payment.getMethod()).isEqualTo(Payment.Method.CARD);
         assertThat(payment.getPaymentType()).isEqualTo(Payment.PaymentType.BOOKING);
@@ -175,7 +183,7 @@ class BookingConfirmationTest {
                 new ProviderTransaction("failed-1", ProviderTransactionStatus.FAILED));
         Booking pending = booking("pending");
 
-        Payment payment = service.chargeForBooking(pending, card, PRICE);
+        Payment payment = service.chargeForBooking(pending, card, TestPrices.net(PRICE));
 
         assertThat(payment.getStatus()).isEqualTo(Payment.Status.FAILED);
         assertThat(pending.getStatus()).isEqualTo("pending");
@@ -192,7 +200,7 @@ class BookingConfirmationTest {
         when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(false);
         Booking expired = booking("expired");
 
-        service.chargeForBooking(expired, card, PRICE);
+        service.chargeForBooking(expired, card, TestPrices.net(PRICE));
 
         assertThat(expired.getStatus()).isEqualTo("confirmed");
         assertThat(expired.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);
@@ -207,7 +215,7 @@ class BookingConfirmationTest {
                 new ProviderTransaction("txn-1", ProviderTransactionStatus.REFUNDED));
         Booking expired = booking("expired");
 
-        service.chargeForBooking(expired, card, PRICE);
+        service.chargeForBooking(expired, card, TestPrices.net(PRICE));
 
         verify(paymentProvider).refund("txn-1");
         assertThat(expired.getStatus()).isEqualTo("expired");
@@ -222,7 +230,7 @@ class BookingConfirmationTest {
         when(paymentProvider.refund("txn-1")).thenReturn(
                 new ProviderTransaction("txn-1", ProviderTransactionStatus.REFUNDED));
 
-        service.chargeForBooking(booking("expired"), card, PRICE);
+        service.chargeForBooking(booking("expired"), card, TestPrices.net(PRICE));
 
         ArgumentCaptor<Payment> captor = ArgumentCaptor.forClass(Payment.class);
         verify(paymentRepository, org.mockito.Mockito.atLeast(2)).save(captor.capture());
@@ -247,7 +255,7 @@ class BookingConfirmationTest {
         when(paymentProvider.refund("txn-1")).thenReturn(
                 new ProviderTransaction("txn-1", ProviderTransactionStatus.REFUNDED));
 
-        Payment payment = service.chargeForBooking(booking("expired"), card, PRICE);
+        Payment payment = service.chargeForBooking(booking("expired"), card, TestPrices.net(PRICE));
 
         assertThat(payment.getStatus()).isEqualTo(Payment.Status.REFUNDED);
         verify(paymentProvider).refund("txn-1");
@@ -262,7 +270,7 @@ class BookingConfirmationTest {
         played.setPaidAmount(MINIMUM);
         played.setPaymentStatus(Booking.PaymentStatus.PARTIALLY_PAID);
 
-        service.chargeForBooking(played, card, PRICE - MINIMUM, Payment.PaymentType.REMAINDER);
+        service.chargeForBooking(played, card, TestPrices.net(PRICE - MINIMUM), Payment.PaymentType.REMAINDER);
 
         assertThat(played.getStatus()).isEqualTo("completed");
         assertThat(played.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);
@@ -276,7 +284,7 @@ class BookingConfirmationTest {
         confirmed.setPaidAmount(MINIMUM);
         confirmed.setPaymentStatus(Booking.PaymentStatus.PARTIALLY_PAID);
 
-        service.chargeForBooking(confirmed, card, PRICE - MINIMUM, Payment.PaymentType.REMAINDER);
+        service.chargeForBooking(confirmed, card, TestPrices.net(PRICE - MINIMUM), Payment.PaymentType.REMAINDER);
 
         assertThat(confirmed.getStatus()).isEqualTo("confirmed");
         assertThat(confirmed.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);

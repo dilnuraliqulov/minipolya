@@ -68,9 +68,24 @@ public class Payment {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    /** Integer so'm — positive for charges, negative for refunds. */
+    /**
+     * Tiyin: the gross a card was charged (card fee included) or the cash taken —
+     * positive for charges, negative for refunds.
+     */
     @Column(nullable = false)
     private Long amount;
+
+    /**
+     * Tiyin the card fee and the price rounding added on top of the net this payment
+     * covers, so {@code amount - cardFeeExpected} is that net. 0 for cash.
+     */
+    @Builder.Default
+    @Column(name = "card_fee_expected", nullable = false)
+    private Long cardFeeExpected = 0L;
+
+    /** The commission the provider reports having taken; null until it does. */
+    @Column(name = "provider_commission")
+    private Long providerCommission;
 
     /**
      * The part of {@link #amount} owed to the stadium owner. Together with
@@ -83,6 +98,11 @@ public class Payment {
     /** The part of {@link #amount} the platform keeps. */
     @Column(name = "platform_amount", nullable = false)
     private Long platformAmount;
+
+    /** What this payment is worth to its recipients: the gross less the card fee. */
+    public long netAmount() {
+        return (amount == null ? 0L : amount) - (cardFeeExpected == null ? 0L : cardFeeExpected);
+    }
 
     /** The booking commission in force when this payment was taken. */
     @Column(name = "commission_percent", nullable = false)

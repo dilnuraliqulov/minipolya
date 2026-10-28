@@ -34,6 +34,7 @@ import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
+import uz.minipolya.minipolya_backend.util.CardFeeSplit;
 
 import java.util.List;
 import java.util.Locale;
@@ -117,19 +118,21 @@ public class PaymentService {
      * card produces a {@code FAILED} row and leaves the booking pending, to
      * expire on the usual hold timeout.
      *
-     * @param amount tiyin to charge — the stadium minimum or the full price
+     * @param charge what the card is charged and how it splits — the stadium minimum or
+     *               the full price, grossed up by the card fee
      */
     @Transactional
-    public Payment chargeForBooking(Booking booking, SavedCard card, long amount) {
-        return chargeForBooking(booking, card, amount, Payment.PaymentType.BOOKING);
+    public Payment chargeForBooking(Booking booking, SavedCard card, CardFeeSplit charge) {
+        return chargeForBooking(booking, card, charge, Payment.PaymentType.BOOKING);
     }
 
-    /** As {@link #chargeForBooking(Booking, SavedCard, long)}, for a chosen payment type. */
+    /** As {@link #chargeForBooking(Booking, SavedCard, CardFeeSplit)}, for a chosen payment type. */
     @Transactional
-    public Payment chargeForBooking(Booking booking, SavedCard card, long amount, Payment.PaymentType type) {
+    public Payment chargeForBooking(Booking booking, SavedCard card, CardFeeSplit charge, Payment.PaymentType type) {
         int commissionPercent = platformSettingsService.current().getBookingCommissionPercent();
-        long platformAmount = amount * commissionPercent / 100;
-        long ownerAmount = amount - platformAmount;
+        long amount = charge.playerAmount();
+        long platformAmount = charge.platformGross();
+        long ownerAmount = charge.ownerGross();
         String reference = UUID.randomUUID().toString();
 
         ProviderTransaction txn = paymentProvider.charge(new ChargeCommand(
@@ -141,6 +144,7 @@ public class PaymentService {
                 .amount(amount)
                 .ownerAmount(ownerAmount)
                 .platformAmount(platformAmount)
+                .cardFeeExpected(charge.cardFee())
                 .commissionPercent(commissionPercent)
                 .method(Payment.Method.CARD)
                 .paymentType(type)
@@ -407,8 +411,9 @@ public class PaymentService {
             return refundBecauseSlotIsGone(booking, payment);
         }
 
+        // The booking counts what the payment is worth to the owner, not what the card fee added.
         long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
-        long paid = paidBefore + payment.getAmount();
+        long paid = paidBefore + payment.netAmount();
         String previousStatus = booking.getStatus();
         Booking.PaymentStatus paymentStatusBefore = booking.getPaymentStatus();
         booking.setPaidAmount(paid);
@@ -427,7 +432,7 @@ public class PaymentService {
         } catch (DataIntegrityViolationException ex) {
             // Someone took the slot between the check above and this write.
             booking.setStatus(previousStatus);
-            booking.setPaidAmount(paid - payment.getAmount());
+            booking.setPaidAmount(paid - payment.netAmount());
             booking.setPaymentStatus(booking.getPaidAmount() > 0
                     ? Booking.PaymentStatus.PARTIALLY_PAID
                     : Booking.PaymentStatus.UNPAID);
@@ -485,9 +490,11 @@ public class PaymentService {
                 // Carried over so a team game's refund stays in that team's ledger.
                 .gameTeam(original.getGameTeam())
                 .user(original.getUser())
+                // The whole gross comes back, the card fee included.
                 .amount(-Math.abs(original.getAmount()))
                 .ownerAmount(-Math.abs(original.getOwnerAmount()))
                 .platformAmount(-Math.abs(original.getPlatformAmount()))
+                .cardFeeExpected(-Math.abs(original.getCardFeeExpected() == null ? 0L : original.getCardFeeExpected()))
                 .commissionPercent(original.getCommissionPercent())
                 .method(original.getMethod())
                 .paymentType(Payment.PaymentType.REFUND)

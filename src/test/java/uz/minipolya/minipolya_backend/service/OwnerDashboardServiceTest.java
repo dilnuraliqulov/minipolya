@@ -73,7 +73,7 @@ class OwnerDashboardServiceTest {
         gameTeamRepository = mock(GameTeamRepository.class);
         service = new OwnerDashboardService(stadiumRepository, bookingRepository, paymentRepository,
                 reviewRepository,
-                new BookingResponseFactory(bookingMapper, new CancellationPolicy(), mock(PaymentService.class)),
+                new BookingResponseFactory(bookingMapper, new CancellationPolicy(), mock(PaymentService.class), CardPricing.withDefaults()),
                 stadiumService, reviewService, gameRepository, gameTeamRepository);
 
         stadium = Stadium.builder().id(STADIUM_ID).name("Arena").owner(User.builder().id(OWNER_ID).build())
