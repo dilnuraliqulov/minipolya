@@ -76,6 +76,18 @@ public class PlatformSettingsService {
             settings.setCasualGameServiceFee(casualFee);
         }
 
+        Integer cardFeeBps = request.getCardFeeBps();
+        if (cardFeeBps != null && cardFeeBps != settings.getCardFeeBps()) {
+            audit.change("cardFeeBps", settings.getCardFeeBps(), cardFeeBps);
+            settings.setCardFeeBps(cardFeeBps);
+        }
+
+        Long roundingStep = request.getPaymentRoundingStep();
+        if (roundingStep != null && roundingStep != settings.getPaymentRoundingStep()) {
+            audit.change("paymentRoundingStep", settings.getPaymentRoundingStep(), roundingStep);
+            settings.setPaymentRoundingStep(roundingStep);
+        }
+
         if (audit.getChanges().isEmpty()) {
             return mapper.toResponse(settings);
         }
@@ -98,6 +110,15 @@ public class PlatformSettingsService {
         }
         requireNotNegative("teamGamePlatformFee", request.getTeamGamePlatformFee());
         requireNotNegative("casualGameServiceFee", request.getCasualGameServiceFee());
+        Integer bps = request.getCardFeeBps();
+        if (bps != null && (bps < 0 || bps > PlatformSettings.MAX_CARD_FEE_BPS)) {
+            throw new BadRequestException("cardFeeBps must be between 0 and " + PlatformSettings.MAX_CARD_FEE_BPS);
+        }
+        Long step = request.getPaymentRoundingStep();
+        if (step != null && (step < 1 || step > PlatformSettings.MAX_PAYMENT_ROUNDING_STEP)) {
+            throw new BadRequestException("paymentRoundingStep must be between 1 and "
+                    + PlatformSettings.MAX_PAYMENT_ROUNDING_STEP);
+        }
     }
 
     private void requireNotNegative(String field, Long value) {

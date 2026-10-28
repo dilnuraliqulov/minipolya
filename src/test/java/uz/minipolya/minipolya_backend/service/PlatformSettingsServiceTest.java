@@ -148,6 +148,44 @@ class PlatformSettingsServiceTest {
     }
 
     @Test
+    void theCardFeeDefaultsTo150BpsAndA100SomStep() {
+        PlatformSettingsResponse response = service.get();
+
+        assertThat(response.getCardFeeBps()).isEqualTo(150);
+        assertThat(response.getPaymentRoundingStep()).isEqualTo(10_000L);
+    }
+
+    @Test
+    void changingTheCardFeeIsAuditedWithOldAndNewValues() {
+        PlatformSettingsResponse response = service.update(UpdatePlatformSettingsRequest.builder()
+                .cardFeeBps(200).paymentRoundingStep(50_000L).build(), ADMIN_ID);
+
+        assertThat(response.getCardFeeBps()).isEqualTo(200);
+        assertThat(response.getPaymentRoundingStep()).isEqualTo(50_000L);
+        assertThat(Audited.one(auditService, AuditAction.SETTINGS_CHANGED).getChanges()).containsExactly(
+                new AuditChange("cardFeeBps", 150L, 200L),
+                new AuditChange("paymentRoundingStep", 10_000L, 50_000L));
+    }
+
+    @Test
+    void rejectsACardFeeOutsideZeroToTenPercent() {
+        assertThatThrownBy(() -> service.update(
+                UpdatePlatformSettingsRequest.builder().cardFeeBps(1001).build(), ADMIN_ID))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("cardFeeBps");
+        assertThatThrownBy(() -> service.update(
+                UpdatePlatformSettingsRequest.builder().cardFeeBps(-1).build(), ADMIN_ID))
+                .isInstanceOf(BadRequestException.class);
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void rejectsARoundingStepBelowOneTiyin() {
+        assertThatThrownBy(() -> service.update(
+                UpdatePlatformSettingsRequest.builder().paymentRoundingStep(0L).build(), ADMIN_ID))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("paymentRoundingStep");
+    }
+
+    @Test
     void readingSeedsTheRowWhenTheTableIsEmpty() {
         when(repository.findAll()).thenReturn(List.of());
 

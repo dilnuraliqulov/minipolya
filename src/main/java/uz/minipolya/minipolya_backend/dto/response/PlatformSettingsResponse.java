@@ -22,5 +22,9 @@ public class PlatformSettingsResponse {
     private int bookingCommissionPercent;
     private long teamGamePlatformFee;
     private long casualGameServiceFee;
+    /** Basis points: 150 = 1.5%. */
+    private int cardFeeBps;
+    /** Tiyin. */
+    private long paymentRoundingStep;
     private OffsetDateTime updatedAt;
 }

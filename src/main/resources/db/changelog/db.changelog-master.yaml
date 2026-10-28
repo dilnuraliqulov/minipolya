@@ -57,3 +57,5 @@ databaseChangeLog:
       file: db/changelog/changes/028-password-changed-at.sql
   - include:
       file: db/changelog/changes/029-audit-log-structure.sql
+  - include:
+      file: db/changelog/changes/030-card-fee-settings.sql
