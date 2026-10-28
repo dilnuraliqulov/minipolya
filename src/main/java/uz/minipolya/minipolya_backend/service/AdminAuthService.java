@@ -142,8 +142,13 @@ public class AdminAuthService {
                 .build();
     }
 
+    /**
+     * Sets a new password and stamps {@code password_changed_at}, which makes JwtAuthFilter
+     * refuse every token issued before now — including the caller's. The returned token is
+     * issued after the stamp, so the caller stays signed in.
+     */
     @Transactional
-    public void changePassword(UUID adminUserId, ChangePasswordRequest request, String ip) {
+    public AuthResponse changePassword(UUID adminUserId, ChangePasswordRequest request, String ip) {
         User user = userRepository.findById(adminUserId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
@@ -156,11 +161,16 @@ public class AdminAuthService {
         }
 
         user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
+        user.setPasswordChangedAt(OffsetDateTime.now(clock));
         userRepository.save(user);
 
         auditService.log(user.getId(), AUDIT_PASSWORD_CHANGED, AUDIT_ENTITY, user.getId(),
                 details(user.getUsername(), ip, null), ip);
         log.info("Admin changed their password: userId={} ip={}", user.getId(), ip);
+        return AuthResponse.builder()
+                .token(jwtProvider.generateToken(user))
+                .user(userMapper.toResponse(user))
+                .build();
     }
 
     // ---- Helpers ----

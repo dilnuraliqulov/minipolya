@@ -174,7 +174,8 @@ db/changelog/
     ├── ...                           # 018–024: duration, blocking, tiyin, settings, cards, payments, cancellation
     ├── 025-game-teams.sql            # game_teams + payments.game_team_id; drops games.creator_share_pct
     ├── 026-opponent-left.sql         # bookings status cancelled_opponent_left + notification game_opponent_left
-    └── 027-admin-password-login.sql  # pgcrypto + users.username/password_hash/lockout columns; audit_log.entity_id nullable
+    ├── 027-admin-password-login.sql  # pgcrypto + users.username/password_hash/lockout columns; audit_log.entity_id nullable
+    └── 028-password-changed-at.sql   # users.password_changed_at — tokens issued earlier are refused
 ```
 
 ### Adding New Migrations
@@ -619,7 +620,16 @@ changes for them. All of this lives in `service/AdminAuthService.java`.
   `ADMIN_LOGIN_FAILED` audit entries with the username and IP.
 - `POST /api/admin/me/password` with `{ "currentPassword", "newPassword" }`:
   a wrong current password → 400; the new one needs 10+ characters and at most
-  72 bytes (BCrypt ignores the rest). Writes `ADMIN_PASSWORD_CHANGED`.
+  72 bytes (BCrypt ignores the rest). Writes `ADMIN_PASSWORD_CHANGED`. It answers
+  with a fresh `{ token, user }`, which the panel must swap in.
+- **A password change signs out every older session.** It stamps
+  `users.password_changed_at`, and `JwtAuthFilter` (which already loads the user
+  for the blocked check) refuses any token issued before that with
+  **401 `TOKEN_REVOKED`** — the caller's old token too, hence the fresh one. Tokens
+  carry an `iatMs` claim (issue time in milliseconds) because the standard `iat` is
+  whole seconds and could not tell apart a token issued in the same second as the
+  change; a token without `iatMs` falls back to `iat`. Telegram-issued tokens of the
+  same user are refused as well. Users with no `password_changed_at` are never checked.
 - Limits are `app.admin-login.*` (`max-failed-attempts`, `lock-minutes`,
   `max-attempts-per-ip`, `ip-window-minutes`), defaults 5 / 15 / 20 / 15.
 - Error responses here carry an extra `code` key in the envelope. It appears only
@@ -641,11 +651,13 @@ INSERT INTO users (username, name, password_hash, is_admin)
 VALUES ('dilnur', 'Dilnur Aliqulov', crypt('a-long-unique-password', gen_salt('bf', 12)), true);
 ```
 
-**Reset a password** (also clears any lockout):
+**Reset a password** (also clears any lockout; `password_changed_at = now()` signs out
+every existing session — keep it, or a leaked token survives the reset):
 
 ```sql
 UPDATE users
 SET password_hash         = crypt('a-new-long-password', gen_salt('bf', 12)),
+    password_changed_at   = now(),
     failed_login_attempts = 0,
     locked_until          = NULL
 WHERE LOWER(username) = LOWER('dilnur');

@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.ChangePasswordRequest;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
+import uz.minipolya.minipolya_backend.dto.response.AuthResponse;
 import uz.minipolya.minipolya_backend.service.AdminAuthService;
 
 import java.util.UUID;
@@ -20,11 +21,12 @@ public class AdminAccountController {
 
     private final AdminAuthService adminAuthService;
 
+    /** Answers with a fresh token: every token issued before the change stops working. */
     @PostMapping("/api/admin/me/password")
-    public ApiResponse<Void> changePassword(@AuthenticationPrincipal UUID adminUserId,
+    public ApiResponse<AuthResponse> changePassword(@AuthenticationPrincipal UUID adminUserId,
                                             @Valid @RequestBody ChangePasswordRequest request,
                                             HttpServletRequest httpRequest) {
-        adminAuthService.changePassword(adminUserId, request, httpRequest.getRemoteAddr());
-        return ApiResponse.ok(null, "Parol o'zgartirildi");
+        return ApiResponse.ok(adminAuthService.changePassword(adminUserId, request, httpRequest.getRemoteAddr()),
+                "Parol o'zgartirildi");
     }
 }

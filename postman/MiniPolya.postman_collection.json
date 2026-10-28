@@ -15015,6 +15015,12 @@
                   "});",
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('hands back a fresh token and retires the old one', function () {",
+                  "    var v = pm.response.json().data.token;",
+                  "    pm.expect(v, 'fresh token').to.be.a('string');",
+                  "    pm.environment.set('adminRevokedToken', pm.environment.get('adminPasswordToken'));",
+                  "    pm.environment.set('adminPasswordToken', v);",
                   "});"
                 ]
               }
@@ -15044,7 +15050,7 @@
                 "password"
               ]
             },
-            "description": "",
+            "description": "Every token issued before the change stops working; the response carries a fresh one.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"currentPassword\": \"{{adminPassword}}\",\n  \"newPassword\": \"{{adminPassword}}-rotated\"\n}",
@@ -15054,6 +15060,97 @@
                 }
               }
             }
+          }
+        },
+        {
+          "name": "401 the token from before the change is revoked",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('code is TOKEN_REVOKED', function () {",
+                  "    pm.expect(pm.response.json().code).to.eql('TOKEN_REVOKED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminRevokedToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "settings"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "200 the fresh token from the change works",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminPasswordToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "settings"
+              ]
+            },
+            "description": ""
           }
         },
         {
@@ -15198,6 +15295,12 @@
                   "});",
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('hands back a fresh token and retires the old one', function () {",
+                  "    var v = pm.response.json().data.token;",
+                  "    pm.expect(v, 'fresh token').to.be.a('string');",
+                  "    pm.environment.set('adminRevokedToken', pm.environment.get('adminPasswordToken'));",
+                  "    pm.environment.set('adminPasswordToken', v);",
                   "});"
                 ]
               }

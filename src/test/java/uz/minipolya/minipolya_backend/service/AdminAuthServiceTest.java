@@ -339,6 +339,32 @@ class AdminAuthServiceTest {
     }
 
     @Test
+    void changingThePasswordStampsTheTimeAndHandsBackAFreshToken() {
+        User admin = admin(PASSWORD);
+        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
+
+        AuthResponse response = service.changePassword(ADMIN_ID, change(PASSWORD, "a-brand-new-password"), IP);
+
+        assertThat(admin.getPasswordChangedAt()).isEqualTo(now());
+        assertThat(response.getToken()).isEqualTo("jwt-token");
+        assertThat(response.getUser().getId()).isEqualTo(ADMIN_ID);
+        // The token is made from the user as saved, i.e. after the stamp.
+        verify(jwtProvider).generateToken(admin);
+    }
+
+    @Test
+    void aRejectedChangeLeavesThePasswordChangedAtAlone() {
+        User admin = admin(PASSWORD);
+        when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
+
+        catchThrowableOfType(BadRequestException.class,
+                () -> service.changePassword(ADMIN_ID, change("not-it", "a-brand-new-password"), IP));
+
+        assertThat(admin.getPasswordChangedAt()).isNull();
+        verify(jwtProvider, never()).generateToken(any(User.class));
+    }
+
+    @Test
     void theNewPasswordWorksForSigningIn() {
         User admin = admin(PASSWORD);
         when(userRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
