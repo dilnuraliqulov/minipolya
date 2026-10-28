@@ -1,6 +1,12 @@
 spring:
   application:
     name: minipolya-backend
+  config:
+    # Reads KEY=value lines from .env in the working directory (the project root
+    # under IntelliJ, ./mvnw and java -jar alike), parsed as a .properties file.
+    # optional: a missing .env is fine, e.g. in production where real environment
+    # variables are set. Real environment variables always win over .env values.
+    import: optional:file:.env[.properties]
   datasource:
     url: ${DB_URL}
     username: ${DB_USERNAME}

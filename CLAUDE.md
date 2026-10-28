@@ -10,7 +10,7 @@ Football pitch booking platform for Telegram Mini App. Built for the Uzbekistan 
 - Maven
 - Lombok
 - Spring Security + JWT
-- spring-dotenv for environment variables
+- `.env` read by Spring itself via `spring.config.import` (no dotenv library)
 - Liquibase for database migrations
 - MapStruct for Entity ↔ DTO mapping
 
@@ -734,15 +734,28 @@ For paginated lists:
 
 ## Environment Variables
 
-Stored in `.env` (never committed to Git), loaded by spring-dotenv:
+Stored in `.env` in the project root (never committed to Git; copy `.env.example`):
 
 ```
 DB_URL=jdbc:postgresql://localhost:5432/minipolya
 DB_USERNAME=postgres
 DB_PASSWORD=...
-JWT_SECRET=...
+JWT_SECRET=...        # at least 32 bytes — HS256 refuses a shorter key at startup
 BOT_TOKEN=...
 ```
+
+- Spring reads it itself: `application.yaml` has
+  `spring.config.import: optional:file:.env[.properties]`, so `.env` is loaded
+  however the app is started — IntelliJ, `./mvnw spring-boot:run`, `java -jar` —
+  as long as the working directory is the project root. No library is involved;
+  spring-dotenv was removed because it does not hook into Spring Boot 4 and left
+  `${JWT_SECRET}` unresolved.
+- The file is parsed as a `.properties` file: `KEY=value`, one per line, `#` for
+  comments. Don't wrap values in quotes (they would become part of the value) and
+  don't use `export KEY=...`.
+- **Real environment variables always win** over `.env`, so production sets them
+  in the environment and needs no `.env` file at all (`optional:` means a missing
+  file is fine).
 
 ## Commands
 
@@ -772,7 +785,6 @@ psql -U postgres -c "CREATE DATABASE minipolya;"
 ## Dependencies (pom.xml)
 
 Required beyond Spring Initializr defaults:
-- `me.paulschwarz:spring-dotenv:4.0.0` — loads .env file
 - `org.liquibase:liquibase-core` — managed by Spring Boot (no version needed)
 - `org.mapstruct:mapstruct:1.6.3` — MapStruct annotations
 - `org.mapstruct:mapstruct-processor:1.6.3` — annotation processor (in `maven-compiler-plugin` `<annotationProcessorPaths>`)
