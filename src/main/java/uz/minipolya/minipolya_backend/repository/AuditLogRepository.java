@@ -3,6 +3,7 @@ package uz.minipolya.minipolya_backend.repository;
 import org.springframework.data.repository.Repository;
 import uz.minipolya.minipolya_backend.entity.AuditLog;
 
+import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -24,4 +25,8 @@ public interface AuditLogRepository extends Repository<AuditLog, UUID>, AuditLog
     /** Entries of the given actions on several entities at once — for a list that shows each one's latest. */
     List<AuditLog> findByEntityTypeAndEntityIdInAndActionIn(String entityType, Collection<UUID> entityIds,
                                                             Collection<String> actions);
+
+    /** Entries of the given actions on one kind of entity written after {@code after} — recent history. */
+    List<AuditLog> findByEntityTypeAndActionInAndCreatedAtAfter(String entityType, Collection<String> actions,
+                                                               OffsetDateTime after);
 }

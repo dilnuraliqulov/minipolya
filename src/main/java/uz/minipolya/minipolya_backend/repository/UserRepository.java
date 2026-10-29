@@ -31,4 +31,6 @@ public interface UserRepository extends JpaRepository<User, UUID>, JpaSpecificat
     long countByIsOwnerTrue();
 
     long countByCreatedAtAfter(OffsetDateTime after);
+
+    long countByCreatedAtGreaterThanEqualAndCreatedAtLessThan(OffsetDateTime from, OffsetDateTime to);
 }

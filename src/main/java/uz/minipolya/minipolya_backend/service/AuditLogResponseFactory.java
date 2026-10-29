@@ -59,7 +59,8 @@ public class AuditLogResponseFactory {
                 .build();
     }
 
-    private List<AuditChange> changes(AuditLog entry) {
+    /** The entry's field changes, read from their JSON; empty when there are none or they cannot be read. */
+    public List<AuditChange> changes(AuditLog entry) {
         if (entry.getChanges() == null || entry.getChanges().isBlank()) {
             return List.of();
         }

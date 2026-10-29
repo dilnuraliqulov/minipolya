@@ -6,15 +6,20 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumResponse;
 import uz.minipolya.minipolya_backend.dto.response.StadiumDetailResponse;
+import uz.minipolya.minipolya_backend.entity.AuditLog;
 import uz.minipolya.minipolya_backend.entity.OwnerLegalDetails;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.StadiumPhoto;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.AdminStadiumMapper;
+import uz.minipolya.minipolya_backend.repository.AuditLogRepository;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
@@ -23,6 +28,7 @@ import uz.minipolya.minipolya_backend.util.Districts;
 import uz.minipolya.minipolya_backend.util.Pagination;
 import uz.minipolya.minipolya_backend.util.Revenue;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -40,6 +46,11 @@ public class AdminStadiumService {
 
     private static final List<String> COUNTED_STATUSES = List.of("confirmed", "completed");
     private static final Set<String> FORMATS = Set.of("5x5", "7x7", "9x9", "11x11");
+    private static final String APPROVED = "approved";
+    private static final List<String> STATUS_ACTIONS = List.of(
+            AuditAction.STADIUM_APPROVED.name(), AuditAction.STADIUM_REJECTED.name(),
+            AuditAction.STADIUM_BLOCKED.name(), AuditAction.STADIUM_UNBLOCKED.name(),
+            AuditAction.STADIUM_STATUS_CHANGED.name());
 
     private final StadiumRepository stadiumRepository;
     private final ReviewRepository reviewRepository;
@@ -50,6 +61,8 @@ public class AdminStadiumService {
     private final AdminStadiumMapper adminStadiumMapper;
     private final CardPricing cardPricing;
     private final OwnerLegalDetailsService ownerLegalDetailsService;
+    private final AuditLogRepository auditLogRepository;
+    private final AuditLogResponseFactory auditLogResponseFactory;
 
     @Transactional(readOnly = true)
     public Page<AdminStadiumResponse> list(String status, String search, String district, String format,
@@ -89,6 +102,29 @@ public class AdminStadiumService {
                 .totalRevenue(row.getTotalRevenue())
                 .pricingRules(pricingService.listForAdmin(stadiumId))
                 .build();
+    }
+
+    /**
+     * How many stadiums were approved at {@code when}: those approved now, less every status
+     * change into approved since, plus every change out of it — read from the {@code status}
+     * change each stadium status action records (old and new value). Audit rows from
+     * before changeset 029 carry no such change and are not counted.
+     */
+    @Transactional(readOnly = true)
+    public long approvedCountAt(OffsetDateTime when) {
+        long approvedSince = 0;
+        for (AuditLog entry : auditLogRepository.findByEntityTypeAndActionInAndCreatedAtAfter(
+                AuditEntityType.STADIUM, STATUS_ACTIONS, when)) {
+            for (AuditChange change : auditLogResponseFactory.changes(entry)) {
+                if (!"status".equals(change.field())) {
+                    continue;
+                }
+                boolean was = APPROVED.equals(change.oldValue());
+                boolean is = APPROVED.equals(change.newValue());
+                approvedSince += is == was ? 0 : (is ? 1 : -1);
+            }
+        }
+        return stadiumRepository.countByStatus(APPROVED) - approvedSince;
     }
 
     private List<AdminStadiumResponse> toResponses(List<Stadium> stadiums) {

@@ -45,6 +45,17 @@ public class AdminPlatformStatsResponse {
     private long pendingOwnerApplications;
     private long pendingStadiumApprovals;
 
+    // ---- The previous period, for the overview's comparison lines (the client works out the %) ----
+
+    /** Bookings starting on the same weekday last week, counted like todayBookings. */
+    private long todayBookingsLastWeek;
+    /** Tiyin: last month from the 1st to the same day of the month, counted like monthRevenue. */
+    private long previousMonthRevenueToDate;
+    /** Users created 7 to 14 days ago — the period before newUsersLast7Days. */
+    private long newUsersPrevious7Days;
+    /** Stadiums that were approved 7 days ago. */
+    private long approvedStadiumsWeekAgo;
+
     /** Refunds the provider declined that still wait for an admin (retry or mark refunded). */
     private long failedRefunds;
 

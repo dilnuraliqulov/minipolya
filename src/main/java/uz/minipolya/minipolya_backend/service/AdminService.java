@@ -87,12 +87,19 @@ public class AdminService {
         OffsetDateTime weekEnd = startOfDay(weekStartDate.plusWeeks(1));
         OffsetDateTime monthStart = startOfDay(today.withDayOfMonth(1));
         OffsetDateTime monthEnd = startOfDay(today.withDayOfMonth(1).plusMonths(1));
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        // Last month's 1st up to and including the same day of the month (its last day if
+        // last month is shorter): the stretch this month's revenue so far is compared with.
+        LocalDate previousMonthFirst = today.withDayOfMonth(1).minusMonths(1);
+        OffsetDateTime previousMonthStart = startOfDay(previousMonthFirst);
+        OffsetDateTime previousMonthToDateEnd = startOfDay(
+                previousMonthFirst.plusDays(Math.min(today.getDayOfMonth(), previousMonthFirst.lengthOfMonth())));
         return AdminPlatformStatsResponse.builder()
                 .totalUsers(userRepository.count())
                 .totalOwners(userRepository.countByIsOwnerTrue())
                 .newUsersToday(userRepository.countByCreatedAtAfter(todayStart))
                 .newUsersThisWeek(userRepository.countByCreatedAtAfter(weekStart))
-                .newUsersLast7Days(userRepository.countByCreatedAtAfter(OffsetDateTime.now(ZoneOffset.UTC).minusDays(7)))
+                .newUsersLast7Days(userRepository.countByCreatedAtAfter(now.minusDays(7)))
                 .newUsersThisMonth(userRepository.countByCreatedAtAfter(monthStart))
                 .totalStadiums(stadiumRepository.count())
                 .approvedStadiums(stadiumRepository.countByStatus("approved"))
@@ -112,6 +119,11 @@ public class AdminService {
                 .activeGames(gameRepository.countByStatus("open"))
                 .pendingOwnerApplications(ownerApplicationRepository.countByStatus(OwnerApplication.Status.PENDING))
                 .pendingStadiumApprovals(stadiumRepository.countByStatus("pending"))
+                .todayBookingsLastWeek(countedBookings(startOfDay(today.minusDays(7)), startOfDay(today.minusDays(6))))
+                .previousMonthRevenueToDate(appRevenue(previousMonthStart, previousMonthToDateEnd))
+                .newUsersPrevious7Days(userRepository.countByCreatedAtGreaterThanEqualAndCreatedAtLessThan(
+                        now.minusDays(14), now.minusDays(7)))
+                .approvedStadiumsWeekAgo(adminStadiumService.approvedCountAt(now.minusDays(7)))
                 .failedRefunds(paymentRepository.countByPaymentTypeAndStatus(
                         Payment.PaymentType.REFUND, Payment.Status.FAILED))
                 .oldestFailedRefundAt(paymentRepository.findFirstByPaymentTypeAndStatusOrderByCreatedAtAsc(
