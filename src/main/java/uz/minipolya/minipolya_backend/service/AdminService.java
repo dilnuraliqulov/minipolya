@@ -92,6 +92,7 @@ public class AdminService {
                 .totalOwners(userRepository.countByIsOwnerTrue())
                 .newUsersToday(userRepository.countByCreatedAtAfter(todayStart))
                 .newUsersThisWeek(userRepository.countByCreatedAtAfter(weekStart))
+                .newUsersLast7Days(userRepository.countByCreatedAtAfter(OffsetDateTime.now(ZoneOffset.UTC).minusDays(7)))
                 .newUsersThisMonth(userRepository.countByCreatedAtAfter(monthStart))
                 .totalStadiums(stadiumRepository.count())
                 .approvedStadiums(stadiumRepository.countByStatus("approved"))

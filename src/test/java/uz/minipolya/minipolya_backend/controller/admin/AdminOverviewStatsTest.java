@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.web.servlet.MockMvc;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
+import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.support.DatabaseTest;
 import uz.minipolya.minipolya_backend.support.TestData;
 import uz.minipolya.minipolya_backend.util.TashkentDays;
@@ -29,6 +30,8 @@ class AdminOverviewStatsTest {
     private TestData data;
     @Autowired
     private Clock clock;
+    @Autowired
+    private UserRepository userRepository;
 
     private String adminToken;
     private User player;
@@ -46,6 +49,22 @@ class AdminOverviewStatsTest {
     /** {@code hour}:00 Tashkent on that day. */
     private OffsetDateTime at(LocalDate day, int hour) {
         return TashkentDays.startOf(day).plusHours(hour);
+    }
+
+    private void userCreatedDaysAgo(String name, int days) {
+        userRepository.save(User.builder().name(name).createdAt(OffsetDateTime.now(clock).minusDays(days)).build());
+    }
+
+    @Test
+    void newUsersAreCountedOverTheLastSevenDaysWhateverTheWeekday() throws Exception {
+        userCreatedDaysAgo("Three days", 3);
+        userCreatedDaysAgo("Six days", 6);
+        userCreatedDaysAgo("Eight days", 8);
+
+        // The admin, the player and the owner of setUp are new too.
+        mvc.perform(get("/api/admin/stats").header("Authorization", adminToken))
+                .andExpect(jsonPath("$.data.newUsersLast7Days").value(5))
+                .andExpect(jsonPath("$.data.newUsersThisWeek").exists());
     }
 
     @Test

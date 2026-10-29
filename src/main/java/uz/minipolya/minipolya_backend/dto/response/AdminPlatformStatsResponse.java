@@ -17,7 +17,10 @@ public class AdminPlatformStatsResponse {
     private long totalUsers;
     private long totalOwners;
     private long newUsersToday;
+    /** Since Monday 00:00 Tashkent. */
     private long newUsersThisWeek;
+    /** In the last 7 × 24 hours, whatever the weekday. */
+    private long newUsersLast7Days;
     private long newUsersThisMonth;
 
     private long totalStadiums;
