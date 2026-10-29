@@ -7,11 +7,16 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.dto.response.AdminUserResponse;
+import uz.minipolya.minipolya_backend.dto.response.AdminUserTeamResponse;
+import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
+import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.AdminUserMapper;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
+import uz.minipolya.minipolya_backend.repository.TeamMemberRepository;
+import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.repository.UserSpecifications;
 import uz.minipolya.minipolya_backend.util.Pagination;
@@ -35,6 +40,8 @@ public class AdminUserService {
     private final BookingRepository bookingRepository;
     private final StadiumRepository stadiumRepository;
     private final AdminUserMapper adminUserMapper;
+    private final TeamRepository teamRepository;
+    private final TeamMemberRepository teamMemberRepository;
 
     /**
      * @param role   {@code player} (neither owner nor admin), {@code owner} or {@code admin}
@@ -51,6 +58,25 @@ public class AdminUserService {
         Map<UUID, AdminUserResponse> byId = toResponses(users.getContent()).stream()
                 .collect(Collectors.toMap(AdminUserResponse::getId, Function.identity()));
         return users.map(user -> byId.get(user.getId()));
+    }
+
+    /** Every team the user leads or belongs to, by name — not paged; a user has a handful. */
+    @Transactional(readOnly = true)
+    public List<AdminUserTeamResponse> teams(UUID userId) {
+        if (!userRepository.existsById(userId)) {
+            throw new ResourceNotFoundException("User not found");
+        }
+        List<Team> teams = teamRepository.findAllOfUser(userId);
+        if (teams.isEmpty()) {
+            return List.of();
+        }
+        Map<UUID, Long> members = counts(teamMemberRepository.countByTeamIds(teams.stream().map(Team::getId).toList()));
+        return teams.stream().map(team -> {
+            AdminUserTeamResponse response = adminUserMapper.toTeam(team);
+            response.setMemberCount(members.getOrDefault(team.getId(), 0L));
+            response.setRole(team.getLeader().getId().equals(userId) ? "leader" : "member");
+            return response;
+        }).toList();
     }
 
     /** One user as the list shows them. */

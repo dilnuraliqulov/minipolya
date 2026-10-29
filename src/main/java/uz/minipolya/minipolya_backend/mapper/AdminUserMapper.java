@@ -4,6 +4,8 @@ import org.mapstruct.Builder;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import uz.minipolya.minipolya_backend.dto.response.AdminUserResponse;
+import uz.minipolya.minipolya_backend.dto.response.AdminUserTeamResponse;
+import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.User;
 
 /**
@@ -17,4 +19,9 @@ public interface AdminUserMapper {
     @Mapping(target = "bookingCount", ignore = true)
     @Mapping(target = "stadiumCount", ignore = true)
     AdminUserResponse toResponse(User user);
+
+    @Mapping(source = "leader.name", target = "leaderName")
+    @Mapping(target = "memberCount", ignore = true)
+    @Mapping(target = "role", ignore = true)
+    AdminUserTeamResponse toTeam(Team team);
 }

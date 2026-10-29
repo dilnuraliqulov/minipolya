@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateUserRequest;
 import uz.minipolya.minipolya_backend.dto.request.UpdateOwnerLegalDetailsRequest;
 import uz.minipolya.minipolya_backend.dto.response.AdminUserResponse;
+import uz.minipolya.minipolya_backend.dto.response.AdminUserTeamResponse;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.OwnerLegalDetailsResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
@@ -19,6 +20,7 @@ import uz.minipolya.minipolya_backend.service.AdminService;
 import uz.minipolya.minipolya_backend.service.AdminUserService;
 import uz.minipolya.minipolya_backend.service.OwnerLegalDetailsService;
 
+import java.util.List;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -50,6 +52,12 @@ public class AdminUserController {
                                                  @PathVariable UUID id,
                                                  @Valid @RequestBody AdminUpdateUserRequest request) {
         return ApiResponse.ok(adminService.updateUser(id, request, adminUserId), "User updated");
+    }
+
+    /** The teams the user leads or belongs to, with their role in each. Not paged. */
+    @GetMapping("/api/admin/users/{id}/teams")
+    public ApiResponse<List<AdminUserTeamResponse>> teams(@PathVariable UUID id) {
+        return ApiResponse.ok(adminUserService.teams(id));
     }
 
     /** The user's legal details and ATMOS contract; {@code data: null} when nothing was entered yet. */

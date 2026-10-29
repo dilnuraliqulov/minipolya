@@ -38,10 +38,11 @@ public class AdminStadiumController {
                                                                 @RequestParam(required = false) String search,
                                                                 @RequestParam(required = false) String district,
                                                                 @RequestParam(required = false) String format,
+                                                                @RequestParam(required = false) UUID ownerId,
                                                                 @RequestParam(defaultValue = "0") int page,
                                                                 @RequestParam(defaultValue = "20") int size) {
         return ApiResponse.ok(PageResponse.from(
-                adminStadiumService.list(status, search, district, format, null, page, size),
+                adminStadiumService.list(status, search, district, format, ownerId, page, size),
                 Function.identity()));
     }
 
