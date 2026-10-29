@@ -18,10 +18,11 @@ Football pitch booking platform for Telegram Mini App. Built for the Uzbekistan 
 
 ```
 src/main/java/uz/minipolya/minipolya_backend/
-├── config/                  # Security, JWT, app properties config (no CORS configuration yet — see "Deployment checklist")
+├── config/                  # Security (incl. CORS from CORS_ALLOWED_ORIGINS), JWT, app properties, scheduling
 │   ├── SecurityConfig.java
 │   ├── JwtProvider.java
 │   ├── JwtAuthFilter.java
+│   ├── SchedulingConfig.java       # @EnableScheduling; app.scheduling.enabled=false turns the jobs off (DB tests)
 │   └── AppProperties.java          # @ConfigurationProperties for app.*
 ├── controller/              # REST controllers (thin — delegate to services)
 │   ├── AuthController.java
@@ -30,9 +31,11 @@ src/main/java/uz/minipolya/minipolya_backend/
 │   ├── GameController.java
 │   ├── TeamController.java
 │   ├── ReviewController.java
-│   └── admin/
-│       ├── AdminUserController.java
-│       ├── AdminStadiumController.java
+│   └── admin/                      # see "Admin panel API"
+│       ├── AdminUserController.java        # users, legal details, a user's teams
+│       ├── AdminStadiumController.java     # stadiums, status, internal notes
+│       ├── AdminActivityController.java    # every booking and every game
+│       ├── AdminPaymentController.java     # payments, summary, failed-refund recovery
 │       └── AdminStatsController.java
 ├── service/                 # Business logic (all writes are @Transactional)
 │   ├── AuthService.java
@@ -180,9 +183,14 @@ db/changelog/
     ├── 029-audit-log-structure.sql   # audit_log actor_type, actor_name, entity_label, changes, reason
     ├── 030-card-fee-settings.sql     # platform_settings card_fee_bps, payment_rounding_step
     ├── 031-card-fee-payments.sql     # payments card_fee_expected, provider_commission; bookings.card_price
-    ├── 032-atmos-operations.sql      # processing status, provider ids, ofd_url, hold_expires_at; saved card id/expiry; users.atmos_recipient_id
+    ├── 032-atmos-operations.sql      # processing status, provider ids, ofd_url, hold_expires_at; saved card id/expiry; users.atmos_recipient_id (moved by 037)
     ├── 033-payment-pending-steps.sql # return_pending / capture_pending statuses
-    └── 034-saved-card-token-encrypted.sql # provider_token widened for AES-GCM
+    ├── 034-saved-card-token-encrypted.sql # provider_token widened for AES-GCM
+    ├── 035-refund-failures.sql       # payments failure_reason, refunded_manually, manual_refund_*; refund_failed status
+    ├── 036-stadium-district.sql      # stadiums.district (12 Tashkent districts, CHECK)
+    ├── 037-owner-legal-details.sql   # owner_legal_details; moves users.atmos_recipient_id there and drops it
+    ├── 038-stadium-rejected.sql      # rejected stadium status + status_reason; old rejections converted
+    └── 039-stadium-notes.sql         # stadium_notes (admins' internal notes)
 ```
 
 ### Adding New Migrations
@@ -221,10 +229,25 @@ When you need to change the schema (add column, new table, alter constraint):
 ### Stadiums
 
 - 1 stadium = 1 pitch (format, surface_type on stadiums table)
-- Status flow: `pending` → `approved` → `blocked`
-- Only `approved` stadiums visible to players
-- Owner adds stadium → admin reviews → approves/rejects
-- On approval: stadium status → approved, user.is_owner → true
+- Statuses: `pending` → `approved` or `rejected` (turned down at review, only from
+  pending); `approved` → `blocked` (taken off after approval) → `approved` again
+  (unblocked). Rejecting or blocking needs a reason, kept in `stadiums.status_reason`
+  and shown to the owner as `statusReason` on the owner endpoints; approving or setting
+  back to pending clears it. Blocking cancels future bookings with full refunds;
+  rejecting has none to cancel.
+- Only `approved` (and active) stadiums are visible to players — rejected and blocked
+  ones never are.
+- Owner adds stadium → admin reviews (`GET /api/admin/stadiums/{id}` works in any
+  status) → approves or rejects.
+- **Approval needs the owner's ATMOS contract signed** (`owner_legal_details`, see
+  "Owner legal details"): otherwise `PUT /api/admin/stadiums/{id}/status` answers 400
+  "The owner's ATMOS contract is not signed". On approval: status → approved,
+  user.is_owner → true.
+- `district`: optional, one of the twelve Tashkent districts — `Bektemir`, `Chilonzor`,
+  `Mirobod`, `Mirzo Ulugʻbek` (with U+02BB, not an apostrophe), `Olmazor`, `Sergeli`,
+  `Shayxontohur`, `Uchtepa`, `Yakkasaroy`, `Yangihayot`, `Yashnobod`, `Yunusobod`
+  (`util/Districts`, CHECK `chk_stadiums_district`). The owner sends it on create/update;
+  anything else is 400 "Invalid district". Null on stadiums added before it existed.
 
 ### Bookings
 
@@ -320,6 +343,14 @@ else                 → the booking is still cancelled, but nothing is refunded
   is no method that refunds an arbitrary amount, so a partial refund cannot be
   written by accident. A failed row, a cash row and an already-refunded row are
   all skipped.
+- **A refund ATMOS declines never undoes the cancellation.** The refund row is still
+  written, `status = failed` with the provider's message and code in `failure_reason`;
+  the payment it was to give back becomes `refund_failed` (the money is still owed);
+  audit `REFUND_FAILED` (SYSTEM). An admin then retries it or marks it refunded by hand
+  (see "Admin panel API → Failed refunds"). A lost answer is different: the row stays
+  `return_pending` for the reconcile job. A **hold** release ATMOS refuses is not a failed
+  refund (no money left the card, and the hold lapses on its own): it is logged and left
+  `return_pending` for the job.
 - Booking responses carry **`cancellationDeadline`** and
   **`refundIfCancelledNow`** (tiyin). Both come from `CancellationPolicy` and the
   same refundable payments that a real cancellation uses, so the figure a player
@@ -617,8 +648,9 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
 | `releaseHold(holdId)` | `DELETE /hold/{id}` (`send_cancel_sms=true`) |
 | `getHold(holdId)` | `GET /hold/{id}` |
 
-- A split names the stadium owner's ATMOS recipient (`users.atmos_recipient_id`) or
-  the platform, whose recipient the provider takes from `ATMOS_PLATFORM_RECIPIENT_ID`.
+- A split names the stadium owner's ATMOS recipient (`owner_legal_details.atmos_recipient_id`,
+  the only place it is stored — see "Owner legal details") or the platform, whose
+  recipient the provider takes from `ATMOS_PLATFORM_RECIPIENT_ID`.
 - `account` is our payment row id: the row is written first (`processing`), so a retry
   never charges twice.
 - A declined card is a `FAILED` outcome. `STPIMS-ERR-092` (transaction closed),
@@ -649,7 +681,11 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   only statuses move forward.
 - Statuses: `processing` (provider called, answer not in) → `paid` / `held` / `failed`;
   `held` → `captured` or `released`; a give-back goes through `return_pending` →
-  `refunded` / `released`; a capture through `capture_pending` → `captured`.
+  `refunded` / `released`; a capture through `capture_pending` → `captured`. A give-back
+  ATMOS declines leaves the original `refund_failed` and its refund row `failed` (with
+  `failure_reason`) until an admin retries it or marks it refunded by hand
+  (`refunded_manually`, `manual_refund_reason`, `manual_refund_by`); both rows then end
+  `refunded`.
 - `provider_txn_id`: the charge's transaction ids (comma-separated, one per split) or the
   hold id. `provider_success_txn_ids`: what a reverse needs. `hold_expires_at`: when an
   unsettled hold lapses.
@@ -701,11 +737,14 @@ transaction:
   — or the money given straight back if what it paid for has gone (an abandoned join);
   unconfirmed after 30 minutes → failed, no money moved.
 - `processing` hold → `getHold`: held, or failed (the waiting game it was for ends).
-- `return_pending` → reversed if the money was taken, released if it is held.
+- `return_pending` → reversed if the money was taken, released if it is held. A reverse
+  ATMOS declines becomes a failed refund (`refund_failed` + a `failed` refund row), so
+  the job stops trying; a release that fails stays `return_pending` for the next run.
 - `capture_pending` → captured if still held; released with an error if it lapsed.
 
 Idempotent: settled rows are not picked up, and a reverse or release of something
-already gone counts as done.
+already gone counts as done. The job never touches `failed` or `refund_failed` rows —
+from then on only an admin retries them, so the two never race.
 
 #### Saved cards
 
@@ -822,10 +861,10 @@ number is not logged either; their name is part of the booking label.
 
 | Area | Actions |
 |---|---|
-| Admin | `ADMIN_LOGIN_SUCCEEDED`, `ADMIN_LOGIN_FAILED`, `APPLICATION_APPROVED`, `APPLICATION_REJECTED`, `STADIUM_APPROVED`, `STADIUM_REJECTED` (pending → blocked), `STADIUM_BLOCKED`, `STADIUM_UNBLOCKED` (blocked → approved), `STADIUM_STATUS_CHANGED` (back to pending), `USER_BLOCKED`, `USER_UNBLOCKED`, `USER_ROLE_CHANGED`, `SETTINGS_CHANGED` |
+| Admin | `ADMIN_LOGIN_SUCCEEDED`, `ADMIN_LOGIN_FAILED`, `APPLICATION_APPROVED`, `APPLICATION_REJECTED`, `STADIUM_APPROVED`, `STADIUM_REJECTED` (pending → rejected; before changeset 038, pending → blocked), `STADIUM_BLOCKED`, `STADIUM_UNBLOCKED` (blocked → approved), `STADIUM_STATUS_CHANGED` (back to pending) — each with `status` and `statusReason` changes, `STADIUM_NOTE_ADDED` (the note's id, never its text), `USER_BLOCKED`, `USER_UNBLOCKED`, `USER_ROLE_CHANGED`, `OWNER_LEGAL_DETAILS_CHANGED`, `REFUND_RETRIED`, `REFUND_MARKED_MANUAL`, `SETTINGS_CHANGED` |
 | Owner | `STADIUM_CREATED`, `STADIUM_UPDATED` (incl. `pricePerHour`, `minBookingAmount`, `cancellationHours`, photos, amenities), `PRICING_RULE_CREATED` / `_UPDATED` / `_DELETED`, `CLOSURE_CREATED` / `_DELETED`, `PROMOTION_CREATED` / `_DEACTIVATED`, `MANUAL_BOOKING_CREATED`, `CASH_RECEIVED` (a booking, or one team's game remainder), `BOOKING_CANCELLED_BY_OWNER` |
 | Player | `BOOKING_CREATED`, `BOOKING_CANCELLED_BY_USER`, `BOOKING_REMAINDER_PAID`, `BOOKING_SERIES_CREATED` / `_CANCELLED`, `GAME_CREATED`, `GAME_JOINED`, `GAME_LEFT`, `GAME_CANCELLED`, `GAME_OPPONENT_LEFT`, `GAME_REMAINDER_PAID` |
-| System | `BOOKING_CONFIRMED` (a payment confirmed it), `BOOKING_EXPIRED`, `BOOKING_COMPLETED`, `BOOKING_CANCELLED_BY_OWNER` (by a stadium block), `GAME_CONFIRMED`, `GAME_AUTO_CANCELLED`, `PAYMENT_COMPLETED`, `PAYMENT_RELEASED`, `REFUND_CREATED`, `PROMOTION_EXPIRED` |
+| System | `BOOKING_CONFIRMED` (a payment confirmed it), `BOOKING_EXPIRED`, `BOOKING_COMPLETED`, `BOOKING_CANCELLED_BY_OWNER` (by a stadium block), `GAME_CONFIRMED`, `GAME_AUTO_CANCELLED`, `PAYMENT_COMPLETED`, `PAYMENT_RELEASED`, `REFUND_CREATED`, `REFUND_FAILED` (ATMOS declined; the reason is its error), `PROMOTION_EXPIRED` |
 
 Codes are **stable**: they are stored and filtered on, so never rename one — add a
 new constant. Legacy rows may carry older codes (e.g. `PLATFORM_SETTINGS_UPDATED`,
@@ -862,6 +901,104 @@ new constant. Legacy rows may carry older codes (e.g. `PLATFORM_SETTINGS_UPDATED
   answer 405/404), `AuditLog` is Hibernate `@Immutable`, and `AuditLogRepository`
   extends the bare Spring Data `Repository` with only `save` and reads — no update
   or delete method exists for any caller. Don't add one.
+
+## Admin panel API
+
+Everything under `/api/admin/**` needs `isAdmin` (no token → 401, anyone else → 403).
+Conventions every list follows:
+
+- **Filters are JPA specifications** (`repository/*Specifications`), combined with AND;
+  every filter is optional. Don't write a JPQL query with `:x IS NULL OR …` for a list.
+- **`from` / `to` are Tashkent calendar days, both inclusive**: `[from 00:00, (to + 1 day)
+  00:00)` in `Asia/Tashkent`, as UTC instants — always through `util/TashkentDays`
+  (`to` before `from` → 400 "to must be on or after from").
+- **Search**: names case-insensitively, phones ignoring spaces and `+` on both sides
+  (`repository/SearchPredicates`); `%` and `_` are literal.
+- **No N+1 on a list**: a page fetches its to-one associations in the row query
+  (`FetchJoins`; a stadium's `amenities` is an inverse one-to-one Hibernate always loads,
+  so fetch it too) and loads everything else for the whole page in one grouped query
+  each. Read `platform_settings` once per list (`CardPricing.snapshot()`), not per row.
+  Each list has a test asserting its query count with 20+ rows.
+- Every admin write is audited with old → new values; unknown filter values are 400.
+
+### Endpoints
+
+| Endpoint | What |
+|---|---|
+| `GET /api/admin/bookings` · `/{id}` | every booking, newest `startsAt` first. Filters `search` (booking user or walk-in client), `stadiumId`, `status`, `from`/`to` (on `startsAt`), `userId`. `AdminBookingResponse` = the owner's `BookingResponse` (card `price`, `netPrice`, `cardFee`, …) + `userName`, `userPhone`, `paidInApp` (card money kept, gross), `cashReceived`, `cashReceivedAt` |
+| `GET /api/admin/games` · `/{id}` | every game, newest `startsAt` first. Filters `search` (creator or any team's name), `stadiumId`, `status`, `from`/`to`, `userId` (created, played in, or led a team in). Detail: team games get `teams` (the `GameTeamResponse` money + `players`), casual games `participants` and `serviceFeePerPerson`. `cancelledAt` / `cancellationReason` come from the audit entry that cancelled the game |
+| `GET /api/admin/payments` · `/{id}` | every payment and refund, newest first (`type=refund`: failed refunds first). Filters `search` (payer name/phone, `providerTxnId`), `type`, `status`, `method`, `stadiumId` (booking's or game's), `from`/`to` (on `createdAt`). Each has its split, `cardFee` (`card_fee_expected`), `providerCommission`, `failureReason`, `refundedManually`, `manualRefundReason`; the detail adds `linkedPayments` (a refund's original, or an original's refunds) |
+| `GET /api/admin/payments/summary?from=&to=` | both required. `appRevenue`, `cardFees`, `ownerPayouts`, `platformRevenue`, `refunded`, `held` — see "Revenue" |
+| `POST /api/admin/payments/{id}/retry-refund` | a `failed` refund, tried again (see "Failed refunds") |
+| `POST /api/admin/payments/{id}/mark-refunded` | `{ reason }` 10–500 chars: a `failed` refund returned outside the platform |
+| `GET /api/admin/stadiums` | every status. Filters `status` (incl. `rejected`), `search`, `district`, `format`, `ownerId`. Rows add `photoUrl`, `district`, `pricePerHour` (net), `price` (card), `ownerContractStatus`, `statusReason` |
+| `GET /api/admin/stadiums/{id}` | the public detail mapping for **any** status, in the owner's prices (`pricePerHour`/`netPrice` net, `price` card) + `pricingRules` (net and card) + the list's figures |
+| `PUT /api/admin/stadiums/{id}/status` | `approved` (needs the owner's signed ATMOS contract), `rejected` (only from pending, reason required), `blocked` (reason required), `pending` |
+| `GET` / `POST /api/admin/stadiums/{id}/notes` | admins' internal notes, newest first; `{ text }` 1–1000 chars. Never shown to owners or players |
+| `GET /api/admin/users` | filters `search`, `role` (`player` = neither owner nor admin, `owner`, `admin`), `status` (`active`, `blocked`) |
+| `GET` / `PUT /api/admin/users/{id}/legal-details` | see "Owner legal details"; GET answers `data: null` before anything is entered |
+| `GET /api/admin/users/{id}/teams` | the teams a user leads or belongs to: `id`, `name`, `leaderName`, `memberCount`, `role` |
+| `GET /api/admin/stats` | overview figures (see "Revenue"), plus `failedRefunds` / `oldestFailedRefundAt`, `newUsersLast7Days`, `rejectedStadiums`, and the previous-period values `todayBookingsLastWeek`, `previousMonthRevenueToDate`, `newUsersPrevious7Days`, `approvedStadiumsWeekAgo` (the panel works out the %) |
+| `GET /api/admin/stats/revenue` | `appRevenue` per Tashkent day, last 30 days, every day present; `bookingCount` = the booking series below |
+| `GET /api/admin/stats/bookings-daily` | bookings starting each of the last 30 Tashkent days (confirmed or completed, like `todayBookings`), every day present |
+
+### Revenue
+
+`RevenueService` is the **only** revenue calculation: the payments summary, the overview's
+`totalRevenue` / `todayRevenue` / `weekRevenue` / `monthRevenue` /
+`previousMonthRevenueToDate`, the 30-day chart and a stadium's `totalRevenue` all read
+it, so they always agree. Don't add another sum over payments for these figures. Cash
+is excluded from all of them ("ilova orqali").
+
+- **appRevenue** — card money kept: the gross of every card payment whose money arrived
+  (`paid`, `captured`, `completed`, or since `refunded` / `refund_failed`), counted when
+  it was taken, less every card refund that completed in the period (counted when its
+  row became `refunded`).
+- **cardFees** — what ATMOS took of that money: its reported `provider_commission`;
+  estimated at the current `card_fee_bps` when none was reported; 0 on legacy
+  Payme/Click rows. A reversal is taken to give the fee back too; a refund made by hand
+  did not touch the card transaction, so ATMOS keeps its fee.
+- **ownerPayouts** / **platformRevenue** — what each actually receives: its split less
+  its part of ATMOS's fee (ATMOS charges the same rate on every split, so the owner bears
+  `fee × ownerAmount / amount`, the platform the rest).
+- `ownerPayouts + platformRevenue + cardFees = appRevenue` holds for every payment, so
+  for any sum of them (`RevenueTest`).
+- `refunded` — card refunds completed in the period, positive; `held` — everything on
+  hold on players' cards right now, whatever the period.
+
+The owner dashboard's revenue is still its own definition (see "Deferred until the
+payment model is final").
+
+### Failed refunds
+
+A refund ATMOS declines is saved `failed` (its original `refund_failed`) instead of
+rolling back the cancellation — see "Cancellation Policy". Two ways out, both on the
+`failed` refund row, which they lock:
+
+- **retry-refund** reverses the same transactions again on the same row; one already
+  reversed answers "closed" and counts as done, so however often it is retried the money
+  goes back once. A decline is a normal 200 (still `failed`, new `failureReason`);
+  ATMOS unreachable is 502 "Payment provider unavailable" and nothing changes. Success:
+  both rows `refunded`, audit `REFUND_RETRIED`.
+- **mark-refunded** records money returned outside the platform: both rows `refunded`,
+  `refundedManually`, `manualRefundReason`, `manual_refund_by`; audit
+  `REFUND_MARKED_MANUAL`.
+
+Only a `failed` refund qualifies (400 "Only a failed refund can be retried" / "… marked
+as refunded"). `GET /api/admin/stats` counts them for the sidebar badge.
+
+### Owner legal details
+
+`owner_legal_details` (1:1 with users, `OwnerLegalDetailsService`): `legalType`
+(`yatt`, `mchj`, `self_employed`), `tin` (9 digits; the 14-digit PINFL for
+`self_employed` — "tin must be 9 digits (or 14 for self-employed)"),
+`atmosContractStatus` (`none`, `pending`, `signed`) and `atmosRecipientId` (1–50 chars,
+required when signed, ignored otherwise). **This is the only place an owner's ATMOS
+recipient id is stored**; the payment split reads it from here. A stadium cannot be
+approved until its owner's contract is signed. Changes are audited
+(`OWNER_LEGAL_DETAILS_CHANGED`) with who made them (`updatedByName`). Rows moved from the
+old `users.atmos_recipient_id` by changeset 037 are `signed` with no legal type or tin
+until an admin fills them in.
 
 ## Auth
 
@@ -1045,6 +1182,7 @@ DB_PASSWORD=...
 JWT_SECRET=...        # at least 32 bytes — HS256 refuses a shorter key at startup
 BOT_TOKEN=...
 CARD_TOKEN_KEY=...    # 32 bytes, base64; encrypts saved card tokens (required under prod/atmos)
+CORS_ALLOWED_ORIGINS= # optional: browser origins allowed cross-origin, comma-separated; empty = no CORS
 
 # ATMOS — used only with SPRING_PROFILES_ACTIVE=atmos
 ATMOS_BASE_URL=https://apigw.atmos.uz
@@ -1124,8 +1262,10 @@ forwarded headers — and then every admin shares one 20-attempt budget.
 - `SPRING_PROFILES_ACTIVE=prod,atmos`. `FakePaymentProvider` refuses to start under
   `prod`, and the `atmos` profile wires `AtmosPaymentProvider`, which refuses to start
   without every `ATMOS_*` variable. Set `CARD_TOKEN_KEY` (`openssl rand -base64 32`)
-  and keep it: losing it makes every saved card unusable. Give each stadium owner their
-  `users.atmos_recipient_id` before they take card payments. Settle the "Open ATMOS
+  and keep it: losing it makes every saved card unusable. Each stadium owner's signed
+  contract and ATMOS recipient id are entered by an admin
+  (`PUT /api/admin/users/{id}/legal-details`) — a stadium cannot be approved before
+  that. Settle the "Open ATMOS
   questions" (see "Payments") against the real API first.
 - The Payme/Click webhooks are still mocks that trust the body without checking a
   signature (see "Deferred until the payment model is final"). Don't expose
@@ -1157,9 +1297,14 @@ forwarded headers — and then every admin shares one 20-attempt budget.
 
 ### Application settings worth checking
 
-- CORS: none is configured, so browsers only allow same-origin calls. Serve the
-  admin panel and the Mini App from the API's origin (via Nginx), or add a CORS
-  config that allows exactly those origins — never `*` with credentials.
+- CORS is off by default (`CORS_ALLOWED_ORIGINS` empty): no CORS header is sent, so
+  browsers only allow same-origin calls. Either serve the admin panel and the Mini App
+  from the API's origin (via Nginx), or set `CORS_ALLOWED_ORIGINS` to exactly those
+  origins, comma-separated (e.g. `https://admin.minipolya.uz,https://app.minipolya.uz`)
+  — never `*`. It then covers `/api/**` (methods GET, POST, PUT, PATCH, DELETE,
+  OPTIONS; headers Authorization, Content-Type; no credentials; preflights cached
+  3600 s). Preflights pass without a JWT; other origins get 403; `/webhooks/**` never
+  has CORS.
 - Logging at `INFO`, `spring.jpa.show-sql: false` (already). Check that no log line
   carries tokens, card numbers or passwords before raising any level to DEBUG.
 - `server.error.include-stacktrace` stays at its default (`never`);
@@ -1190,6 +1335,13 @@ forwarded headers — and then every admin shares one 20-attempt budget.
 
 # Run specific test class
 ./mvnw test -Dtest=BookingServiceTest
+
+# Database-backed tests (@DatabaseTest: full context, Liquibase schema, MockMvc, each test
+# rolled back) run against a separate database, TEST_DB_URL (default
+# jdbc:postgresql://localhost:5432/minipolya_test) with DB_USERNAME/DB_PASSWORD; it is
+# created on first use, and the tests are skipped when it cannot be reached. Never point
+# TEST_DB_URL at the dev database. Note: a dev server running with devtools restarts on
+# every compile and applies new changesets to the dev database straight away.
 
 # Create database (Liquibase creates the tables, you just need the empty DB)
 psql -U postgres -c "CREATE DATABASE minipolya;"
