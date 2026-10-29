@@ -15,6 +15,7 @@ import uz.minipolya.minipolya_backend.dto.request.AdminUpdateUserRequest;
 import uz.minipolya.minipolya_backend.dto.response.AdminPlatformStatsResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminUserResponse;
+import uz.minipolya.minipolya_backend.dto.response.DailyBookingCountResponse;
 import uz.minipolya.minipolya_backend.dto.response.OwnerRevenueResponse;
 import uz.minipolya.minipolya_backend.dto.response.OwnerRevenueResponse.DailyRevenue;
 import uz.minipolya.minipolya_backend.entity.Booking;
@@ -58,6 +59,8 @@ public class AdminService {
     private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
     private static final List<String> COUNTED_STATUSES = List.of("confirmed", "completed");
     private static final int MAX_STATUS_REASON = 500;
+    /** The overview chart's span: the last 30 days, today included. */
+    private static final int CHART_DAYS = 30;
 
     private final UserRepository userRepository;
     private final StadiumRepository stadiumRepository;
@@ -96,9 +99,9 @@ public class AdminService {
                 .blockedStadiums(stadiumRepository.countByStatus("blocked"))
                 .rejectedStadiums(stadiumRepository.countByStatus("rejected"))
                 .totalBookings(bookingRepository.countByStatusIn(COUNTED_STATUSES))
-                .todayBookings(bookingRepository.countByStatusInAndStartsAtBetween(COUNTED_STATUSES, todayStart, todayEnd))
-                .weekBookings(bookingRepository.countByStatusInAndStartsAtBetween(COUNTED_STATUSES, weekStart, weekEnd))
-                .monthBookings(bookingRepository.countByStatusInAndStartsAtBetween(COUNTED_STATUSES, monthStart, monthEnd))
+                .todayBookings(countedBookings(todayStart, todayEnd))
+                .weekBookings(countedBookings(weekStart, weekEnd))
+                .monthBookings(countedBookings(monthStart, monthEnd))
                 // Card money kept, cash excluded: the same calculation as /api/admin/payments/summary.
                 .totalRevenue(revenueService.total().appRevenue())
                 .todayRevenue(appRevenue(todayStart, todayEnd))
@@ -124,10 +127,50 @@ public class AdminService {
     @Transactional(readOnly = true)
     public OwnerRevenueResponse getPlatformRevenue() {
         LocalDate today = LocalDate.now(TASHKENT);
-        List<DailyRevenue> daily = revenueService.daily(today.minusDays(29), today).entrySet().stream()
-                .map(e -> DailyRevenue.builder().date(e.getKey()).revenue(e.getValue().appRevenue()).build())
+        LocalDate first = today.minusDays(CHART_DAYS - 1);
+        Map<LocalDate, Long> bookings = dailyBookingCounts(first, today);
+        List<DailyRevenue> daily = revenueService.daily(first, today).entrySet().stream()
+                .map(e -> DailyRevenue.builder()
+                        .date(e.getKey())
+                        .revenue(e.getValue().appRevenue())
+                        // The same figure as /stats/bookings-daily, which the chart should read.
+                        .bookingCount(bookings.get(e.getKey()).intValue())
+                        .build())
                 .toList();
         return OwnerRevenueResponse.builder().stadiumId(null).dailyRevenue(daily).build();
+    }
+
+    /**
+     * The overview chart: bookings starting on each of the last 30 Tashkent days, today
+     * included, every day present — counted like {@code todayBookings} (confirmed or
+     * completed).
+     */
+    @Transactional(readOnly = true)
+    public List<DailyBookingCountResponse> getDailyBookings() {
+        LocalDate today = LocalDate.now(TASHKENT);
+        return dailyBookingCounts(today.minusDays(CHART_DAYS - 1), today).entrySet().stream()
+                .map(e -> DailyBookingCountResponse.builder().date(e.getKey()).bookingCount(e.getValue()).build())
+                .toList();
+    }
+
+    /** Each day from {@code first} to {@code last}, both included, with its count — zero when none. */
+    private Map<LocalDate, Long> dailyBookingCounts(LocalDate first, LocalDate last) {
+        Map<LocalDate, Long> byDay = new LinkedHashMap<>();
+        for (LocalDate day = first; !day.isAfter(last); day = day.plusDays(1)) {
+            byDay.put(day, 0L);
+        }
+        for (Object[] row : bookingRepository.countStartingPerTashkentDay(
+                COUNTED_STATUSES, startOfDay(first), startOfDay(last.plusDays(1)))) {
+            LocalDate day = row[0] instanceof java.sql.Date date ? date.toLocalDate() : (LocalDate) row[0];
+            byDay.put(day, ((Number) row[1]).longValue());
+        }
+        return byDay;
+    }
+
+    /** Bookings counted by the overview (confirmed or completed) starting in {@code [from, to)}. */
+    private long countedBookings(OffsetDateTime from, OffsetDateTime to) {
+        return bookingRepository.countByStatusInAndStartsAtGreaterThanEqualAndStartsAtLessThan(
+                COUNTED_STATUSES, from, to);
     }
 
     private long appRevenue(OffsetDateTime from, OffsetDateTime to) {

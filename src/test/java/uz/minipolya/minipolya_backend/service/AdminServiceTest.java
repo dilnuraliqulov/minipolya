@@ -125,7 +125,8 @@ class AdminServiceTest {
         when(stadiumRepository.countByStatus("pending")).thenReturn(3L);
         when(stadiumRepository.countByStatus("blocked")).thenReturn(2L);
         when(bookingRepository.countByStatusIn(any())).thenReturn(500L);
-        when(bookingRepository.countByStatusInAndStartsAtBetween(any(), any(), any())).thenReturn(7L);
+        when(bookingRepository.countByStatusInAndStartsAtGreaterThanEqualAndStartsAtLessThan(any(), any(), any()))
+                .thenReturn(7L);
         when(revenueService.total()).thenReturn(new Revenue(9_000_000L, 135_000L, 8_000_000L, 865_000L));
         when(gameRepository.count()).thenReturn(50L);
         when(gameRepository.countByStatus("open")).thenReturn(8L);

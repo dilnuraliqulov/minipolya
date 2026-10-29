@@ -57,6 +57,24 @@ public interface BookingRepository extends JpaRepository<Booking, UUID>, JpaSpec
 
     long countByStatusInAndStartsAtBetween(Collection<String> statuses, OffsetDateTime from, OffsetDateTime to);
 
+    /** Bookings in these statuses starting in {@code [from, to)}: a booking at the boundary is in one period only. */
+    long countByStatusInAndStartsAtGreaterThanEqualAndStartsAtLessThan(Collection<String> statuses,
+                                                                    OffsetDateTime from, OffsetDateTime to);
+
+    /**
+     * {@code [Tashkent date, count]} of bookings in these statuses starting in {@code [from, to)},
+     * one row per day that has any.
+     */
+    @Query(value = """
+            SELECT CAST(b.starts_at AT TIME ZONE 'Asia/Tashkent' AS date) AS day, COUNT(*) AS bookings
+            FROM bookings b
+            WHERE b.status IN (:statuses) AND b.starts_at >= :from AND b.starts_at < :to
+            GROUP BY day
+            """, nativeQuery = true)
+    List<Object[]> countStartingPerTashkentDay(@Param("statuses") Collection<String> statuses,
+                                               @Param("from") OffsetDateTime from,
+                                               @Param("to") OffsetDateTime to);
+
     @Query("""
             SELECT COUNT(b) FROM Booking b
             WHERE b.stadium.id = :stadiumId
