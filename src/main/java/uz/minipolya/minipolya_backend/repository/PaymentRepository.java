@@ -1,9 +1,11 @@
 package uz.minipolya.minipolya_backend.repository;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -24,6 +26,17 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
 
     /** Every payment of several bookings in one query — for a list of bookings. */
     List<Payment> findByBookingIdIn(Collection<UUID> bookingIds);
+
+    /** The row, locked until the transaction ends — so two admins cannot settle one refund twice. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM Payment p WHERE p.id = :id")
+    Optional<Payment> findForUpdate(@Param("id") UUID id);
+
+    /** Failed refunds still waiting for an admin: how many, and since when. */
+    long countByPaymentTypeAndStatus(Payment.PaymentType paymentType, Payment.Status status);
+
+    Optional<Payment> findFirstByPaymentTypeAndStatusOrderByCreatedAtAsc(Payment.PaymentType paymentType,
+                                                                       Payment.Status status);
 
     /** The refunds that give this payment back. */
     List<Payment> findByRefundOfPaymentIdOrderByCreatedAtAsc(UUID paymentId);
@@ -87,7 +100,8 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
             SELECT new uz.minipolya.minipolya_backend.repository.RevenueRow(
                        p.id, COALESCE(b.stadium.id, g.stadium.id), p.paymentType, p.provider,
                        p.amount, p.ownerAmount, p.platformAmount, p.providerCommission,
-                       p.createdAt, p.updatedAt, o.provider, o.amount, o.providerCommission)
+                       p.createdAt, p.updatedAt, o.provider, o.amount, o.providerCommission,
+                       p.refundedManually)
             FROM Payment p
             LEFT JOIN p.booking b
             LEFT JOIN p.game g

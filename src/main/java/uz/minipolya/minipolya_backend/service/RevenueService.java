@@ -27,15 +27,19 @@ import java.util.Set;
  * reported none, it is estimated at the current {@code card_fee_bps}; a legacy Payme/Click
  * row predates the card fee and counts none. A refund that reversed the transaction is
  * taken to give ATMOS's fee back as well, so a payment refunded in full nets to zero on
- * every figure.
+ * every figure. A refund an admin marked as returned by hand did not touch the card
+ * transaction, so ATMOS kept its fee on the original.
  */
 @Service
 @RequiredArgsConstructor
 public class RevenueService {
 
-    /** Statuses of a card payment whose money arrived — kept now, or given back since. */
-    static final Set<Payment.Status> ARRIVED = Set.of(
-            Payment.Status.PAID, Payment.Status.CAPTURED, Payment.Status.COMPLETED, Payment.Status.REFUNDED);
+    /**
+     * Statuses of a card payment whose money arrived: kept now, given back since, or still
+     * owed back after the provider declined the refund (it is with the platform until then).
+     */
+    static final Set<Payment.Status> ARRIVED = Set.of(Payment.Status.PAID, Payment.Status.CAPTURED,
+            Payment.Status.COMPLETED, Payment.Status.REFUNDED, Payment.Status.REFUND_FAILED);
 
     private static final OffsetDateTime BEGINNING = OffsetDateTime.of(2000, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
     private static final OffsetDateTime END = OffsetDateTime.of(3000, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
@@ -95,7 +99,10 @@ public class RevenueService {
 
     /** One row's part in the figures. */
     static Revenue line(RevenueRow row, int bps) {
-        long fee = row.isRefund()
+        long fee = row.isRefund() && row.refundedManually()
+                // Returned outside the platform: the card transaction stood, so ATMOS kept its fee.
+                ? 0
+                : row.isRefund()
                 ? -feeOf(row.originalProvider(), row.originalAmount(), row.originalProviderCommission(), bps)
                 : feeOf(row.provider(), row.amount(), row.providerCommission(), bps);
         return Revenue.line(row.amount(), row.ownerAmount(), row.platformAmount(), fee);

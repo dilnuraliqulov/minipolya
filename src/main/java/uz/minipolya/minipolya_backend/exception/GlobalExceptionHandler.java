@@ -50,6 +50,12 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(ex.getMessage()));
     }
 
+    @ExceptionHandler(ProviderUnavailableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleProviderUnavailable(ProviderUnavailableException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(ApiResponse.error(ex.getMessage()));
+    }
+
     @ExceptionHandler(SlotAlreadyBookedException.class)
     public ResponseEntity<ApiResponse<Void>> handleSlotAlreadyBooked(SlotAlreadyBookedException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)

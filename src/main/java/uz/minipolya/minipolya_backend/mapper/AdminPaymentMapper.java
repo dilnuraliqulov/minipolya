@@ -24,9 +24,6 @@ public interface AdminPaymentMapper {
     @Mapping(source = "refundOfPayment.id", target = "refundOfPaymentId")
     @Mapping(target = "stadiumId", ignore = true)
     @Mapping(target = "stadiumName", ignore = true)
-    @Mapping(target = "failureReason", ignore = true)
-    @Mapping(target = "refundedManually", ignore = true)
-    @Mapping(target = "manualRefundReason", ignore = true)
     @Mapping(target = "linkedPayments", ignore = true)
     AdminPaymentResponse toResponse(Payment payment);
 
@@ -40,6 +37,10 @@ public interface AdminPaymentMapper {
         if (stadium != null) {
             response.setStadiumId(stadium.getId());
             response.setStadiumName(stadium.getName());
+        }
+        // Only said when true: a plain refund or payment has nothing to report here.
+        if (!payment.isRefundedManually()) {
+            response.setRefundedManually(null);
         }
     }
 }

@@ -33,6 +33,7 @@ import uz.minipolya.minipolya_backend.provider.HoldOutcome;
 import uz.minipolya.minipolya_backend.provider.HoldRequest;
 import uz.minipolya.minipolya_backend.provider.LegacyCheckoutProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
+import uz.minipolya.minipolya_backend.provider.PaymentProviderException;
 import uz.minipolya.minipolya_backend.provider.PendingCharge;
 import uz.minipolya.minipolya_backend.provider.ProviderTimeoutException;
 import uz.minipolya.minipolya_backend.provider.Split;
@@ -365,6 +366,13 @@ public class PaymentService {
                 // counts as success: the timeout job and a retry are idempotent.
                 log.info("Hold {} was already let go ({}); recording it released",
                         original.getId(), ex.getCode());
+            } catch (PaymentProviderException ex) {
+                // Not a failed refund: no money left the card, and the provider lets the hold
+                // lapse at the end of its duration anyway. Left return_pending for the
+                // reconcile job to release; the cancellation goes ahead.
+                log.warn("Release of hold {} refused ({}); left return_pending for the reconcile job",
+                        original.getId(), ex.getCode());
+                return null;
             }
             Payment.Status statusBefore = Payment.Status.HELD;
             original.setStatus(Payment.Status.RELEASED);
@@ -657,8 +665,13 @@ public class PaymentService {
      * owner settles that directly — and a payment that never succeeded, or was
      * already given back, is skipped.
      *
+     * <p>A provider that declines the reverse does not undo whatever is being cancelled:
+     * the refund is recorded as failed ({@link #recordFailedRefund}) for an admin to retry
+     * or settle by hand, and the caller carries on. A lost answer is different — the row
+     * stays {@code return_pending} for the reconcile job.
+     *
      * @return the new negative refund row, or {@code null} if there was nothing
-     *         to refund
+     *         to refund, the answer was lost, or the provider declined
      */
     @Transactional
     public Payment refundInFull(Payment original, String reason) {
@@ -684,6 +697,9 @@ public class PaymentService {
             } catch (ProviderTimeoutException ex) {
                 log.warn("Reverse of payment {} unanswered; left return_pending", original.getId());
                 return null;
+            } catch (PaymentProviderException ex) {
+                recordFailedRefund(original, statusBefore, reason, ex);
+                return null;
             }
         }
         return recordRefund(original, statusBefore, reason);
@@ -694,7 +710,67 @@ public class PaymentService {
      * original marked refunded. Also used by the reconcile job to finish a return_pending.
      */
     Payment recordRefund(Payment original, Payment.Status statusBefore, String reason) {
-        Payment refund = paymentRepository.save(Payment.builder()
+        Payment refund = paymentRepository.save(refundRow(original, reason)
+                .status(Payment.Status.REFUNDED)
+                .build());
+
+        original.setStatus(Payment.Status.REFUNDED);
+        paymentRepository.save(original);
+
+        // On the payment that was refunded; the new negative row is named in the changes.
+        auditService.record(AuditEntry.system(AuditAction.REFUND_CREATED)
+                .entity(AuditEntityType.PAYMENT, original.getId(), AuditLabels.payment(original))
+                .change("status", statusBefore, original.getStatus())
+                .created("refundAmount", refund.getAmount())
+                .created("refundPaymentId", refund.getId())
+                .reason(reason));
+        log.info("Refunded in full: originalId={} amount={} reason={}",
+                original.getId(), refund.getAmount(), reason);
+        return refund;
+    }
+
+    /**
+     * The provider declined to give the money back. The refund row is written all the
+     * same, {@code failed}, with the provider's error, and the original becomes
+     * {@code refund_failed}: the money is owed and an admin has to act — retry it, or
+     * mark it refunded by hand. Neither status is one the reconcile job picks up, so the
+     * job never races an admin over it. Also used by the reconcile job when its own
+     * reverse is declined.
+     */
+    Payment recordFailedRefund(Payment original, Payment.Status statusBefore, String reason,
+                               PaymentProviderException cause) {
+        String failure = failureReason(cause);
+        Payment refund = paymentRepository.save(refundRow(original, reason)
+                .status(Payment.Status.FAILED)
+                .failureReason(failure)
+                .build());
+
+        original.setStatus(Payment.Status.REFUND_FAILED);
+        paymentRepository.save(original);
+
+        auditService.record(AuditEntry.system(AuditAction.REFUND_FAILED)
+                .entity(AuditEntityType.PAYMENT, original.getId(), AuditLabels.payment(original))
+                .change("status", statusBefore, original.getStatus())
+                .created("refundAmount", refund.getAmount())
+                .created("refundPaymentId", refund.getId())
+                .reason(failure));
+        log.error("Refund declined by the provider, left for an admin: originalId={} refundId={} code={}",
+                original.getId(), refund.getId(), cause.getCode());
+        return refund;
+    }
+
+    /** What an admin is shown of a provider error: its message and code. Never a card detail. */
+    static String failureReason(PaymentProviderException cause) {
+        String message = cause.getMessage() == null || cause.getMessage().isBlank()
+                ? "Refund declined by the provider" : cause.getMessage();
+        String text = cause.getCode() == null || message.contains(cause.getCode())
+                ? message : message + " (" + cause.getCode() + ")";
+        return text.length() > 500 ? text.substring(0, 500) : text;
+    }
+
+    /** The negative mirror of a payment — the whole gross, card fee included — status still to set. */
+    private Payment.PaymentBuilder refundRow(Payment original, String reason) {
+        return Payment.builder()
                 .booking(original.getBooking())
                 .game(original.getGame())
                 // Carried over so a team game's refund stays in that team's ledger.
@@ -711,24 +787,8 @@ public class PaymentService {
                 .provider(original.getProvider())
                 .providerTxnId(original.getProviderTxnId() == null
                         ? null : original.getProviderTxnId() + "-refund")
-                .status(Payment.Status.REFUNDED)
                 .refundReason(reason)
-                .refundOfPayment(original)
-                .build());
-
-        original.setStatus(Payment.Status.REFUNDED);
-        paymentRepository.save(original);
-
-        // On the payment that was refunded; the new negative row is named in the changes.
-        auditService.record(AuditEntry.system(AuditAction.REFUND_CREATED)
-                .entity(AuditEntityType.PAYMENT, original.getId(), AuditLabels.payment(original))
-                .change("status", statusBefore, original.getStatus())
-                .created("refundAmount", refund.getAmount())
-                .created("refundPaymentId", refund.getId())
-                .reason(reason));
-        log.info("Refunded in full: originalId={} amount={} reason={}",
-                original.getId(), refund.getAmount(), reason);
-        return refund;
+                .refundOfPayment(original);
     }
 
     @Transactional

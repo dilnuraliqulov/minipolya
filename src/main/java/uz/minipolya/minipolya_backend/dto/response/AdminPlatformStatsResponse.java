@@ -1,9 +1,12 @@
 package uz.minipolya.minipolya_backend.dto.response;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import java.time.OffsetDateTime;
 
 @Data
 @Builder
@@ -37,4 +40,11 @@ public class AdminPlatformStatsResponse {
 
     private long pendingOwnerApplications;
     private long pendingStadiumApprovals;
+
+    /** Refunds the provider declined that still wait for an admin (retry or mark refunded). */
+    private long failedRefunds;
+
+    /** When the oldest of those was written (UTC); omitted when there are none. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private OffsetDateTime oldestFailedRefundAt;
 }

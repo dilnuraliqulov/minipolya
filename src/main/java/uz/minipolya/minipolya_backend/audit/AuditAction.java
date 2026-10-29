@@ -23,6 +23,8 @@ public enum AuditAction {
     USER_BLOCKED,
     USER_UNBLOCKED,
     USER_ROLE_CHANGED,
+    REFUND_RETRIED,
+    REFUND_MARKED_MANUAL,
     SETTINGS_CHANGED,
 
     // ---- Owner ----
@@ -61,5 +63,6 @@ public enum AuditAction {
     PAYMENT_COMPLETED,
     PAYMENT_RELEASED,
     REFUND_CREATED,
+    REFUND_FAILED,
     PROMOTION_EXPIRED
 }

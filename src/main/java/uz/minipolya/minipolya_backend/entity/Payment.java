@@ -148,6 +148,22 @@ public class Payment {
     @Column(name = "refund_reason", length = 255)
     private String refundReason;
 
+    /** On a refund the provider declined: the provider's error, for the admin. */
+    @Column(name = "failure_reason", length = 500)
+    private String failureReason;
+
+    /** A failed refund an admin marked as returned outside the platform (cash, bank transfer). */
+    @Builder.Default
+    @Column(name = "refunded_manually", nullable = false)
+    private boolean refundedManually = false;
+
+    @Column(name = "manual_refund_reason", length = 500)
+    private String manualRefundReason;
+
+    /** The admin who marked it refunded by hand. */
+    @Column(name = "manual_refund_by")
+    private UUID manualRefundBy;
+
     /** For refund rows: the original payment being refunded. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "refund_of_payment_id")
@@ -243,6 +259,12 @@ public class Payment {
         RETURN_PENDING,
         /** A hold being taken; the reconcile job finishes it. */
         CAPTURE_PENDING,
+        /**
+         * The provider declined to give this payment back: the money is still owed. Its
+         * {@code failed} refund row waits for an admin to retry it or mark it refunded by hand;
+         * the reconcile job leaves it alone.
+         */
+        REFUND_FAILED,
         HELD, CAPTURED, RELEASED, PAID, REFUNDED, FAILED, PENDING, COMPLETED;
 
         @JsonValue

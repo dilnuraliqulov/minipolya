@@ -34,13 +34,29 @@ class RevenueServiceTest {
     @Test
     void aReversalGivesTheOriginalsFeeBack() {
         RevenueRow original = new RevenueRow(UUID.randomUUID(), null, Payment.PaymentType.BOOKING,
-                Payment.Provider.ATMOS, 20_310_000, 20_304_569, 5_431, 304_650L, AT, AT, null, null, null);
+                Payment.Provider.ATMOS, 20_310_000, 20_304_569, 5_431, 304_650L, AT, AT, null, null, null, false);
         RevenueRow refund = new RevenueRow(UUID.randomUUID(), null, Payment.PaymentType.REFUND,
                 Payment.Provider.ATMOS, -20_310_000, -20_304_569, -5_431, null, AT, AT,
-                Payment.Provider.ATMOS, 20_310_000L, 304_650L);
+                Payment.Provider.ATMOS, 20_310_000L, 304_650L, false);
 
         Revenue net = RevenueService.line(original, 150).plus(RevenueService.line(refund, 150));
 
         assertThat(net).isEqualTo(Revenue.ZERO);
+    }
+
+    @Test
+    void aRefundMadeByHandLeavesATMOSItsFee() {
+        RevenueRow original = new RevenueRow(UUID.randomUUID(), null, Payment.PaymentType.BOOKING,
+                Payment.Provider.ATMOS, 20_310_000, 20_304_569, 5_431, 304_650L, AT, AT, null, null, null, false);
+        RevenueRow byHand = new RevenueRow(UUID.randomUUID(), null, Payment.PaymentType.REFUND,
+                Payment.Provider.ATMOS, -20_310_000, -20_304_569, -5_431, null, AT, AT,
+                Payment.Provider.ATMOS, 20_310_000L, 304_650L, true);
+
+        Revenue net = RevenueService.line(original, 150).plus(RevenueService.line(byHand, 150));
+
+        // Nothing kept, but ATMOS's fee on the card transaction was paid — by the owner and the platform.
+        assertThat(net.appRevenue()).isZero();
+        assertThat(net.cardFees()).isEqualTo(304_650);
+        assertThat(net.ownerPayouts() + net.platformRevenue()).isEqualTo(-304_650);
     }
 }

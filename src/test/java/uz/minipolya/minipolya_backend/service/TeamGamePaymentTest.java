@@ -39,6 +39,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -272,14 +273,18 @@ class TeamGamePaymentTest {
     }
 
     @Test
-    void anyOtherRefusalToReleaseIsNotSwallowed() {
+    void anyOtherRefusalToReleaseIsLeftForTheReconcileJob() {
         Payment held = heldPayment();
         when(paymentProvider.releaseHold("hold-a")).thenThrow(new PaymentProviderException("STPIMS-ERR-143", "no"));
 
-        assertThatThrownBy(() -> service.giveBackInFull(held, "Game cancelled"))
-                .isInstanceOf(PaymentProviderException.class);
-        // The intent stays recorded, so the reconcile job tries again.
+        // Not thrown: an exception here would roll back the cancellation it is part of, and
+        // a hold is not a refund — no money left the card, and it lapses on its own anyway.
+        Payment result = service.giveBackInFull(held, "Game cancelled");
+
+        assertThat(result).isNull();
+        // The intent stays recorded, so the reconcile job tries again; no refund row is written.
         assertThat(held.getStatus()).isEqualTo(Payment.Status.RETURN_PENDING);
+        verify(paymentRepository, never()).save(argThat(p -> p.getPaymentType() == Payment.PaymentType.REFUND));
     }
 
     @Test

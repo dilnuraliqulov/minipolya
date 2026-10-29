@@ -12,6 +12,7 @@ import uz.minipolya.minipolya_backend.provider.HoldCancelledException;
 import uz.minipolya.minipolya_backend.provider.HoldExpiredException;
 import uz.minipolya.minipolya_backend.provider.HoldOutcome;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
+import uz.minipolya.minipolya_backend.provider.PaymentProviderException;
 import uz.minipolya.minipolya_backend.provider.ProviderStatus;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 
@@ -211,8 +212,7 @@ public class PaymentReconcileService {
         if (isHold(payment)) {
             HoldOutcome where = paymentProvider.getHold(payment.getProviderTxnId());
             if (where.status() == ProviderStatus.CAPTURED) {
-                paymentService.reverseInFull(payment, "Returned by reconciliation");
-                paymentService.recordRefund(payment, Payment.Status.CAPTURED, "Returned by reconciliation");
+                reverseOrRecordFailure(payment, Payment.Status.CAPTURED);
                 return;
             }
             if (where.status() == ProviderStatus.HELD) {
@@ -226,9 +226,25 @@ public class PaymentReconcileService {
             log.info("Reconciled return of hold {}: released", payment.getId());
             return;
         }
-        paymentService.reverseInFull(payment, "Returned by reconciliation");
-        paymentService.recordRefund(payment, Payment.Status.PAID, "Returned by reconciliation");
-        log.info("Reconciled return of charge {}: refunded", payment.getId());
+        reverseOrRecordFailure(payment, Payment.Status.PAID);
+        log.info("Reconciled return of charge {}: {}", payment.getId(), payment.getStatus().getValue());
+    }
+
+    /**
+     * Reverses settled money. A provider that declines is a failed refund, recorded for an
+     * admin as {@code refundInFull} would: the row leaves {@code return_pending}, so the job
+     * does not try again every five minutes, and from then on only an admin retries it.
+     * A release that fails (the hold branch above) is not: it stays for the next run.
+     */
+    private void reverseOrRecordFailure(Payment payment, Payment.Status statusBefore) {
+        String reason = "Returned by reconciliation";
+        try {
+            paymentService.reverseInFull(payment, reason);
+        } catch (PaymentProviderException ex) {
+            paymentService.recordFailedRefund(payment, statusBefore, reason, ex);
+            return;
+        }
+        paymentService.recordRefund(payment, statusBefore, reason);
     }
 
     private void finishCapture(Payment payment) {

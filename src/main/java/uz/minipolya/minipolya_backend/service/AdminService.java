@@ -104,6 +104,12 @@ public class AdminService {
                 .activeGames(gameRepository.countByStatus("open"))
                 .pendingOwnerApplications(ownerApplicationRepository.countByStatus(OwnerApplication.Status.PENDING))
                 .pendingStadiumApprovals(stadiumRepository.countByStatus("pending"))
+                .failedRefunds(paymentRepository.countByPaymentTypeAndStatus(
+                        Payment.PaymentType.REFUND, Payment.Status.FAILED))
+                .oldestFailedRefundAt(paymentRepository.findFirstByPaymentTypeAndStatusOrderByCreatedAtAsc(
+                                Payment.PaymentType.REFUND, Payment.Status.FAILED)
+                        .map(Payment::getCreatedAt)
+                        .orElse(null))
                 .build();
     }
 

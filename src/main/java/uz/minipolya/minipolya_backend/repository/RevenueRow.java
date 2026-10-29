@@ -21,7 +21,8 @@ public record RevenueRow(UUID id,
                          OffsetDateTime updatedAt,
                          Payment.Provider originalProvider,
                          Long originalAmount,
-                         Long originalProviderCommission) {
+                         Long originalProviderCommission,
+                         boolean refundedManually) {
 
     public boolean isRefund() {
         return paymentType == Payment.PaymentType.REFUND;
