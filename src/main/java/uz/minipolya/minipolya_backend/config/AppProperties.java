@@ -5,6 +5,9 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Getter
 @Setter
 @Configuration
@@ -19,6 +22,19 @@ public class AppProperties {
     private AdminLogin adminLogin = new AdminLogin();
     private Atmos atmos = new Atmos();
     private Security security = new Security();
+    private Cors cors = new Cors();
+
+    @Getter
+    @Setter
+    public static class Cors {
+        /**
+         * Browser origins allowed to call {@code /api/**} from another origin, e.g.
+         * {@code https://admin.minipolya.uz} — exact origins, never {@code *}. Set with
+         * {@code CORS_ALLOWED_ORIGINS} (comma-separated). Empty, the default, means no CORS
+         * at all: only same-origin pages can call the API.
+         */
+        private List<String> allowedOrigins = new ArrayList<>();
+    }
 
     @Getter
     @Setter
