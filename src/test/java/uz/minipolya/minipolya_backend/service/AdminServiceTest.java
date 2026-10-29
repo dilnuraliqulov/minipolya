@@ -307,8 +307,10 @@ class AdminServiceTest {
 
         AuditEntry blocked = Audited.one(auditService, AuditAction.STADIUM_BLOCKED);
         assertThat(blocked.getEntityLabel()).isEqualTo("Arena");
-        assertThat(blocked.getChanges()).containsExactly(AuditChange.of("status", "approved", "blocked"));
+        assertThat(blocked.getChanges()).containsExactly(
+                AuditChange.of("status", "approved", "blocked"), AuditChange.of("statusReason", null, "fraud"));
         assertThat(blocked.getReason()).isEqualTo("fraud");
+        assertThat(stadium.getStatusReason()).isEqualTo("fraud");
         // Each booking the block cancelled is a SYSTEM consequence, with the same reason.
         AuditEntry cancelled = Audited.one(auditService, AuditAction.BOOKING_CANCELLED_BY_OWNER);
         assertThat(cancelled.getActorType()).isEqualTo(uz.minipolya.minipolya_backend.audit.AuditActorType.SYSTEM);
@@ -320,18 +322,62 @@ class AdminServiceTest {
     }
 
     @Test
-    void blockingAStadiumNeverApprovedIsARejection() {
+    void rejectingAPendingStadiumMakesItRejectedWithTheReason() {
         Stadium stadium = stadium("pending");
         when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
         when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service.updateStadiumStatus(STADIUM_ID,
-                AdminUpdateStadiumStatusRequest.builder().status("blocked").reason("Fake photos").build(), ADMIN_ID);
+                AdminUpdateStadiumStatusRequest.builder().status("rejected").reason("Fake photos").build(), ADMIN_ID);
 
+        assertThat(stadium.getStatus()).isEqualTo("rejected");
+        assertThat(stadium.getStatusReason()).isEqualTo("Fake photos");
         AuditEntry entry = Audited.one(auditService, AuditAction.STADIUM_REJECTED);
-        assertThat(entry.getChanges()).containsExactly(AuditChange.of("status", "pending", "blocked"));
+        assertThat(entry.getChanges()).containsExactly(
+                AuditChange.of("status", "pending", "rejected"), AuditChange.of("statusReason", null, "Fake photos"));
         assertThat(entry.getReason()).isEqualTo("Fake photos");
-        assertThat(Audited.entries(auditService, AuditAction.STADIUM_BLOCKED)).isEmpty();
+        verify(notificationService).notify(eq(OWNER_ID), eq(Notification.Type.STADIUM_REJECTED),
+                anyString(), anyString(), eq(Notification.ReferenceType.STADIUM), eq(STADIUM_ID));
+        // Nothing to cancel: a stadium never approved has no bookings.
+        verify(bookingRepository, never()).findByStadiumIdAndStartsAtBetween(any(), any(), any());
+    }
+
+    @Test
+    void onlyAPendingStadiumCanBeRejected() {
+        Stadium stadium = stadium("approved");
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.updateStadiumStatus(STADIUM_ID,
+                        AdminUpdateStadiumStatusRequest.builder().status("rejected").reason("Too late").build(), ADMIN_ID))
+                .hasMessage("Only a pending stadium can be rejected");
+        assertThat(stadium.getStatus()).isEqualTo("approved");
+    }
+
+    @Test
+    void rejectingOrBlockingNeedsAReason() {
+        Stadium stadium = stadium("pending");
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+
+        for (String status : List.of("rejected", "blocked")) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.updateStadiumStatus(STADIUM_ID,
+                            AdminUpdateStadiumStatusRequest.builder().status(status).reason("  ").build(), ADMIN_ID))
+                    .hasMessage("reason is required");
+        }
+        verify(stadiumRepository, never()).save(any(Stadium.class));
+    }
+
+    @Test
+    void approvingClearsTheReason() {
+        Stadium stadium = stadium("blocked");
+        stadium.setStatusReason("fraud");
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateStadiumStatus(STADIUM_ID, AdminUpdateStadiumStatusRequest.builder().status("approved").build(), ADMIN_ID);
+
+        assertThat(stadium.getStatusReason()).isNull();
+        assertThat(Audited.one(auditService, AuditAction.STADIUM_UNBLOCKED).getChanges()).containsExactly(
+                AuditChange.of("status", "blocked", "approved"), AuditChange.of("statusReason", "fraud", null));
     }
 
     @Test

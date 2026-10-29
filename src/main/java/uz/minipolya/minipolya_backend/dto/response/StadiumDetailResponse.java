@@ -57,6 +57,8 @@ public class StadiumDetailResponse {
     private Long minBookingAmount;
 
     private String status;
+    /** Why the stadium is rejected or blocked — for its owner and admins; absent otherwise. */
+    private String statusReason;
 
     @JsonProperty("isActive")
     private boolean isActive;

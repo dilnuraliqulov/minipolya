@@ -14,7 +14,8 @@ import lombok.NoArgsConstructor;
 public class AdminUpdateStadiumStatusRequest {
 
     @NotBlank
-    @Pattern(regexp = "approved|blocked|pending", message = "status must be approved, blocked or pending")
+    @Pattern(regexp = "approved|blocked|pending|rejected",
+            message = "status must be approved, blocked, pending or rejected")
     private String status;
 
     private String reason;

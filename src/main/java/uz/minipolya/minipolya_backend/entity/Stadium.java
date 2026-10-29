@@ -101,10 +101,17 @@ public class Stadium {
     @Column(name = "min_booking_amount")
     private Long minBookingAmount;
 
-    /** One of: pending, approved, blocked. */
+    /**
+     * One of: pending, approved, rejected (turned down at review), blocked (taken off after
+     * approval). Players only ever see approved stadiums.
+     */
     @Builder.Default
     @Column(nullable = false, length = 20)
     private String status = "pending";
+
+    /** The admin's reason for a rejected or blocked status, shown to the owner; null otherwise. */
+    @Column(name = "status_reason", columnDefinition = "text")
+    private String statusReason;
 
     /**
      * How many hours before kick-off a player may still cancel and get their

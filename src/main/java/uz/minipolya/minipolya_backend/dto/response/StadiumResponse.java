@@ -43,6 +43,8 @@ public class StadiumResponse {
     /** price − netPrice. */
     private Long cardFee;
     private String status;
+    /** Why the stadium is rejected or blocked — for its owner and admins; absent otherwise. */
+    private String statusReason;
     private String ownerName;
 
     @JsonProperty("isActive")

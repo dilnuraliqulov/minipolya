@@ -33,6 +33,8 @@ public class AdminStadiumResponse {
     private String ownerName;
     private UUID ownerId;
     private String status;
+    /** Why the stadium is rejected or blocked — for its owner and admins; absent otherwise. */
+    private String statusReason;
     private String format;
     private String surfaceType;
     private double averageRating;

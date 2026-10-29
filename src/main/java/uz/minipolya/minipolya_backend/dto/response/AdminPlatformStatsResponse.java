@@ -24,6 +24,7 @@ public class AdminPlatformStatsResponse {
     private long approvedStadiums;
     private long pendingStadiums;
     private long blockedStadiums;
+    private long rejectedStadiums;
 
     private long totalBookings;
     private long todayBookings;

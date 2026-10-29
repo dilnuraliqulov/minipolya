@@ -41,6 +41,7 @@ import java.time.temporal.TemporalAdjusters;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -56,6 +57,7 @@ public class AdminService {
 
     private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
     private static final List<String> COUNTED_STATUSES = List.of("confirmed", "completed");
+    private static final int MAX_STATUS_REASON = 500;
 
     private final UserRepository userRepository;
     private final StadiumRepository stadiumRepository;
@@ -91,6 +93,7 @@ public class AdminService {
                 .approvedStadiums(stadiumRepository.countByStatus("approved"))
                 .pendingStadiums(stadiumRepository.countByStatus("pending"))
                 .blockedStadiums(stadiumRepository.countByStatus("blocked"))
+                .rejectedStadiums(stadiumRepository.countByStatus("rejected"))
                 .totalBookings(bookingRepository.countByStatusIn(COUNTED_STATUSES))
                 .todayBookings(bookingRepository.countByStatusInAndStartsAtBetween(COUNTED_STATUSES, todayStart, todayEnd))
                 .weekBookings(bookingRepository.countByStatusInAndStartsAtBetween(COUNTED_STATUSES, weekStart, weekEnd))
@@ -200,19 +203,33 @@ public class AdminService {
         Stadium stadium = stadiumRepository.findById(stadiumId)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
         String status = request.getStatus().trim();
-        String reason = request.getReason();
+        String reason = request.getReason() == null || request.getReason().isBlank() ? null : request.getReason().trim();
         String oldStatus = stadium.getStatus();
+        String oldReason = stadium.getStatusReason();
+        boolean turnedDown = "rejected".equals(status) || "blocked".equals(status);
+        if (turnedDown && reason == null) {
+            throw new BadRequestException("reason is required");
+        }
+        if (reason != null && reason.length() > MAX_STATUS_REASON) {
+            throw new BadRequestException("reason must be at most 500 characters");
+        }
+        if ("rejected".equals(status) && !"pending".equals(oldStatus)) {
+            throw new BadRequestException("Only a pending stadium can be rejected");
+        }
         if ("approved".equals(status) && !"approved".equals(oldStatus)) {
             // Players will pay this owner by card: the payouts need a signed ATMOS contract.
             ownerLegalDetailsService.requireSignedContract(stadium.getOwner().getId());
         }
         stadium.setStatus(status);
+        // The owner sees why it was turned down; approving or reopening clears it.
+        stadium.setStatusReason(turnedDown ? reason : null);
         stadiumRepository.save(stadium);
         UUID ownerId = stadium.getOwner().getId();
-        if (!status.equals(oldStatus)) {
+        if (!status.equals(oldStatus) || !Objects.equals(oldReason, stadium.getStatusReason())) {
             auditService.record(AuditEntry.admin(adminUserId, statusAction(oldStatus, status))
                     .entity(AuditEntityType.STADIUM, stadiumId, AuditLabels.stadium(stadium))
                     .change("status", oldStatus, status)
+                    .change("statusReason", oldReason, stadium.getStatusReason())
                     .reason(reason));
         }
 
@@ -231,10 +248,12 @@ public class AdminService {
                         "Ваш стадион «" + stadium.getName() + "» одобрен!",
                         Notification.ReferenceType.STADIUM, stadiumId);
             }
+            case "rejected" -> notify(ownerId, Notification.Type.STADIUM_REJECTED, "Стадион отклонён",
+                    "Ваш стадион «" + stadium.getName() + "» отклонён. Причина: " + reason,
+                    Notification.ReferenceType.STADIUM, stadiumId);
             case "blocked" -> {
                 notify(ownerId, Notification.Type.STADIUM_REJECTED, "Стадион заблокирован",
-                        "Ваш стадион «" + stadium.getName() + "» заблокирован. Причина: "
-                                + (reason == null ? "не указана" : reason),
+                        "Ваш стадион «" + stadium.getName() + "» заблокирован. Причина: " + reason,
                         Notification.ReferenceType.STADIUM, stadiumId);
                 cancelFutureBookings(stadium, reason);
             }
@@ -248,11 +267,12 @@ public class AdminService {
 
     // ---- Helpers ----
 
-    /** Which code a stadium status change gets: the same "blocked" is a rejection for a stadium never approved. */
+    /** Which code a stadium status change gets. */
     private static AuditAction statusAction(String oldStatus, String newStatus) {
         return switch (newStatus) {
             case "approved" -> "blocked".equals(oldStatus) ? AuditAction.STADIUM_UNBLOCKED : AuditAction.STADIUM_APPROVED;
-            case "blocked" -> "pending".equals(oldStatus) ? AuditAction.STADIUM_REJECTED : AuditAction.STADIUM_BLOCKED;
+            case "rejected" -> AuditAction.STADIUM_REJECTED;
+            case "blocked" -> AuditAction.STADIUM_BLOCKED;
             default -> AuditAction.STADIUM_STATUS_CHANGED;
         };
     }
