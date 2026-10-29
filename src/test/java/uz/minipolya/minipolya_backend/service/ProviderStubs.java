@@ -1,6 +1,7 @@
 package uz.minipolya.minipolya_backend.service;
 
 import org.mockito.stubbing.Answer;
+import uz.minipolya.minipolya_backend.entity.OwnerLegalDetails;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.provider.ChargeOutcome;
 import uz.minipolya.minipolya_backend.provider.ChargeRequest;
@@ -9,6 +10,7 @@ import uz.minipolya.minipolya_backend.provider.HoldRequest;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.provider.PendingCharge;
 import uz.minipolya.minipolya_backend.provider.ProviderStatus;
+import uz.minipolya.minipolya_backend.repository.OwnerLegalDetailsRepository;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -28,6 +30,16 @@ import static org.mockito.Mockito.lenient;
 final class ProviderStubs {
 
     private ProviderStubs() {
+    }
+
+    /** Owner legal details whose every owner has a signed ATMOS contract paying to {@code recipientId}. */
+    static OwnerLegalDetailsRepository ownersPaidTo(String recipientId) {
+        OwnerLegalDetailsRepository repository = org.mockito.Mockito.mock(OwnerLegalDetailsRepository.class);
+        lenient().when(repository.findById(any())).thenReturn(java.util.Optional.of(OwnerLegalDetails.builder()
+                .atmosContractStatus(OwnerLegalDetails.ContractStatus.SIGNED)
+                .atmosRecipientId(recipientId)
+                .build()));
+        return repository;
     }
 
     static void behaveLikeAtmos(PaymentProvider provider) {

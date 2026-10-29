@@ -20,6 +20,7 @@ import uz.minipolya.minipolya_backend.provider.PaymeProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.provider.ProviderStatus;
 import uz.minipolya.minipolya_backend.provider.TransactionClosedException;
+import uz.minipolya.minipolya_backend.repository.OwnerLegalDetailsRepository;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -68,7 +69,7 @@ class PaymentReconcileServiceTest {
         PaymentService paymentService = new PaymentService(paymentRepository, bookingRepository,
                 mock(UserRepository.class), mock(GameRepository.class), mock(GameParticipantRepository.class),
                 mock(PaymentMapper.class), List.of(new PaymeProvider(), new ClickProvider()), gameService,
-                mock(NotificationService.class), mock(AuditService.class), provider, settings);
+                mock(NotificationService.class), mock(AuditService.class), provider, settings, mock(OwnerLegalDetailsRepository.class));
         service = new PaymentReconcileService(paymentRepository, provider, paymentService, teamGameService,
                 gameService, Clock.fixed(NOW, ZoneOffset.UTC));
 

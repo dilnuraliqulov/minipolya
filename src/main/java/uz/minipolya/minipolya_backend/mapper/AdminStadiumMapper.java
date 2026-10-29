@@ -17,6 +17,7 @@ public interface AdminStadiumMapper {
     @Mapping(source = "owner.id", target = "ownerId")
     @Mapping(target = "photoUrl", ignore = true)
     @Mapping(target = "price", ignore = true)
+    @Mapping(target = "ownerContractStatus", ignore = true)
     @Mapping(target = "averageRating", ignore = true)
     @Mapping(target = "reviewCount", ignore = true)
     @Mapping(target = "totalBookings", ignore = true)

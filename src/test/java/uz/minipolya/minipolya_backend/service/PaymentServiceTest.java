@@ -19,6 +19,7 @@ import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
 import uz.minipolya.minipolya_backend.provider.ClickProvider;
 import uz.minipolya.minipolya_backend.provider.PaymeProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
+import uz.minipolya.minipolya_backend.repository.OwnerLegalDetailsRepository;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -82,7 +83,7 @@ class PaymentServiceTest {
         service = new PaymentService(paymentRepository, bookingRepository, userRepository,
                 gameRepository, gameParticipantRepository, paymentMapper,
                 List.of(new PaymeProvider(), new ClickProvider()), gameService, notificationService, auditService,
-                paymentProvider, platformSettingsService);
+                paymentProvider, platformSettingsService, mock(OwnerLegalDetailsRepository.class));
 
         player = User.builder().id(PLAYER_ID).name("Player").build();
         owner = User.builder().id(OWNER_ID).name("Owner").build();

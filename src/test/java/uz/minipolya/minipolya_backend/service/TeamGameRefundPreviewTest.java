@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
 import uz.minipolya.minipolya_backend.provider.ClickProvider;
 import uz.minipolya.minipolya_backend.provider.PaymeProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
+import uz.minipolya.minipolya_backend.repository.OwnerLegalDetailsRepository;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -99,7 +100,7 @@ class TeamGameRefundPreviewTest {
                 gameRepository, mock(GameParticipantRepository.class), mock(PaymentMapper.class),
                 List.of(new PaymeProvider(), new ClickProvider()), mock(GameService.class),
                 mock(NotificationService.class), mock(AuditService.class),
-                paymentProvider, platformSettingsService);
+                paymentProvider, platformSettingsService, mock(OwnerLegalDetailsRepository.class));
 
         service = new TeamGameService(gameRepository, gameTeamRepository,
                 mock(GameParticipantRepository.class), bookingRepository,

@@ -12,10 +12,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateUserRequest;
+import uz.minipolya.minipolya_backend.dto.request.UpdateOwnerLegalDetailsRequest;
 import uz.minipolya.minipolya_backend.dto.response.AdminUserResponse;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
+import uz.minipolya.minipolya_backend.dto.response.OwnerLegalDetailsResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.service.AdminService;
+import uz.minipolya.minipolya_backend.service.OwnerLegalDetailsService;
 import uz.minipolya.minipolya_backend.util.Pagination;
 
 import java.util.UUID;
@@ -26,6 +29,7 @@ import java.util.function.Function;
 public class AdminUserController {
 
     private final AdminService adminService;
+    private final OwnerLegalDetailsService ownerLegalDetailsService;
 
     @GetMapping("/api/admin/users")
     public ApiResponse<PageResponse<AdminUserResponse>> list(@RequestParam(required = false) String search,
@@ -45,5 +49,20 @@ public class AdminUserController {
                                                  @PathVariable UUID id,
                                                  @Valid @RequestBody AdminUpdateUserRequest request) {
         return ApiResponse.ok(adminService.updateUser(id, request, adminUserId), "User updated");
+    }
+
+    /** The user's legal details and ATMOS contract; {@code data: null} when nothing was entered yet. */
+    @GetMapping("/api/admin/users/{id}/legal-details")
+    public ApiResponse<OwnerLegalDetailsResponse> legalDetails(@PathVariable UUID id) {
+        return ApiResponse.ok(ownerLegalDetailsService.get(id));
+    }
+
+    @PutMapping("/api/admin/users/{id}/legal-details")
+    public ApiResponse<OwnerLegalDetailsResponse> updateLegalDetails(
+            @AuthenticationPrincipal UUID adminUserId,
+            @PathVariable UUID id,
+            @RequestBody(required = false) UpdateOwnerLegalDetailsRequest request) {
+        UpdateOwnerLegalDetailsRequest body = request == null ? new UpdateOwnerLegalDetailsRequest() : request;
+        return ApiResponse.ok(ownerLegalDetailsService.update(id, body, adminUserId), "Legal details updated");
     }
 }

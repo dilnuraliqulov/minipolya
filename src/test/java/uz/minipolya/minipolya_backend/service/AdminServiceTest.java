@@ -72,6 +72,7 @@ class AdminServiceTest {
     private GameService gameService;
     private RevenueService revenueService;
     private AdminStadiumService adminStadiumService;
+    private OwnerLegalDetailsService ownerLegalDetailsService;
     private AdminService service;
 
     @BeforeEach
@@ -90,13 +91,15 @@ class AdminServiceTest {
         gameService = mock(GameService.class);
         revenueService = mock(RevenueService.class);
         adminStadiumService = mock(AdminStadiumService.class);
+        ownerLegalDetailsService = mock(OwnerLegalDetailsService.class);
         when(adminStadiumService.toResponse(any())).thenAnswer(inv -> AdminStadiumResponse.builder()
                 .id(((Stadium) inv.getArgument(0)).getId()).status(((Stadium) inv.getArgument(0)).getStatus()).build());
         when(revenueService.between(any(), any())).thenReturn(new RevenueService.Summary(Revenue.ZERO, 0));
         when(revenueService.total()).thenReturn(Revenue.ZERO);
         service = new AdminService(userRepository, stadiumRepository, bookingRepository, paymentRepository,
                 gameRepository, ownerApplicationRepository, paymentService,
-                notificationService, auditService, gameService, revenueService, adminStadiumService);
+                notificationService, auditService, gameService, revenueService, adminStadiumService,
+                ownerLegalDetailsService);
     }
 
     private Stadium stadium(String status) {
@@ -264,6 +267,25 @@ class AdminServiceTest {
         // The owner flag the approval switched on is its own entry.
         assertThat(Audited.one(auditService, AuditAction.USER_ROLE_CHANGED).getChanges())
                 .containsExactly(AuditChange.of("isOwner", false, true));
+        verify(ownerLegalDetailsService).requireSignedContract(OWNER_ID);
+    }
+
+    @Test
+    void approvalWaitsForASignedContractAndChangesNothingWithoutOne() {
+        Stadium stadium = stadium("pending");
+        stadium.getOwner().setOwner(false);
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        org.mockito.Mockito.doThrow(new uz.minipolya.minipolya_backend.exception.BadRequestException(
+                        "The owner's ATMOS contract is not signed"))
+                .when(ownerLegalDetailsService).requireSignedContract(OWNER_ID);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.updateStadiumStatus(STADIUM_ID,
+                        AdminUpdateStadiumStatusRequest.builder().status("approved").build(), ADMIN_ID))
+                .hasMessage("The owner's ATMOS contract is not signed");
+
+        assertThat(stadium.getStatus()).isEqualTo("pending");
+        assertThat(stadium.getOwner().isOwner()).isFalse();
+        verify(stadiumRepository, never()).save(any(Stadium.class));
     }
 
     @Test

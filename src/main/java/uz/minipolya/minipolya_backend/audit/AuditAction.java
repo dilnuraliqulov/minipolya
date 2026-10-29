@@ -25,6 +25,7 @@ public enum AuditAction {
     USER_ROLE_CHANGED,
     REFUND_RETRIED,
     REFUND_MARKED_MANUAL,
+    OWNER_LEGAL_DETAILS_CHANGED,
     SETTINGS_CHANGED,
 
     // ---- Owner ----

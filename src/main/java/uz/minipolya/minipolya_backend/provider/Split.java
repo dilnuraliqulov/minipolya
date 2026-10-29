@@ -5,7 +5,7 @@ package uz.minipolya.minipolya_backend.provider;
  * to its recipient and takes its commission from each.
  *
  * <p>The owner's split names the stadium owner's ATMOS recipient
- * ({@code users.atmos_recipient_id}); the platform's split names none, and the provider
+ * ({@code owner_legal_details.atmos_recipient_id}); the platform's split names none, and the provider
  * fills in the platform's own recipient from its configuration
  * ({@code ATMOS_PLATFORM_RECIPIENT_ID}).
  *

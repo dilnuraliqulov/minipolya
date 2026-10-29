@@ -69,6 +69,7 @@ public class AdminService {
     private final GameService gameService;
     private final RevenueService revenueService;
     private final AdminStadiumService adminStadiumService;
+    private final OwnerLegalDetailsService ownerLegalDetailsService;
 
     @Transactional(readOnly = true)
     public AdminPlatformStatsResponse getPlatformStats() {
@@ -201,6 +202,10 @@ public class AdminService {
         String status = request.getStatus().trim();
         String reason = request.getReason();
         String oldStatus = stadium.getStatus();
+        if ("approved".equals(status) && !"approved".equals(oldStatus)) {
+            // Players will pay this owner by card: the payouts need a signed ATMOS contract.
+            ownerLegalDetailsService.requireSignedContract(stadium.getOwner().getId());
+        }
         stadium.setStatus(status);
         stadiumRepository.save(stadium);
         UUID ownerId = stadium.getOwner().getId();

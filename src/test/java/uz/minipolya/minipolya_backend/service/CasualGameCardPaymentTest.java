@@ -15,6 +15,7 @@ import uz.minipolya.minipolya_backend.provider.ChargeRequest;
 import uz.minipolya.minipolya_backend.provider.ClickProvider;
 import uz.minipolya.minipolya_backend.provider.PaymeProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
+import uz.minipolya.minipolya_backend.repository.OwnerLegalDetailsRepository;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -59,10 +60,10 @@ class CasualGameCardPaymentTest {
         service = new PaymentService(paymentRepository, mock(BookingRepository.class), mock(UserRepository.class),
                 gameRepository, participants, mock(PaymentMapper.class),
                 List.of(new PaymeProvider(), new ClickProvider()), gameService,
-                mock(NotificationService.class), mock(AuditService.class), provider, settings);
+                mock(NotificationService.class), mock(AuditService.class), provider, settings, ProviderStubs.ownersPaidTo("rcp-owner"));
 
         User player = User.builder().id(PLAYER_ID).name("Player").build();
-        User owner = User.builder().id(UUID.randomUUID()).name("Owner").atmosRecipientId("rcp-owner").build();
+        User owner = User.builder().id(UUID.randomUUID()).name("Owner").build();
         Stadium stadium = Stadium.builder().id(UUID.randomUUID()).name("Arena").owner(owner).build();
         // 200 000 so'm between 10 players: a 20 000 so'm share each.
         Game game = Game.builder().id(GAME_ID).type("casual").status("open").stadium(stadium)

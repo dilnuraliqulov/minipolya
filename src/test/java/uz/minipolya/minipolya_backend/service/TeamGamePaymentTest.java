@@ -23,6 +23,7 @@ import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProviderException;
 import uz.minipolya.minipolya_backend.provider.ProviderTimeoutException;
 import uz.minipolya.minipolya_backend.provider.Split;
+import uz.minipolya.minipolya_backend.repository.OwnerLegalDetailsRepository;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -76,10 +77,10 @@ class TeamGamePaymentTest {
                 mock(GameRepository.class), mock(GameParticipantRepository.class), mock(PaymentMapper.class),
                 List.of(new PaymeProvider(), new ClickProvider()), mock(GameService.class),
                 mock(NotificationService.class), mock(AuditService.class),
-                paymentProvider, platformSettingsService);
+                paymentProvider, platformSettingsService, ProviderStubs.ownersPaidTo("rcp-owner"));
 
         leader = User.builder().id(LEADER_ID).name("Leader A").build();
-        User owner = User.builder().id(UUID.randomUUID()).name("Owner").atmosRecipientId("rcp-owner").build();
+        User owner = User.builder().id(UUID.randomUUID()).name("Owner").build();
         Stadium stadium = Stadium.builder().id(UUID.randomUUID()).name("Chilonzor Arena").owner(owner).build();
         Game game = Game.builder().id(UUID.randomUUID()).stadium(stadium).type("team_vs_team").build();
         gameTeam = GameTeam.builder()

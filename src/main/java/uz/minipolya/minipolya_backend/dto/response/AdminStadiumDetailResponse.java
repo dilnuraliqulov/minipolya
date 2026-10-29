@@ -6,6 +6,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import uz.minipolya.minipolya_backend.entity.OwnerLegalDetails;
 
 import java.util.List;
 
@@ -27,6 +28,8 @@ public class AdminStadiumDetailResponse {
 
     /** The first photo by position; absent when there are none. */
     private String photoUrl;
+    /** The owner's ATMOS contract: none, pending or signed. Approval needs signed. */
+    private OwnerLegalDetails.ContractStatus ownerContractStatus;
     private Integer cancellationHours;
     private Double averageRating;
     private Integer reviewCount;

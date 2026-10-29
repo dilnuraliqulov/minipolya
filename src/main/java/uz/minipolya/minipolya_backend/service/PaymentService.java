@@ -18,6 +18,7 @@ import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
 import uz.minipolya.minipolya_backend.entity.GameTeam;
 import uz.minipolya.minipolya_backend.entity.Notification;
+import uz.minipolya.minipolya_backend.entity.OwnerLegalDetails;
 import uz.minipolya.minipolya_backend.entity.SavedCard;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.User;
@@ -41,6 +42,7 @@ import uz.minipolya.minipolya_backend.provider.TransactionClosedException;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
+import uz.minipolya.minipolya_backend.repository.OwnerLegalDetailsRepository;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.CardFeeSplit;
@@ -92,6 +94,7 @@ public class PaymentService {
     private final AuditService auditService;
     private final PaymentProvider paymentProvider;
     private final PlatformSettingsService platformSettingsService;
+    private final OwnerLegalDetailsRepository ownerLegalDetailsRepository;
     private final CardPricing cardPricing;
 
     public PaymentService(PaymentRepository paymentRepository,
@@ -105,7 +108,9 @@ public class PaymentService {
                           NotificationService notificationService,
                           AuditService auditService,
                           PaymentProvider paymentProvider,
-                          PlatformSettingsService platformSettingsService) {
+                          PlatformSettingsService platformSettingsService,
+                          OwnerLegalDetailsRepository ownerLegalDetailsRepository) {
+        this.ownerLegalDetailsRepository = ownerLegalDetailsRepository;
         this.paymentRepository = paymentRepository;
         this.bookingRepository = bookingRepository;
         this.userRepository = userRepository;
@@ -583,12 +588,22 @@ public class PaymentService {
     private List<Split> splitsFor(User owner, CardFeeSplit split) {
         List<Split> splits = new ArrayList<>(2);
         if (split.ownerGross() > 0) {
-            splits.add(Split.owner(owner == null ? null : owner.getAtmosRecipientId(), split.ownerGross()));
+            splits.add(Split.owner(recipientIdOf(owner), split.ownerGross()));
         }
         if (split.platformGross() > 0) {
             splits.add(Split.platform(split.platformGross()));
         }
         return splits;
+    }
+
+    /**
+     * The ATMOS recipient an owner's split is paid to — stored only on the owner's legal
+     * details, and only once the contract is signed. Null when there is none.
+     */
+    private String recipientIdOf(User owner) {
+        return owner == null ? null : ownerLegalDetailsRepository.findById(owner.getId())
+                .map(OwnerLegalDetails::getAtmosRecipientId)
+                .orElse(null);
     }
 
     private User ownerOf(GameTeam gameTeam) {

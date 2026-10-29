@@ -62,10 +62,6 @@ public class User {
     @Column(name = "is_blocked", nullable = false)
     private boolean isBlocked = false;
 
-    /** Stadium owners: the ATMOS recipient their split of every card payment is paid to. */
-    @Column(name = "atmos_recipient_id", length = 64)
-    private String atmosRecipientId;
-
     /**
      * Admin password sign-in only (see AdminAuthService); null for everyone who signs in
      * through Telegram. Unique case-insensitively in the database.

@@ -21,6 +21,7 @@ import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
+import uz.minipolya.minipolya_backend.repository.OwnerLegalDetailsRepository;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -84,7 +85,7 @@ class BookingConfirmationTest {
         service = new PaymentService(paymentRepository, bookingRepository, userRepository,
                 mock(GameRepository.class), mock(GameParticipantRepository.class), mock(PaymentMapper.class),
                 List.of(), mock(GameService.class), notificationService, auditService,
-                paymentProvider, platformSettingsService);
+                paymentProvider, platformSettingsService, mock(OwnerLegalDetailsRepository.class));
 
         player = User.builder().id(USER_ID).name("Player").build();
         owner = User.builder().id(OWNER_ID).name("Owner").build();

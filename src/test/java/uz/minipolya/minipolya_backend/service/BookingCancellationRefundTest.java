@@ -11,6 +11,7 @@ import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.mapper.BookingMapper;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
+import uz.minipolya.minipolya_backend.repository.OwnerLegalDetailsRepository;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -61,7 +62,7 @@ class BookingCancellationRefundTest {
         paymentService = new PaymentService(paymentRepository, mock(BookingRepository.class),
                 mock(UserRepository.class), mock(GameRepository.class), mock(GameParticipantRepository.class),
                 mock(PaymentMapper.class), List.of(), mock(GameService.class),
-                mock(NotificationService.class), mock(AuditService.class), paymentProvider, settings);
+                mock(NotificationService.class), mock(AuditService.class), paymentProvider, settings, mock(OwnerLegalDetailsRepository.class));
 
         BookingMapper bookingMapper = mock(BookingMapper.class);
         when(bookingMapper.toResponse(any(Booking.class))).thenAnswer(inv -> new BookingResponse());

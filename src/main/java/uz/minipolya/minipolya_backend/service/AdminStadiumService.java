@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumResponse;
 import uz.minipolya.minipolya_backend.dto.response.StadiumDetailResponse;
+import uz.minipolya.minipolya_backend.entity.OwnerLegalDetails;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.StadiumPhoto;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
@@ -48,6 +49,7 @@ public class AdminStadiumService {
     private final PricingService pricingService;
     private final AdminStadiumMapper adminStadiumMapper;
     private final CardPricing cardPricing;
+    private final OwnerLegalDetailsService ownerLegalDetailsService;
 
     @Transactional(readOnly = true)
     public Page<AdminStadiumResponse> list(String status, String search, String district, String format,
@@ -79,6 +81,7 @@ public class AdminStadiumService {
         return AdminStadiumDetailResponse.builder()
                 .stadium(detail)
                 .photoUrl(row.getPhotoUrl())
+                .ownerContractStatus(row.getOwnerContractStatus())
                 .cancellationHours(stadium.getCancellationHours())
                 .averageRating(row.getAverageRating())
                 .reviewCount(row.getReviewCount())
@@ -101,6 +104,8 @@ public class AdminStadiumService {
         Map<UUID, String> firstPhoto = stadiumRepository.findPhotosByStadiumIds(ids).stream()
                 .collect(Collectors.toMap(p -> p.getStadium().getId(), StadiumPhoto::getUrl, (first, later) -> first));
         CardPricing pricing = cardPricing.snapshot();
+        Map<UUID, OwnerLegalDetails.ContractStatus> contracts = ownerLegalDetailsService.contractStatuses(
+                stadiums.stream().map(s -> s.getOwner().getId()).collect(Collectors.toSet()));
 
         return stadiums.stream().map(stadium -> {
             AdminStadiumResponse response = adminStadiumMapper.toResponse(stadium);
@@ -110,6 +115,8 @@ public class AdminStadiumService {
             response.setTotalBookings(bookings.getOrDefault(stadium.getId(), 0L).intValue());
             response.setTotalRevenue(revenue.getOrDefault(stadium.getId(), Revenue.ZERO).appRevenue());
             response.setPhotoUrl(firstPhoto.get(stadium.getId()));
+            response.setOwnerContractStatus(contracts.getOrDefault(
+                    stadium.getOwner().getId(), OwnerLegalDetails.ContractStatus.NONE));
             if (stadium.getPricePerHour() != null) {
                 response.setPrice(pricing.playerAmount(stadium.getPricePerHour()));
             }

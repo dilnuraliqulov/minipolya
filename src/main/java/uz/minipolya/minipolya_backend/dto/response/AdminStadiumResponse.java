@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import uz.minipolya.minipolya_backend.entity.OwnerLegalDetails;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -27,6 +28,8 @@ public class AdminStadiumResponse {
     private Long pricePerHour;
     /** Tiyin: what a player pays for that hour by card. */
     private Long price;
+    /** The owner's ATMOS contract: none, pending or signed. Approval needs signed. */
+    private OwnerLegalDetails.ContractStatus ownerContractStatus;
     private String ownerName;
     private UUID ownerId;
     private String status;
