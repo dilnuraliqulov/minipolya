@@ -111,6 +111,12 @@ public class PricingService {
         return mapActive(stadiumId).stream().map(this::publicPrices).toList();
     }
 
+    /** A stadium's active rules for an admin reviewing it, in any status: net and card price both. */
+    @Transactional(readOnly = true)
+    public List<PricingRuleResponse> listForAdmin(UUID stadiumId) {
+        return mapActive(stadiumId).stream().map(this::ownerPrices).toList();
+    }
+
     // ---- Helpers ----
 
     /** Players see the hour's card price. */

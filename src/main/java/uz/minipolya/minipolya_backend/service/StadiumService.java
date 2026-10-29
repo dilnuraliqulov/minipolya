@@ -28,6 +28,7 @@ import uz.minipolya.minipolya_backend.repository.FavoriteRepository;
 import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
+import uz.minipolya.minipolya_backend.util.Districts;
 import uz.minipolya.minipolya_backend.util.Pagination;
 
 import java.util.LinkedHashMap;
@@ -57,6 +58,7 @@ public class StadiumService {
     @Transactional
     public StadiumDetailResponse create(UUID ownerId, CreateStadiumRequest request) {
         requireValidMinBookingAmount(request.getMinBookingAmount());
+        request.setDistrict(Districts.require(request.getDistrict()));
 
         User owner = userRepository.findById(ownerId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -90,6 +92,8 @@ public class StadiumService {
         }
 
         requireValidMinBookingAmount(request.getMinBookingAmount());
+        // Absent leaves the district as it is (the update only touches what is sent).
+        request.setDistrict(Districts.require(request.getDistrict()));
 
         Map<String, Object> before = auditSnapshot(stadium);
         stadiumMapper.updateStadiumFromRequest(request, stadium);
@@ -153,6 +157,18 @@ public class StadiumService {
         return response;
     }
 
+    /**
+     * What an admin reviews: the same mapping as the public detail, but for a stadium in
+     * any status, and with prices as the owner sees them — {@code pricePerHour} and
+     * {@code netPrice} net, {@code price} what a player pays by card.
+     */
+    @Transactional(readOnly = true)
+    public StadiumDetailResponse getAdminDetail(UUID id) {
+        Stadium stadium = stadiumRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
+        return ownerPrices(stadiumMapper.toDetailResponse(stadium));
+    }
+
     // ---- Helpers ----
 
     /** Players see what they pay by card: the hourly price and the deposit both grossed up. */
@@ -208,6 +224,7 @@ public class StadiumService {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("name", stadium.getName());
         fields.put("address", stadium.getAddress());
+        fields.put("district", stadium.getDistrict());
         fields.put("latitude", stadium.getLatitude());
         fields.put("longitude", stadium.getLongitude());
         fields.put("phone", stadium.getPhone());

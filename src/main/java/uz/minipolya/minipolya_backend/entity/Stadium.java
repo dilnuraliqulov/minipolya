@@ -58,6 +58,10 @@ public class Stadium {
     @Column(nullable = false, length = 300)
     private String address;
 
+    /** One of the twelve Tashkent districts ({@code Districts}); null for stadiums added before it existed. */
+    @Column(length = 30)
+    private String district;
+
     @Column(precision = 9, scale = 6)
     private BigDecimal latitude;
 

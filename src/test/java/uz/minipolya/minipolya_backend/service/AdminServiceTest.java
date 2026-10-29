@@ -71,6 +71,7 @@ class AdminServiceTest {
     private AuditService auditService;
     private GameService gameService;
     private RevenueService revenueService;
+    private AdminStadiumService adminStadiumService;
     private AdminService service;
 
     @BeforeEach
@@ -88,11 +89,14 @@ class AdminServiceTest {
 
         gameService = mock(GameService.class);
         revenueService = mock(RevenueService.class);
+        adminStadiumService = mock(AdminStadiumService.class);
+        when(adminStadiumService.toResponse(any())).thenAnswer(inv -> AdminStadiumResponse.builder()
+                .id(((Stadium) inv.getArgument(0)).getId()).status(((Stadium) inv.getArgument(0)).getStatus()).build());
         when(revenueService.between(any(), any())).thenReturn(new RevenueService.Summary(Revenue.ZERO, 0));
         when(revenueService.total()).thenReturn(Revenue.ZERO);
         service = new AdminService(userRepository, stadiumRepository, bookingRepository, paymentRepository,
-                gameRepository, reviewRepository, ownerApplicationRepository, paymentService,
-                notificationService, auditService, gameService, revenueService);
+                gameRepository, ownerApplicationRepository, paymentService,
+                notificationService, auditService, gameService, revenueService, adminStadiumService);
     }
 
     private Stadium stadium(String status) {
@@ -238,24 +242,6 @@ class AdminServiceTest {
         service.updateUser(ADMIN_ID, AdminUpdateUserRequest.builder().isBlocked(false).build(), ADMIN_ID);
 
         assertThat(admin.isBlocked()).isFalse();
-    }
-
-    @Test
-    void getStadiumsFilteredByStatus() {
-        when(stadiumRepository.findByStatus(eq("pending"), any()))
-                .thenReturn(new PageImpl<>(List.of(stadium("pending"))));
-
-        assertThat(service.getStadiums("pending", null, Pageable.ofSize(20)).getContent()).hasSize(1);
-        verify(stadiumRepository).findByStatus(eq("pending"), any());
-    }
-
-    @Test
-    void searchStadiumsByName() {
-        when(stadiumRepository.searchStadiums(eq("arena"), any()))
-                .thenReturn(new PageImpl<>(List.of(stadium("approved"))));
-
-        assertThat(service.getStadiums(null, "arena", Pageable.ofSize(20)).getContent()).hasSize(1);
-        verify(stadiumRepository).searchStadiums(eq("arena"), any());
     }
 
     @Test
@@ -417,16 +403,6 @@ class AdminServiceTest {
         assertThat(stats.getTodayRevenue()).isEqualTo(500_000);
         assertThat(stats.getWeekRevenue()).isEqualTo(500_000);
         assertThat(stats.getMonthRevenue()).isEqualTo(500_000);
-    }
-
-    @Test
-    void stadiumTotalRevenueAboveIntRangeIsNotTruncated() {
-        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium("approved")));
-        when(paymentRepository.sumRevenueByStadium(eq(STADIUM_ID), any(), any())).thenReturn(3_000_000_000L);
-
-        AdminStadiumResponse response = service.getStadium(STADIUM_ID);
-
-        assertThat(response.getTotalRevenue()).isEqualTo(3_000_000_000L);
     }
 
 }

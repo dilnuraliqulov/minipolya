@@ -29,7 +29,6 @@ import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.OwnerApplicationRepository;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
-import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
@@ -63,13 +62,13 @@ public class AdminService {
     private final BookingRepository bookingRepository;
     private final PaymentRepository paymentRepository;
     private final GameRepository gameRepository;
-    private final ReviewRepository reviewRepository;
     private final OwnerApplicationRepository ownerApplicationRepository;
     private final PaymentService paymentService;
     private final NotificationService notificationService;
     private final AuditService auditService;
     private final GameService gameService;
     private final RevenueService revenueService;
+    private final AdminStadiumService adminStadiumService;
 
     @Transactional(readOnly = true)
     public AdminPlatformStatsResponse getPlatformStats() {
@@ -192,30 +191,7 @@ public class AdminService {
         return buildUser(user);
     }
 
-    // ---- Stadiums ----
-
-    @Transactional(readOnly = true)
-    public Page<AdminStadiumResponse> getStadiums(String status, String search, Pageable pageable) {
-        boolean hasStatus = status != null && !status.isBlank();
-        boolean hasSearch = search != null && !search.isBlank();
-        Page<Stadium> page;
-        if (hasStatus && hasSearch) {
-            page = stadiumRepository.searchStadiumsByStatus(status.trim(), search.trim(), pageable);
-        } else if (hasStatus) {
-            page = stadiumRepository.findByStatus(status.trim(), pageable);
-        } else if (hasSearch) {
-            page = stadiumRepository.searchStadiums(search.trim(), pageable);
-        } else {
-            page = stadiumRepository.findAll(pageable);
-        }
-        return page.map(this::buildStadium);
-    }
-
-    @Transactional(readOnly = true)
-    public AdminStadiumResponse getStadium(UUID stadiumId) {
-        return buildStadium(stadiumRepository.findById(stadiumId)
-                .orElseThrow(() -> new ResourceNotFoundException("Stadium not found")));
-    }
+    // ---- Stadiums (the list and detail are AdminStadiumService) ----
 
     @Transactional
     public AdminStadiumResponse updateStadiumStatus(UUID stadiumId, AdminUpdateStadiumStatusRequest request,
@@ -329,23 +305,7 @@ public class AdminService {
     }
 
     private AdminStadiumResponse buildStadium(Stadium stadium) {
-        Double avg = reviewRepository.averageRatingByStadiumId(stadium.getId());
-        return AdminStadiumResponse.builder()
-                .id(stadium.getId())
-                .name(stadium.getName())
-                .address(stadium.getAddress())
-                .ownerName(stadium.getOwner().getName())
-                .ownerId(stadium.getOwner().getId())
-                .status(stadium.getStatus())
-                .format(stadium.getFormat())
-                .surfaceType(stadium.getSurfaceType())
-                .averageRating(avg == null ? 0.0 : avg)
-                .reviewCount(reviewRepository.countByStadiumId(stadium.getId()))
-                .totalBookings((int) bookingRepository.countByStadiumIdAndStatusIn(stadium.getId(), COUNTED_STATUSES))
-                .totalRevenue(paymentRepository.sumRevenueByStadium(
-                        stadium.getId(), Payment.Status.COMPLETED, Payment.PaymentType.BOOKING))
-                .createdAt(stadium.getCreatedAt())
-                .build();
+        return adminStadiumService.toResponse(stadium);
     }
 
     private void notify(UUID userId, Notification.Type type, String title, String message,

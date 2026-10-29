@@ -119,6 +119,28 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
                                      @Param("from") OffsetDateTime from,
                                      @Param("to") OffsetDateTime to);
 
+    /** As {@link #findRevenueRows}, for all time, only for the bookings and games of these stadiums. */
+    @Query("""
+            SELECT new uz.minipolya.minipolya_backend.repository.RevenueRow(
+                       p.id, COALESCE(b.stadium.id, g.stadium.id), p.paymentType, p.provider,
+                       p.amount, p.ownerAmount, p.platformAmount, p.providerCommission,
+                       p.createdAt, p.updatedAt, o.provider, o.amount, o.providerCommission,
+                       p.refundedManually)
+            FROM Payment p
+            LEFT JOIN p.booking b
+            LEFT JOIN p.game g
+            LEFT JOIN p.refundOfPayment o
+            WHERE p.method = :card
+              AND COALESCE(b.stadium.id, g.stadium.id) IN :stadiumIds
+              AND ((p.paymentType <> :refund AND p.amount > 0 AND p.status IN :arrived)
+                OR (p.paymentType = :refund AND p.status = :refunded))
+            """)
+    List<RevenueRow> findRevenueRowsForStadiums(@Param("card") Payment.Method card,
+                                                @Param("refund") Payment.PaymentType refund,
+                                                @Param("arrived") Collection<Payment.Status> arrived,
+                                                @Param("refunded") Payment.Status refunded,
+                                                @Param("stadiumIds") Collection<UUID> stadiumIds);
+
     /** Tiyin of every payment in this status now — what is on hold on players' cards. */
     @Query("SELECT COALESCE(SUM(p.amount), 0) FROM Payment p WHERE p.status = :status")
     long sumByStatus(@Param("status") Payment.Status status);

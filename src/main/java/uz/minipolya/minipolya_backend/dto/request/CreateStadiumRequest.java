@@ -31,6 +31,10 @@ public class CreateStadiumRequest {
     @Size(max = 300)
     private String address;
 
+    /** Optional: one of the twelve Tashkent districts, spelt exactly as listed in {@code Districts}. */
+    @Size(max = 30)
+    private String district;
+
     @DecimalMin(value = "-90.0")
     @DecimalMax(value = "90.0")
     private BigDecimal latitude;

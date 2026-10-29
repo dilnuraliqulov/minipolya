@@ -12,10 +12,13 @@ import uz.minipolya.minipolya_backend.util.TashkentDays;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * The one revenue calculation. The admin overview ({@code monthRevenue}, {@code todayRevenue},
@@ -80,6 +83,18 @@ public class RevenueService {
             byDay.merge(TashkentDays.dateOf(row.countedAt()), line(row, bps), Revenue::plus);
         }
         return byDay;
+    }
+
+    /** Card money ever kept on each stadium's bookings and games; a stadium with none is absent. */
+    @Transactional(readOnly = true)
+    public Map<UUID, Revenue> totalByStadium(Collection<UUID> stadiumIds) {
+        if (stadiumIds.isEmpty()) {
+            return Map.of();
+        }
+        int bps = cardFeeBps();
+        return paymentRepository.findRevenueRowsForStadiums(Payment.Method.CARD, Payment.PaymentType.REFUND,
+                        ARRIVED, Payment.Status.REFUNDED, stadiumIds).stream()
+                .collect(Collectors.toMap(RevenueRow::stadiumId, row -> line(row, bps), Revenue::plus));
     }
 
     /** Everything on hold on players' cards right now, whenever it was taken. */

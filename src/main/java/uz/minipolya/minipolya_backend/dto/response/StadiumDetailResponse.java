@@ -30,6 +30,8 @@ public class StadiumDetailResponse {
 
     private String name;
     private String address;
+    /** The Tashkent district; absent for stadiums added before it existed. */
+    private String district;
     private BigDecimal latitude;
     private BigDecimal longitude;
     private String phone;
