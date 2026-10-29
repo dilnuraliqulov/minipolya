@@ -75,3 +75,5 @@ databaseChangeLog:
       file: db/changelog/changes/037-owner-legal-details.sql
   - include:
       file: db/changelog/changes/038-stadium-rejected.sql
+  - include:
+      file: db/changelog/changes/039-stadium-notes.sql

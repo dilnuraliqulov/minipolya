@@ -26,6 +26,7 @@ public enum AuditAction {
     REFUND_RETRIED,
     REFUND_MARKED_MANUAL,
     OWNER_LEGAL_DETAILS_CHANGED,
+    STADIUM_NOTE_ADDED,
     SETTINGS_CHANGED,
 
     // ---- Owner ----
