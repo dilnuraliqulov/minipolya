@@ -4,12 +4,14 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
+import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.mapper.BookingMapper;
 import uz.minipolya.minipolya_backend.util.CancellationPolicy;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.function.LongSupplier;
 
 /**
  * Builds booking responses, adding the two cancellation fields the mapper
@@ -46,14 +48,32 @@ public class BookingResponseFactory {
     }
 
     public BookingResponse of(Booking booking, OffsetDateTime now) {
+        return build(booking, now, cardPricing, () -> paymentService.refundableCardTotal(booking.getId()));
+    }
+
+    /**
+     * The owner's and admin's view for one row of a list, from what the list has already
+     * loaded: the booking's payments and the card settings read once
+     * ({@link CardPricing#snapshot()}). Costs no query of its own.
+     */
+    public BookingResponse forOwner(Booking booking, OffsetDateTime now, List<Payment> payments, CardPricing pricing) {
+        BookingResponse response = build(booking, now, pricing, () -> payments.stream()
+                .filter(PaymentService::isRefundableCardPayment)
+                .mapToLong(Payment::getAmount)
+                .sum());
+        response.setNetPrice(booking.getPrice());
+        return response;
+    }
+
+    private BookingResponse build(Booking booking, OffsetDateTime now, CardPricing pricing, LongSupplier refundable) {
         BookingResponse response = bookingMapper.toResponse(booking);
-        applyCardPrices(response, booking);
+        applyCardPrices(response, booking, pricing);
         if (booking.getStartsAt() == null || booking.getStadium() == null) {
             return response; // not enough to say anything about cancelling
         }
         response.setCancellationDeadline(cancellationPolicy.deadline(booking));
         response.setRefundIfCancelledNow(cancellationPolicy.refundable(booking, now)
-                ? paymentService.refundableCardTotal(booking.getId())
+                ? refundable.getAsLong()
                 : 0L);
         return response;
     }
@@ -62,17 +82,17 @@ public class BookingResponseFactory {
      * {@code price} becomes the card price — stored at booking time, or worked out from
      * the net price for manual and older bookings — and the remainder is offered both ways.
      */
-    private void applyCardPrices(BookingResponse response, Booking booking) {
+    private void applyCardPrices(BookingResponse response, Booking booking, CardPricing pricing) {
         if (booking.getPrice() == null) {
             return;
         }
         long net = booking.getPrice();
-        long card = booking.getCardPrice() != null ? booking.getCardPrice() : cardPricing.playerAmount(net);
+        long card = booking.getCardPrice() != null ? booking.getCardPrice() : pricing.playerAmount(net);
         response.setPrice(card);
         response.setCardFee(card - net);
         long remainingNet = booking.getRemainingAmount();
         response.setRemainderInCash(remainingNet);
-        response.setRemainderByCard(remainingNet > 0 ? cardPricing.playerAmount(remainingNet) : 0L);
+        response.setRemainderByCard(remainingNet > 0 ? pricing.playerAmount(remainingNet) : 0L);
     }
 
     public List<BookingResponse> of(List<Booking> bookings) {

@@ -17,12 +17,12 @@ import uz.minipolya.minipolya_backend.dto.response.AuditLogResponse;
 import uz.minipolya.minipolya_backend.entity.AuditLog;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
+import uz.minipolya.minipolya_backend.util.TashkentDays;
 import uz.minipolya.minipolya_backend.repository.AuditLogFilter;
 import uz.minipolya.minipolya_backend.repository.AuditLogRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
 import java.time.LocalDate;
-import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -37,7 +37,6 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AuditService {
 
-    private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
     private static final int LABEL_MAX = 255;
 
     private final AuditLogRepository auditLogRepository;
@@ -85,17 +84,15 @@ public class AuditService {
     public Page<AuditLogResponse> search(String actor, String actorType, List<String> actions,
                                          String entityType, UUID entityId,
                                          LocalDate from, LocalDate to, Pageable pageable) {
-        if (from != null && to != null && to.isBefore(from)) {
-            throw new BadRequestException("to must be on or after from");
-        }
+        TashkentDays.Range range = TashkentDays.range(from, to);
         AuditLogFilter filter = AuditLogFilter.builder()
                 .actor(actor)
                 .actorType(parseActorType(actorType))
                 .actions(normaliseActions(actions))
                 .entityType(blankToNull(entityType))
                 .entityId(entityId)
-                .from(from == null ? null : from.atStartOfDay(TASHKENT).toOffsetDateTime())
-                .to(to == null ? null : to.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime())
+                .from(range.from())
+                .to(range.to())
                 .build();
         return auditLogRepository.search(filter, pageable).map(responseFactory::of);
     }

@@ -3,6 +3,8 @@ package uz.minipolya.minipolya_backend.repository;
 import org.springframework.data.repository.Repository;
 import uz.minipolya.minipolya_backend.entity.AuditLog;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -18,4 +20,8 @@ public interface AuditLogRepository extends Repository<AuditLog, UUID>, AuditLog
     AuditLog save(AuditLog auditLog);
 
     Optional<AuditLog> findById(UUID id);
+
+    /** Entries of the given actions on several entities at once — for a list that shows each one's latest. */
+    List<AuditLog> findByEntityTypeAndEntityIdInAndActionIn(String entityType, Collection<UUID> entityIds,
+                                                            Collection<String> actions);
 }

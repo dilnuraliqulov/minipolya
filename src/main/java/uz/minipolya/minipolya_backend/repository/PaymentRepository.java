@@ -9,6 +9,7 @@ import org.springframework.stereotype.Repository;
 import uz.minipolya.minipolya_backend.entity.Payment;
 
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -19,6 +20,9 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
     List<Payment> findByBookingId(UUID bookingId);
 
     List<Payment> findByGameId(UUID gameId);
+
+    /** Every payment of several bookings in one query — for a list of bookings. */
+    List<Payment> findByBookingIdIn(Collection<UUID> bookingIds);
 
     /** Everything one team has paid on one game — the unit team-game refunds work on. */
     List<Payment> findByGameTeamId(UUID gameTeamId);

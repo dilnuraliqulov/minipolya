@@ -893,10 +893,19 @@ public class PaymentService {
     @Transactional(readOnly = true)
     public List<Payment> refundableCardPayments(UUID bookingId) {
         return paymentRepository.findByBookingId(bookingId).stream()
-                .filter(p -> p.getMethod() != Payment.Method.CASH)
-                .filter(p -> REFUNDABLE_STATUSES.contains(p.getStatus()))
-                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .filter(PaymentService::isRefundableCardPayment)
                 .toList();
+    }
+
+    /**
+     * Whether a cancellation would give this payment back: card money that arrived and
+     * has not been returned. Also how a list of bookings works out each one's
+     * {@code refundIfCancelledNow} from payments it has already loaded.
+     */
+    public static boolean isRefundableCardPayment(Payment payment) {
+        return payment.getMethod() != Payment.Method.CASH
+                && REFUNDABLE_STATUSES.contains(payment.getStatus())
+                && payment.getAmount() != null && payment.getAmount() > 0;
     }
 
     /** Tiyin that would come back if this booking's card payments were refunded. */

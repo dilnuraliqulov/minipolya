@@ -37,6 +37,15 @@ public class CardPricing {
         return new CardPricing(() -> defaults);
     }
 
+    /**
+     * These settings read once and kept: for building a list, where reading the settings
+     * row for every item would cost a query per row.
+     */
+    public CardPricing snapshot() {
+        PlatformSettings fixed = settings.get();
+        return new CardPricing(() -> fixed);
+    }
+
     /** What the player pays by card for this net amount. */
     public long playerAmount(long net) {
         PlatformSettings s = settings.get();
