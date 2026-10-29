@@ -73,6 +73,7 @@ class AdminServiceTest {
     private RevenueService revenueService;
     private AdminStadiumService adminStadiumService;
     private OwnerLegalDetailsService ownerLegalDetailsService;
+    private AdminUserService adminUserService;
     private AdminService service;
 
     @BeforeEach
@@ -92,6 +93,12 @@ class AdminServiceTest {
         revenueService = mock(RevenueService.class);
         adminStadiumService = mock(AdminStadiumService.class);
         ownerLegalDetailsService = mock(OwnerLegalDetailsService.class);
+        adminUserService = mock(AdminUserService.class);
+        when(adminUserService.toResponse(any())).thenAnswer(inv -> {
+            User u = inv.getArgument(0);
+            return AdminUserResponse.builder().id(u.getId()).name(u.getName())
+                    .isOwner(u.isOwner()).isAdmin(u.isAdmin()).isBlocked(u.isBlocked()).build();
+        });
         when(adminStadiumService.toResponse(any())).thenAnswer(inv -> AdminStadiumResponse.builder()
                 .id(((Stadium) inv.getArgument(0)).getId()).status(((Stadium) inv.getArgument(0)).getStatus()).build());
         when(revenueService.between(any(), any())).thenReturn(new RevenueService.Summary(Revenue.ZERO, 0));
@@ -99,7 +106,7 @@ class AdminServiceTest {
         service = new AdminService(userRepository, stadiumRepository, bookingRepository, paymentRepository,
                 gameRepository, ownerApplicationRepository, paymentService,
                 notificationService, auditService, gameService, revenueService, adminStadiumService,
-                ownerLegalDetailsService);
+                ownerLegalDetailsService, adminUserService);
     }
 
     private Stadium stadium(String status) {
@@ -134,24 +141,6 @@ class AdminServiceTest {
         assertThat(stats.getTotalRevenue()).isEqualTo(9_000_000);
         assertThat(stats.getActiveGames()).isEqualTo(8);
         assertThat(stats.getPendingOwnerApplications()).isEqualTo(4);
-    }
-
-    @Test
-    void searchUsersByNameDelegatesToSearch() {
-        when(userRepository.searchUsers(eq("john"), any()))
-                .thenReturn(new PageImpl<>(List.of(User.builder().id(USER_ID).name("John").build())));
-
-        assertThat(service.getUsers("john", Pageable.ofSize(20)).getContent()).hasSize(1);
-        verify(userRepository).searchUsers(eq("john"), any());
-    }
-
-    @Test
-    void searchUsersByPhoneDelegatesToSearch() {
-        when(userRepository.searchUsers(eq("+99890"), any()))
-                .thenReturn(new PageImpl<>(List.of(User.builder().id(USER_ID).phone("+998901112233").build())));
-
-        assertThat(service.getUsers("+99890", Pageable.ofSize(20)).getContent()).hasSize(1);
-        verify(userRepository).searchUsers(eq("+99890"), any());
     }
 
     @Test

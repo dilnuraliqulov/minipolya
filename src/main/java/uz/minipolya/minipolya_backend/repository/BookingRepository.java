@@ -44,6 +44,10 @@ public interface BookingRepository extends JpaRepository<Booking, UUID>, JpaSpec
 
     long countByUserId(UUID userId);
 
+    /** {@code [userId, count]} of the bookings each of several users made. */
+    @Query("SELECT b.user.id, COUNT(b) FROM Booking b WHERE b.user.id IN :ids GROUP BY b.user.id")
+    List<Object[]> countByUserIds(@Param("ids") Collection<UUID> ids);
+
     long countByStatusIn(Collection<String> statuses);
 
     /** {@code [stadiumId, count]} of bookings in these statuses, for several stadiums at once. */

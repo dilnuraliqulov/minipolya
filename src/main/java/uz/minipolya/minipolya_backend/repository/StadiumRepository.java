@@ -26,6 +26,10 @@ public interface StadiumRepository extends JpaRepository<Stadium, UUID>, JpaSpec
 
     long countByOwnerId(UUID ownerId);
 
+    /** {@code [ownerId, count]} of the stadiums each of several users owns. */
+    @Query("SELECT s.owner.id, COUNT(s) FROM Stadium s WHERE s.owner.id IN :ids GROUP BY s.owner.id")
+    List<Object[]> countByOwnerIds(@Param("ids") Collection<UUID> ids);
+
     /** Every photo of several stadiums in one query, each stadium's in order. */
     @Query("SELECT p FROM StadiumPhoto p WHERE p.stadium.id IN :ids ORDER BY p.position ASC")
     List<StadiumPhoto> findPhotosByStadiumIds(@Param("ids") Collection<UUID> ids);

@@ -72,6 +72,7 @@ public class AdminService {
     private final RevenueService revenueService;
     private final AdminStadiumService adminStadiumService;
     private final OwnerLegalDetailsService ownerLegalDetailsService;
+    private final AdminUserService adminUserService;
 
     @Transactional(readOnly = true)
     public AdminPlatformStatsResponse getPlatformStats() {
@@ -133,15 +134,7 @@ public class AdminService {
         return revenueService.between(from, to).revenue().appRevenue();
     }
 
-    // ---- Users ----
-
-    @Transactional(readOnly = true)
-    public Page<AdminUserResponse> getUsers(String search, Pageable pageable) {
-        Page<User> page = (search == null || search.isBlank())
-                ? userRepository.findAll(pageable)
-                : userRepository.searchUsers(search.trim(), pageable);
-        return page.map(this::buildUser);
-    }
+    // ---- Users (the list is AdminUserService) ----
 
     @Transactional(readOnly = true)
     public AdminUserResponse getUser(UUID userId) {
@@ -314,19 +307,7 @@ public class AdminService {
     }
 
     private AdminUserResponse buildUser(User user) {
-        return AdminUserResponse.builder()
-                .id(user.getId())
-                .name(user.getName())
-                .phone(user.getPhone())
-                .telegramId(user.getTelegramId())
-                .language(user.getLanguage())
-                .isOwner(user.isOwner())
-                .isAdmin(user.isAdmin())
-                .isBlocked(user.isBlocked())
-                .bookingCount((int) bookingRepository.countByUserId(user.getId()))
-                .stadiumCount(user.isOwner() ? (int) stadiumRepository.countByOwnerId(user.getId()) : 0)
-                .createdAt(user.getCreatedAt())
-                .build();
+        return adminUserService.toResponse(user);
     }
 
     private AdminStadiumResponse buildStadium(Stadium stadium) {
