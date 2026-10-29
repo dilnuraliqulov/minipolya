@@ -69,6 +69,7 @@ public class AdminService {
     private final NotificationService notificationService;
     private final AuditService auditService;
     private final GameService gameService;
+    private final RevenueService revenueService;
 
     @Transactional(readOnly = true)
     public AdminPlatformStatsResponse getPlatformStats() {
@@ -80,8 +81,6 @@ public class AdminService {
         OffsetDateTime weekEnd = startOfDay(weekStartDate.plusWeeks(1));
         OffsetDateTime monthStart = startOfDay(today.withDayOfMonth(1));
         OffsetDateTime monthEnd = startOfDay(today.withDayOfMonth(1).plusMonths(1));
-        Payment.Status completed = Payment.Status.COMPLETED;
-
         return AdminPlatformStatsResponse.builder()
                 .totalUsers(userRepository.count())
                 .totalOwners(userRepository.countByIsOwnerTrue())
@@ -96,10 +95,11 @@ public class AdminService {
                 .todayBookings(bookingRepository.countByStatusInAndStartsAtBetween(COUNTED_STATUSES, todayStart, todayEnd))
                 .weekBookings(bookingRepository.countByStatusInAndStartsAtBetween(COUNTED_STATUSES, weekStart, weekEnd))
                 .monthBookings(bookingRepository.countByStatusInAndStartsAtBetween(COUNTED_STATUSES, monthStart, monthEnd))
-                .totalRevenue(paymentRepository.sumTotalRevenue(completed))
-                .todayRevenue(paymentRepository.sumRevenueAfter(completed, todayStart))
-                .weekRevenue(paymentRepository.sumRevenueAfter(completed, weekStart))
-                .monthRevenue(paymentRepository.sumRevenueAfter(completed, monthStart))
+                // Card money kept, cash excluded: the same calculation as /api/admin/payments/summary.
+                .totalRevenue(revenueService.total().appRevenue())
+                .todayRevenue(appRevenue(todayStart, todayEnd))
+                .weekRevenue(appRevenue(weekStart, weekEnd))
+                .monthRevenue(appRevenue(monthStart, monthEnd))
                 .totalGames(gameRepository.count())
                 .activeGames(gameRepository.countByStatus("open"))
                 .pendingOwnerApplications(ownerApplicationRepository.countByStatus(OwnerApplication.Status.PENDING))
@@ -107,23 +107,21 @@ public class AdminService {
                 .build();
     }
 
+    /**
+     * The overview chart: card money kept on each of the last 30 Tashkent days, every day
+     * present — the same calculation as the payments summary.
+     */
     @Transactional(readOnly = true)
     public OwnerRevenueResponse getPlatformRevenue() {
         LocalDate today = LocalDate.now(TASHKENT);
-        OffsetDateTime from = startOfDay(today.minusDays(29));
-        Map<LocalDate, long[]> byDate = new LinkedHashMap<>(); // [revenue in tiyin, count]
-        for (Payment payment : paymentRepository.findPositiveCompletedSince(Payment.Status.COMPLETED, from)) {
-            LocalDate date = payment.getCreatedAt().atZoneSameInstant(TASHKENT).toLocalDate();
-            long[] agg = byDate.computeIfAbsent(date, d -> new long[2]);
-            agg[0] += payment.getAmount();
-            agg[1] += 1;
-        }
-        List<DailyRevenue> daily = byDate.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(e -> DailyRevenue.builder()
-                        .date(e.getKey()).revenue(e.getValue()[0]).bookingCount((int) e.getValue()[1]).build())
+        List<DailyRevenue> daily = revenueService.daily(today.minusDays(29), today).entrySet().stream()
+                .map(e -> DailyRevenue.builder().date(e.getKey()).revenue(e.getValue().appRevenue()).build())
                 .toList();
         return OwnerRevenueResponse.builder().stadiumId(null).dailyRevenue(daily).build();
+    }
+
+    private long appRevenue(OffsetDateTime from, OffsetDateTime to) {
+        return revenueService.between(from, to).revenue().appRevenue();
     }
 
     // ---- Users ----

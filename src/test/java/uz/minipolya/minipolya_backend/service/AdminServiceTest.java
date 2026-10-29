@@ -28,6 +28,7 @@ import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
+import uz.minipolya.minipolya_backend.util.Revenue;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -69,6 +70,7 @@ class AdminServiceTest {
     private NotificationService notificationService;
     private AuditService auditService;
     private GameService gameService;
+    private RevenueService revenueService;
     private AdminService service;
 
     @BeforeEach
@@ -85,9 +87,12 @@ class AdminServiceTest {
         auditService = mock(AuditService.class);
 
         gameService = mock(GameService.class);
+        revenueService = mock(RevenueService.class);
+        when(revenueService.between(any(), any())).thenReturn(new RevenueService.Summary(Revenue.ZERO, 0));
+        when(revenueService.total()).thenReturn(Revenue.ZERO);
         service = new AdminService(userRepository, stadiumRepository, bookingRepository, paymentRepository,
                 gameRepository, reviewRepository, ownerApplicationRepository, paymentService,
-                notificationService, auditService, gameService);
+                notificationService, auditService, gameService, revenueService);
     }
 
     private Stadium stadium(String status) {
@@ -107,8 +112,7 @@ class AdminServiceTest {
         when(stadiumRepository.countByStatus("blocked")).thenReturn(2L);
         when(bookingRepository.countByStatusIn(any())).thenReturn(500L);
         when(bookingRepository.countByStatusInAndStartsAtBetween(any(), any(), any())).thenReturn(7L);
-        when(paymentRepository.sumTotalRevenue(any())).thenReturn(9_000_000L);
-        when(paymentRepository.sumRevenueAfter(any(), any())).thenReturn(100_000L);
+        when(revenueService.total()).thenReturn(new Revenue(9_000_000L, 135_000L, 8_000_000L, 865_000L));
         when(gameRepository.count()).thenReturn(50L);
         when(gameRepository.countByStatus("open")).thenReturn(8L);
         when(ownerApplicationRepository.countByStatus(OwnerApplication.Status.PENDING)).thenReturn(4L);
@@ -386,17 +390,33 @@ class AdminServiceTest {
     }
 
     @Test
-    void platformRevenueGroupsByDay() {
-        OffsetDateTime d1 = LocalDate.now(TASHKENT).minusDays(1).atTime(12, 0).atZone(TASHKENT).toOffsetDateTime();
-        OffsetDateTime d2 = LocalDate.now(TASHKENT).atTime(10, 0).atZone(TASHKENT).toOffsetDateTime();
-        when(paymentRepository.findPositiveCompletedSince(any(), any())).thenReturn(List.of(
-                Payment.builder().amount(100_000L).createdAt(d1).build(),
-                Payment.builder().amount(70_000L).createdAt(d2).build()));
+    void platformRevenueIsTheSharedDailyCalculationForTheLast30Days() {
+        LocalDate today = LocalDate.now(TASHKENT);
+        java.util.Map<LocalDate, Revenue> daily = new java.util.LinkedHashMap<>();
+        for (LocalDate day = today.minusDays(29); !day.isAfter(today); day = day.plusDays(1)) {
+            daily.put(day, Revenue.ZERO);
+        }
+        daily.put(today.minusDays(1), new Revenue(100_000L, 1_500L, 90_000L, 8_500L));
+        when(revenueService.daily(today.minusDays(29), today)).thenReturn(daily);
 
         OwnerRevenueResponse revenue = service.getPlatformRevenue();
 
-        assertThat(revenue.getDailyRevenue()).hasSize(2);
-        assertThat(revenue.getDailyRevenue().get(0).getRevenue()).isEqualTo(100_000);
+        assertThat(revenue.getDailyRevenue()).hasSize(30);
+        assertThat(revenue.getDailyRevenue().get(28).getDate()).isEqualTo(today.minusDays(1));
+        assertThat(revenue.getDailyRevenue().get(28).getRevenue()).isEqualTo(100_000);
+        assertThat(revenue.getDailyRevenue().get(29).getRevenue()).isZero();
+    }
+
+    @Test
+    void overviewRevenueFiguresAreAppRevenue() {
+        when(revenueService.between(any(), any()))
+                .thenReturn(new RevenueService.Summary(new Revenue(500_000L, 7_500L, 450_000L, 42_500L), 0));
+
+        AdminPlatformStatsResponse stats = service.getPlatformStats();
+
+        assertThat(stats.getTodayRevenue()).isEqualTo(500_000);
+        assertThat(stats.getWeekRevenue()).isEqualTo(500_000);
+        assertThat(stats.getMonthRevenue()).isEqualTo(500_000);
     }
 
     @Test
@@ -409,15 +429,4 @@ class AdminServiceTest {
         assertThat(response.getTotalRevenue()).isEqualTo(3_000_000_000L);
     }
 
-    @Test
-    void platformDailyRevenueAboveIntRangeIsNotTruncated() {
-        OffsetDateTime day = LocalDate.now(TASHKENT).atTime(12, 0).atZone(TASHKENT).toOffsetDateTime();
-        when(paymentRepository.findPositiveCompletedSince(any(), any())).thenReturn(List.of(
-                Payment.builder().amount(2_000_000_000L).createdAt(day).build(),
-                Payment.builder().amount(2_000_000_000L).createdAt(day).build()));
-
-        OwnerRevenueResponse revenue = service.getPlatformRevenue();
-
-        assertThat(revenue.getDailyRevenue().get(0).getRevenue()).isEqualTo(4_000_000_000L);
-    }
 }
