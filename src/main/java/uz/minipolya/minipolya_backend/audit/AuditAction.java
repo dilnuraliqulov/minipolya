@@ -56,6 +56,8 @@ public enum AuditAction {
     GAME_OPPONENT_LEFT,
     GAME_REMAINDER_PAID,
     PROFILE_UPDATED,
+    /** The user shared their own Telegram contact with the bot; the number itself is never logged. */
+    PHONE_SHARED_VIA_BOT,
 
     // ---- System ----
     BOOKING_CONFIRMED,

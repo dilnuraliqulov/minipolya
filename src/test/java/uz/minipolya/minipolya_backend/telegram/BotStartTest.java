@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.service.AuthService;
+import uz.minipolya.minipolya_backend.service.UserService;
 import uz.minipolya.minipolya_backend.util.TelegramUserData;
 
 import java.util.List;
@@ -32,7 +33,7 @@ class BotStartTest {
     void setUp() {
         user = User.builder().id(UUID.randomUUID()).telegramId(TG).name("Ali Valiyev").language("uz").build();
         when(authService.findOrCreateFromTelegram(any(TelegramUserData.class))).thenReturn(user);
-        flow = bot.flow(authService);
+        flow = bot.flow(authService, mock(UserService.class));
     }
 
     @Test

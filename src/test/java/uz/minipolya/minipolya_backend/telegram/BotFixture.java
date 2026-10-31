@@ -8,6 +8,7 @@ import uz.minipolya.minipolya_backend.entity.TelegramBotValue;
 import uz.minipolya.minipolya_backend.repository.TelegramBotValueRepository;
 import uz.minipolya.minipolya_backend.service.AuthService;
 import uz.minipolya.minipolya_backend.service.TelegramBotService;
+import uz.minipolya.minipolya_backend.service.UserService;
 
 import java.time.Clock;
 import java.util.ArrayList;
@@ -93,8 +94,8 @@ final class BotFixture {
                         "photo", List.of(Map.of("file_id", "small"), Map.of("file_id", "BANNER-FILE-ID")))));
     }
 
-    TelegramBotFlow flow(AuthService authService) {
-        return new TelegramBotFlow(authService, botService, banner, texts, startPayloads, properties);
+    TelegramBotFlow flow(AuthService authService, UserService userService) {
+        return new TelegramBotFlow(authService, userService, botService, banner, texts, startPayloads, properties);
     }
 
     /** Every Bot API call so far, in order (uploads included), sends only. */

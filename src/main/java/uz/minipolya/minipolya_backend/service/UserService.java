@@ -102,6 +102,38 @@ public class UserService {
         return userMapper.toResponse(saved);
     }
 
+    /**
+     * Saves the phone a user shared with the bot (their own Telegram contact, already
+     * normalised to {@code +998XXXXXXXXX}). The same uniqueness rule as
+     * {@link #updateProfile}: another account's phone is never overwritten or merged, it is
+     * {@link PhoneTakenException}. Audited {@code PHONE_SHARED_VIA_BOT}, without the number.
+     */
+    @Transactional
+    public void savePhoneFromBot(UUID userId, String phone) {
+        if (phone == null || !PHONE.matcher(phone).matches()) {
+            throw new BadRequestException("phone must be in the format +998XXXXXXXXX");
+        }
+        User user = findOrThrow(userId);
+        if (phone.equals(user.getPhone())) {
+            return;
+        }
+        userRepository.findByPhone(phone)
+                .filter(other -> !other.getId().equals(userId))
+                .ifPresent(other -> {
+                    throw new PhoneTakenException();
+                });
+        user.setPhone(phone);
+        User saved;
+        try {
+            saved = userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException ex) {
+            throw new PhoneTakenException();
+        }
+        auditService.record(AuditEntry.player(userId, AuditAction.PHONE_SHARED_VIA_BOT)
+                .entity(AuditEntityType.USER, userId, AuditLabels.user(saved))
+                .change("phoneChanged", false, true));
+    }
+
     /** "first last", or whichever of the two is set. */
     private static String fullName(String first, String last) {
         if (first == null) {

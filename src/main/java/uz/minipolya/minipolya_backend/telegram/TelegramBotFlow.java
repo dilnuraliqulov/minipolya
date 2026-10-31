@@ -6,12 +6,16 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.entity.User;
+import uz.minipolya.minipolya_backend.exception.PhoneTakenException;
 import uz.minipolya.minipolya_backend.service.AuthService;
 import uz.minipolya.minipolya_backend.service.TelegramBotService;
+import uz.minipolya.minipolya_backend.service.UserService;
+import uz.minipolya.minipolya_backend.util.PhoneMask;
 import uz.minipolya.minipolya_backend.util.TelegramUserData;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * What the bot does with a private message or an inline-button press. Every user is found
@@ -25,6 +29,7 @@ import java.util.Map;
 public class TelegramBotFlow {
 
     private final AuthService authService;
+    private final UserService userService;
     private final TelegramBotService bot;
     private final TelegramBanner banner;
     private final BotTexts texts;
@@ -45,10 +50,20 @@ public class TelegramBotFlow {
             return;
         }
 
+        if (message.has("contact")) {
+            contact(chatId, user, from, message.path("contact"), language);
+            return;
+        }
+
         String text = message.path("text").asString("").trim();
         String command = command(text);
         if ("start".equals(command)) {
             start(chatId, user, from, language, argument(text));
+        } else if (user.getPhone() == null) {
+            // Anything else before the phone: ask for it again, with the button.
+            bot.send(chatId, texts.get(language, "contact.ask"), askPhoneKeyboard(language));
+        } else {
+            bot.send(chatId, texts.get(language, "contact.next"), openButton(language, null));
         }
     }
 
@@ -70,6 +85,50 @@ public class TelegramBotFlow {
             banner.send(chatId, texts.get(language, "start.welcome", "firstName", firstName),
                     openButton(language, startParam));
         }
+    }
+
+    // ---- The contact ----
+
+    /**
+     * A shared contact: only the sender's own (contact.user_id == from.id), only an Uzbek
+     * number, and never one another account already has. Then saved, confirmed (masked) with
+     * the keyboard removed, and followed by the open button — carrying a deep link that came
+     * with an earlier /start.
+     */
+    private void contact(long chatId, User user, JsonNode from, JsonNode contact, String language) {
+        long fromId = from.path("id").asLong();
+        if (!contact.path("user_id").canConvertToLong() || contact.path("user_id").asLong() != fromId) {
+            bot.send(chatId, texts.get(language, "contact.not_own"), askPhoneKeyboard(language));
+            return;
+        }
+        String phone = uzbekPhone(contact.path("phone_number").asString("")).orElse(null);
+        if (phone == null) {
+            log.info("[telegram] user={} shared a non-Uzbek number", fromId);
+            bot.send(chatId, texts.get(language, "contact.not_uzbek"), null);
+            return;
+        }
+        try {
+            userService.savePhoneFromBot(user.getId(), phone);
+        } catch (PhoneTakenException ex) {
+            log.warn("[telegram] user={} shared {}, which another account already has: not saved",
+                    fromId, PhoneMask.mask(phone));
+            bot.send(chatId, texts.get(language, "contact.taken") + supportLine(language), null);
+            return;
+        }
+        log.info("[telegram] user={} saved phone {}", fromId, PhoneMask.mask(phone));
+        bot.send(chatId, texts.get(language, "contact.saved", "phone", PhoneMask.mask(phone)),
+                TelegramKeyboards.removeKeyboard());
+        String startParam = startPayloads.take(fromId).orElse(null);
+        bot.send(chatId, texts.get(language, "contact.next"), openButton(language, startParam));
+    }
+
+    /**
+     * {@code +998XXXXXXXXX}, from however Telegram wrote the number ("998901234558",
+     * "+998 90 123 45 58"); empty for any other country.
+     */
+    static Optional<String> uzbekPhone(String raw) {
+        String digits = raw == null ? "" : raw.replaceAll("\\D", "");
+        return digits.length() == 12 && digits.startsWith("998") ? Optional.of("+" + digits) : Optional.empty();
     }
 
     // ---- Shared pieces ----
