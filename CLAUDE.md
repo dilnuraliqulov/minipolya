@@ -190,7 +190,8 @@ db/changelog/
     ├── 036-stadium-district.sql      # stadiums.district (12 Tashkent districts, CHECK)
     ├── 037-owner-legal-details.sql   # owner_legal_details; moves users.atmos_recipient_id there and drops it
     ├── 038-stadium-rejected.sql      # rejected stadium status + status_reason; old rejections converted
-    └── 039-stadium-notes.sql         # stadium_notes (admins' internal notes)
+    ├── 039-stadium-notes.sql         # stadium_notes (admins' internal notes)
+    └── 040-player-price.sql          # drops platform_settings.booking_commission_percent; bookings.pricing_model
 ```
 
 ### Adding New Migrations
@@ -277,20 +278,25 @@ When you need to change the schema (add column, new table, alter constraint):
 
 | `paymentOption` | Charged | Allowed when |
 |---|---|---|
-| `FULL` | the booking's card price: the sum of each hour's card price | always |
-| `MINIMUM` | `playerAmount(stadium.min_booking_amount)` | the stadium has one **and** it is below this booking's price |
+| `FULL` | the player price **D**: the sum of each hour's player price | always |
+| `MINIMUM` | the deposit **d** = `min(playerAmount(stadium.min_booking_amount), D)` | the stadium has one |
 
-Both include the card fee (see "Payments → The card fee"); cash never does.
+All in player prices (see "Payments → The player price"). The rest, **r = D − d**, is
+the same amount whether the player pays it in the app or the owner takes it in cash.
 
 There are no other amounts. `min_booking_amount` is nullable — null means full
 payment is required — and when set must be at least 50 000 tiyin (500 so'm, the
 smallest payment ATMOS takes).
 
-- `bookings.payment_status` is `unpaid` / `partially_paid` / `paid`, and
-  `paid_amount` is the running total of the **net** successful payments cover.
-  Responses carry `price` (card), `cardFee`, `netPrice` (owner/admin only),
-  `paidAmount` and `remainingAmount` (net), `remainderByCard` and `remainderInCash`
-  (all tiyin).
+- `bookings.payment_status` is `unpaid` / `partially_paid` / `paid`.
+  `bookings.pricing_model` (changeset 040) says how the money is counted:
+  - `player_price` — every booking from now on: `card_price` is D (the owner's own
+    `price` on a manual booking) and `paid_amount` counts what the player paid, card
+    or cash, so `remainingAmount = D − paid_amount`;
+  - `net` — bookings made before the change keep their stored amounts and their old
+    accounting (owner's price, net paid), and so do **game bookings**, whose teams'
+    debts live on `game_teams`.
+  Responses: see "Payments → API fields".
 - A successful charge confirms the booking. A **declined** card leaves it
   `pending` with a `failed` payment row, so the usual hold timeout expires it;
   the create call still answers 200 with `paymentStatus: unpaid`, and the
@@ -419,10 +425,12 @@ when the stadium has no minimum) — all tiyin, see `util/TeamGameSplit.java`:
 
 Where a halving is odd the extra tiyin goes to the **second** team, so the two
 advances add up to exactly `base` and the two remainders to exactly `P − base`.
-By card each team pays `playerAmount(fee + advance)`, split so the owner nets the
-advance and the platform nets the fee after the card fee; **no booking commission is
-applied to a team game**, because the fee *is* the platform's cut, and a remainder is
-therefore all the owner's (the platform's split of it is only the rounding remainder).
+Those are the owner's terms; players see one price per payment. On joining each team
+pays `playerAmount(advance + fee)`: the platform's split is `ceil(fee × 10000 / (10000 −
+card_fee_bps))`, so after ATMOS it nets exactly the fee, and everything else in the
+payment, rounding included, is the owner's. The fee is the platform's **only** money in
+a team game. A team's remainder is `playerAmount(remainder)` — the same amount in the
+app and in cash — and all the owner's.
 See "Payments → Team game money → ATMOS operations" for holds, captures and reversals.
 
 *The two deadlines.*
@@ -513,10 +521,11 @@ paid"** — the same answer a team gets when its advance already covered the pit
 The booking reaches `paid` only once **both** teams currently in the game have
 settled.
 
-*What a team sees.* `GameDetailResponse.teams` carries, per team: `feeAmount`,
-`advanceAmount`, `remainderAmount`, `remainderStatus`, `paidInApp`,
-`cancellationDeadline` and `refundIfCancelledNow` (tiyin, 0 when nothing would
-come back). The last one is computed by the same code that performs the
+*What a team sees.* `GameDetailResponse.teams` carries, per team, in player prices:
+`price` (paid on joining), `remainderAmount` (the same in the app or in cash),
+`remainderStatus`, `paidInApp`, `cancellationDeadline` and `refundIfCancelledNow`
+(tiyin, 0 when nothing would come back) — no fee or advance. The admin's game detail
+adds `platformFee`, `ownerAdvance`, `ownerRemainder`, `ownerReceives` and `atmosFee`. The last one is computed by the same code that performs the
 cancellation, so the figure shown is the figure paid. Note the asymmetry it
 answers: past the 3-hour point a team's own figure is 0 because cancelling
 forfeits, yet that same team is made whole if its *opponent* cancels.
@@ -524,7 +533,9 @@ forfeits, yet that same team is made whole if its *opponent* cancels.
 *Finding opponents.* `GET /api/games/challenges` (filters `date`, `format`,
 `stadiumId`; paged) lists WAITING team games before their 3-hour point, excluding
 any the caller's own team is waiting on (membership and leadership both count).
-Each item carries `amountToPayNow` = fee + the free side's advance. A team game
+Each item carries `amountToPayNow` = `playerAmount(fee + the free side's advance)`,
+`remainderAmount` = `playerAmount(its remainder)` and `totalPrice` = what both teams
+pay altogether. A team game
 stays `is_public = false`; this endpoint queries by type and status instead.
 Availability and the owner's schedule mark a slot where a team is looking for an
 opponent — **only** team_vs_team, never casual.
@@ -549,7 +560,9 @@ pay for the pitch.
 - Cancel statuses: `cancelled_slot_taken`, `cancelled_by_creator`, `cancelled_not_filled`
 - `POST /api/games/{id}/pay` is the **casual** payment and refuses a team game (a team
   pays when creating or joining). With `cardId` it charges that saved card through
-  ATMOS (`playerAmount(share + service fee)`); without it, the legacy hosted checkout.
+  ATMOS (`playerAmount(share + service fee)`; all the owner's unless
+  `casual_game_service_fee > 0`, which then works like the team fee); without it, the
+  legacy hosted checkout.
 
 ### Platform Settings
 
@@ -558,75 +571,87 @@ config. Admins read and change them at `GET` / `PUT /api/admin/settings`.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `booking_commission_percent` | 0 | Percent of a booking price the platform keeps |
-| `team_game_platform_fee` | 2 500 000 tiyin (25 000 so'm) | Charged per team on a team game |
+| `team_game_platform_fee` | 2 500 000 tiyin (25 000 so'm) | Charged per team on a team game — the platform's only money |
 | `casual_game_service_fee` | 0 | Charged per player on a casual game |
-| `card_fee_bps` | 150 (1.5%) | The card fee ATMOS takes; card prices are grossed up by it (0–1000) |
-| `payment_rounding_step` | 10 000 tiyin (100 so'm) | Card prices are rounded up to a multiple of it (1–1 000 000) |
+| `card_fee_bps` | 150 (1.5%) | The fee ATMOS takes; player prices are grossed up by it (0–1000) |
+| `payment_rounding_step` | 10 000 tiyin (100 so'm) | Player prices are rounded up to a multiple of it (1–1 000 000) |
 
+- There is **no booking commission**: the platform takes nothing from ordinary
+  bookings. `booking_commission_percent` was dropped in changeset 040; old payments
+  keep their stored `commission_percent`.
 - The row is seeded by changeset 021; `singleton` is UNIQUE and CHECKed true, so a
   second row is impossible.
-- Validation: commission 0–50, fees not negative, card fee 0–1000 bps, rounding step
-  1–1 000 000 tiyin. A rejected value writes nothing.
+- Validation: fees not negative, card fee 0–1000 bps, rounding step 1–1 000 000 tiyin.
+  A rejected value writes nothing.
 - Every change writes one `SETTINGS_CHANGED` audit entry listing each changed
   field with its old and new value (see "Audit log").
 
 ### Payments
 
-#### The card fee
+#### The player price
 
-ATMOS takes a commission from every card payment (`card_fee_bps`, default 150 =
-1.5%). Card prices are grossed up so the owner and the platform still net their full
-amounts, then rounded up to `payment_rounding_step` (default 10 000 tiyin = 100 so'm).
-One pure function, integer math only (`PriceCalculator.playerAmount`):
+**The owner enters their own price; players see ONE price.** The owner's price (`N`,
+`stadiums.price_per_hour`, pricing rules, `min_booking_amount`) is stored and edited as
+the owner typed it. Players see and pay one price per amount — never the words or
+fields "card fee", "commission", "net" or any breakdown. **One helper converts**,
+integer math only (`PriceCalculator.playerAmount`, applied with the settings in force by
+`CardPricing.playerAmount`); nothing else calculates it:
 
 ```
-playerAmount(net) = roundUp( ceil(net * 10000 / (10000 - card_fee_bps)), payment_rounding_step )
+D = playerAmount(N) = roundUp( ceil(N * 10000 / (10000 - card_fee_bps)), payment_rounding_step )
 
-200 000 so'm:  20 000 000 * 10000 / 9850 = 20 304 568.5 → 20 304 569 → 20 310 000 tiyin = 203 100 so'm
+step 5 000 so'm:  150 000 → 155 000;  160 000 → 165 000;  197 000 → 200 000;  200 000 → 205 000
+step   100 so'm:  150 000 → 152 300
 ```
 
-Each card payment is split (`CardFeeSplit`):
+**The platform takes nothing from ordinary bookings.** Every booking card payment —
+full, deposit or remainder — is 100% the owner's split (`CardFeeSplit.toOwner`, platform
+share 0). ATMOS takes its fee from it; the rounding remainder is the owner's. Example:
+owner price 150 000 → the player pays **155 000** (step 5 000) → the owner receives
+**152 675** (155 000 less 1.5%).
 
-- `owner_gross = ceil(owner_net * 10000 / (10000 - bps))` — after ATMOS takes its
-  fee, the owner gets exactly `owner_net`;
-- `platform_gross = player_amount - owner_gross` — the platform's own net share grossed
-  up, plus the rounding remainder. `player_amount = owner_gross + platform_gross`, always.
+| Payment | Player pays | Split |
+|---|---|---|
+| Booking, in full | **D** = the sum of each hour's `playerAmount`, so the slot prices on screen add up exactly; stored as `bookings.card_price` | all the owner's |
+| Booking, deposit | **d** = `min(playerAmount(min_booking_amount), D)` (50 000 → 55 000 at a 5 000 step) | all the owner's |
+| Booking remainder | **r = D − d**, the same amount in the app or in cash | all the owner's |
+| Manual (walk-in) booking | the owner's own price, no conversion — cash between them | — |
+| Team game, per team, on joining | `playerAmount(advance + fee)` | platform `ceil(fee × 10000 / (10000 − bps))` — nets exactly the fee; the rest, rounding included, the owner's |
+| Team remainder | `playerAmount(remainder)`, the same in the app or in cash | all the owner's |
+| Friends game, per player | `playerAmount(pitch share + service fee)` | all the owner's; a service fee > 0 is split like the team fee |
 
-Where it applies — **card payments only, never cash**:
+Cash goes to the owner in full. A full refund returns everything the player paid by
+card. Existing bookings and payments keep their stored amounts (`pricing_model = net`).
 
-| Payment | Charged by card |
-|---|---|
-| Booking, paid in full | the **sum** of each hour's `playerAmount`, so the slot prices the player saw add up exactly; stored as `bookings.card_price` |
-| Booking, deposit | `playerAmount(min_booking_amount)` |
-| Booking remainder, in the app | `playerAmount(net remainder)` |
-| Booking remainder, cash to the owner | the net remainder — no fee |
-| Team game, per team | `playerAmount(owner advance + platform fee)`; the owner nets the advance, the platform its 25 000 so'm |
-| Team remainder, in the app / cash | `playerAmount(remainder)` / the net remainder |
-| Friends game, per player | `playerAmount(pitch share + service fee)` |
+ATMOS takes its rate on **each split**, rounded per split: what a recipient keeps of a
+split `g` is `PriceCalculator.netAfterFee(g) = floor(g × (10000 − bps) / 10000)`, the
+inverse of `grossUp`. So the platform's team-fee split nets exactly the fee; with that
+rounding the owner's share of a team payment can come out at most 1 tiyin under the
+advance (`PlayerPriceRuleTest`).
 
-The booking commission (`booking_commission_percent`, 0 today) comes off the owner's
-net before grossing up. `bookings.price` stays the owner's **net** price, and
-`paid_amount` counts the **net** each payment covers (`amount - card_fee_expected`), so
-`payment_status` works as before.
+#### API fields
 
-**API.** Player-facing prices show what the player pays by card; the owner always sees
-and edits net prices.
+Every amount a player sees is the final amount they pay.
 
-- Public stadium list/detail, availability slots and public pricing rules:
-  `pricePerHour` (and a slot's `originalPrice`) is the card price; a stadium's
-  `minBookingAmount` is the deposit by card; `price` and `cardFee` are added.
-- Owner stadium and pricing-rule responses: `pricePerHour` and `minBookingAmount` stay
-  net, with `price` (card), `netPrice` and `cardFee` alongside.
-- Bookings: `price` is the card price, `cardFee = price - netPrice`, `netPrice` only in
-  owner/admin views; `paidAmount` and `remainingAmount` stay net; `remainderByCard`
-  and `remainderInCash` offer the rest both ways. `refundIfCancelledNow` is the full
-  gross paid by card — the fee comes back too.
-- Games: the challenge board's `amountToPayNow` is the card amount (with `cardFee`);
-  each team carries `price`, `cardFee`, `remainderByCard`, `remainderInCash`, and
-  `paidInApp` is the gross on the card; a friends game's detail carries the share's
-  `price` and `cardFee`. `totalPrice` stays the pitch's net price.
-- The public search's `maxPrice` is a card price, converted to the largest fitting net.
+- **Player** (public stadium list/detail, availability slots, public pricing rules, the
+  player's own bookings, games and payments): `pricePerHour` (a slot's `originalPrice`
+  too) and a stadium's `minBookingAmount` are player prices; a booking's `price` is D,
+  `paidAmount` what was paid of it, `remainingAmount` what is left;
+  `refundIfCancelledNow` is everything paid by card. Games: `totalPrice` is what the
+  players pay altogether, a friends game's `price` one share, a team's `price` its
+  joining payment and `remainderAmount` its remainder; the challenge board's
+  `amountToPayNow` / `remainderAmount` likewise. No breakdown field exists in these
+  views; `PriceFieldVisibilityTest` fails on one.
+- **Owner**: `pricePerHour` / `minBookingAmount` are the owner's own (what they edit),
+  with `playerPrice` / `playerMinBookingAmount` alongside. A booking shows `price` (what
+  the player pays), `ownerPrice`, `paidInApp`, `remainingAmount` (the remainder to
+  collect in cash) and `ownerReceives` (card splits after ATMOS, plus cash).
+- **Admin**: the owner's view plus `ownerReceives` and `atmosFee` on stadiums, pricing
+  rules and bookings; a team adds `platformFee`, `ownerAdvance`, `ownerRemainder`,
+  `ownerReceives`, `atmosFee`; a payment shows `ownerAmount`, `platformAmount`,
+  `atmosFee` (`card_fee_expected`) and `providerCommission`.
+- The public search's `maxPrice` is a player price, converted to the largest fitting
+  owner price.
 
 #### The provider
 
@@ -676,7 +701,8 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
 #### Payment rows
 
 - `amount` is the gross charged (or the cash taken); `owner_amount + platform_amount =
-  amount`; `card_fee_expected` is what the fee and rounding added (0 for cash);
+  amount`; `card_fee_expected` is what ATMOS is expected to take, its rate on each split
+  (0 for cash; on rows from before changeset 040, what the card fee and rounding added);
   `provider_commission` is what ATMOS reports. **Amounts never change after insert**;
   only statuses move forward.
 - Statuses: `processing` (provider called, answer not in) → `paid` / `held` / `failed`;
@@ -925,14 +951,14 @@ Conventions every list follows:
 
 | Endpoint | What |
 |---|---|
-| `GET /api/admin/bookings` · `/{id}` | every booking, newest `startsAt` first. Filters `search` (booking user or walk-in client), `stadiumId`, `status`, `from`/`to` (on `startsAt`), `userId`. `AdminBookingResponse` = the owner's `BookingResponse` (card `price`, `netPrice`, `cardFee`, …) + `userName`, `userPhone`, `paidInApp` (card money kept, gross), `cashReceived`, `cashReceivedAt` |
+| `GET /api/admin/bookings` · `/{id}` | every booking, newest `startsAt` first. Filters `search` (booking user or walk-in client), `stadiumId`, `status`, `from`/`to` (on `startsAt`), `userId`. `AdminBookingResponse` = the admin `BookingResponse` (`price` the player pays, `ownerPrice`, `paidInApp` (card money kept), `ownerReceives`, `atmosFee`, …) + `userName`, `userPhone`, `cashReceived`, `cashReceivedAt` |
 | `GET /api/admin/games` · `/{id}` | every game, newest `startsAt` first. Filters `search` (creator or any team's name), `stadiumId`, `status`, `from`/`to`, `userId` (created, played in, or led a team in). Detail: team games get `teams` (the `GameTeamResponse` money + `players`), casual games `participants` and `serviceFeePerPerson`. `cancelledAt` / `cancellationReason` come from the audit entry that cancelled the game |
-| `GET /api/admin/payments` · `/{id}` | every payment and refund, newest first (`type=refund`: failed refunds first). Filters `search` (payer name/phone, `providerTxnId`), `type`, `status`, `method`, `stadiumId` (booking's or game's), `from`/`to` (on `createdAt`). Each has its split, `cardFee` (`card_fee_expected`), `providerCommission`, `failureReason`, `refundedManually`, `manualRefundReason`; the detail adds `linkedPayments` (a refund's original, or an original's refunds) |
+| `GET /api/admin/payments` · `/{id}` | every payment and refund, newest first (`type=refund`: failed refunds first). Filters `search` (payer name/phone, `providerTxnId`), `type`, `status`, `method`, `stadiumId` (booking's or game's), `from`/`to` (on `createdAt`). Each has its split, `atmosFee` (`card_fee_expected`), `providerCommission`, `failureReason`, `refundedManually`, `manualRefundReason`; the detail adds `linkedPayments` (a refund's original, or an original's refunds) |
 | `GET /api/admin/payments/summary?from=&to=` | both required. `appRevenue`, `cardFees`, `ownerPayouts`, `platformRevenue`, `refunded`, `held` — see "Revenue" |
 | `POST /api/admin/payments/{id}/retry-refund` | a `failed` refund, tried again (see "Failed refunds") |
 | `POST /api/admin/payments/{id}/mark-refunded` | `{ reason }` 10–500 chars: a `failed` refund returned outside the platform |
-| `GET /api/admin/stadiums` | every status. Filters `status` (incl. `rejected`), `search`, `district`, `format`, `ownerId`. Rows add `photoUrl`, `district`, `pricePerHour` (net), `price` (card), `ownerContractStatus`, `statusReason` |
-| `GET /api/admin/stadiums/{id}` | the public detail mapping for **any** status, in the owner's prices (`pricePerHour`/`netPrice` net, `price` card) + `pricingRules` (net and card) + the list's figures |
+| `GET /api/admin/stadiums` | every status. Filters `status` (incl. `rejected`), `search`, `district`, `format`, `ownerId`. Rows add `photoUrl`, `district`, `pricePerHour` (the owner's), `playerPrice`, `ownerReceives`, `atmosFee`, `ownerContractStatus`, `statusReason` |
+| `GET /api/admin/stadiums/{id}` | the public detail mapping for **any** status, in the owner's prices (`pricePerHour`, `minBookingAmount`) with `playerPrice`, `playerMinBookingAmount`, `ownerReceives`, `atmosFee` + `pricingRules` (the same) + the list's figures |
 | `PUT /api/admin/stadiums/{id}/status` | `approved` (needs the owner's signed ATMOS contract), `rejected` (only from pending, reason required), `blocked` (reason required), `pending` |
 | `GET` / `POST /api/admin/stadiums/{id}/notes` | admins' internal notes, newest first; `{ text }` 1–1000 chars. Never shown to owners or players |
 | `GET /api/admin/users` | filters `search`, `role` (`player` = neither owner nor admin, `owner`, `admin`), `status` (`active`, `blocked`) |

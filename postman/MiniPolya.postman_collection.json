@@ -2464,11 +2464,10 @@
                   "pm.test('shows the cancellation policy before booking', function () {",
                   "    pm.expect(pm.response.json().data.cancellationPolicy).to.have.property('cancellationHours');",
                   "});",
-                  "pm.test('shows the card price, never the owner net', function () {",
+                  "pm.test('shows one price: what the player pays, no breakdown', function () {",
                   "    var d = pm.response.json().data;",
-                  "    pm.expect(d.price).to.eql(d.pricePerHour);",
-                  "    pm.expect(d.cardFee, 'cardFee').to.be.a('number');",
-                  "    pm.expect(d).to.not.have.property('netPrice');",
+                  "    pm.expect(d.pricePerHour).to.be.a('number');",
+                  "    pm.expect(d).to.not.have.any.keys('price', 'cardFee', 'netPrice', 'playerPrice', 'ownerReceives', 'atmosFee', 'playerMinBookingAmount');",
                   "});"
                 ]
               }
@@ -2596,14 +2595,14 @@
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
                   "});",
-                  "pm.test('the owner sees net prices, with the card price alongside', function () {",
+                  "pm.test('the owner sees their own price, with the player price alongside', function () {",
                   "    var d = pm.response.json().data;",
                   "    var list = Array.isArray(d) ? d : d.content;",
                   "    pm.expect(list).to.be.an('array').that.is.not.empty;",
                   "    list.forEach(function (s) {",
-                  "        pm.expect(s.netPrice).to.eql(s.pricePerHour);",
-                  "        pm.expect(s.price).to.eql(s.netPrice + s.cardFee);",
-                  "        pm.expect(s.price).to.be.at.least(s.netPrice);",
+                  "        pm.expect(s.pricePerHour).to.be.a('number');",
+                  "        pm.expect(s.playerPrice).to.be.at.least(s.pricePerHour);",
+                  "        pm.expect(s).to.not.have.any.keys('cardFee', 'netPrice', 'price');",
                   "    });",
                   "});"
                 ]
@@ -4369,12 +4368,10 @@
                   "        }",
                   "    });",
                   "});",
-                  "pm.test('slot prices are what the player pays by card', function () {",
+                  "pm.test('a slot shows one price: what the player pays', function () {",
                   "    pm.response.json().data.slots.filter(function (s) { return s.available; }).forEach(function (s) {",
-                  "        pm.expect(s.price).to.eql(s.pricePerHour);",
-                  "        pm.expect(s.cardFee, 'cardFee').to.be.a('number');",
-                  "        pm.expect(s.cardFee).to.be.above(0);",
-                  "        pm.expect(s).to.not.have.property('netPrice');",
+                  "        pm.expect(s.pricePerHour).to.be.above(0);",
+                  "        pm.expect(s).to.not.have.any.keys('price', 'cardFee', 'netPrice');",
                   "    });",
                   "});"
                 ]
@@ -4645,16 +4642,13 @@
                   "    var d = pm.response.json().data;",
                   "    pm.expect(d.status).to.eql('confirmed');",
                   "    pm.expect(d.paymentStatus).to.eql('paid');",
-                  "    pm.expect(d.paidAmount).to.eql(d.price - d.cardFee);   // paidAmount is net, price is by card",
-                  "    pm.expect(d.remainderByCard).to.eql(0);",
-                  "    pm.expect(d.remainderInCash).to.eql(0);",
+                  "    pm.expect(d.paidAmount).to.eql(d.price);   // the player price D, paid in full",
                   "    pm.expect(d.remainingAmount).to.eql(0);",
                   "    pm.expect(d.source).to.eql('app');",
                   "});",
-                  "pm.test('a player sees the card price and fee, not the owner net', function () {",
+                  "pm.test('a player sees one price, no breakdown', function () {",
                   "    var d = pm.response.json().data;",
-                  "    pm.expect(d.cardFee).to.be.above(0);",
-                  "    pm.expect(d).to.not.have.property('netPrice');",
+                  "    pm.expect(d).to.not.have.any.keys('cardFee', 'netPrice', 'ownerPrice', 'ownerReceives', 'atmosFee', 'paidInApp', 'remainderByCard', 'remainderInCash');",
                   "});"
                 ]
               }
@@ -5252,9 +5246,7 @@
                   "    var d = pm.response.json().data;",
                   "    pm.expect(d.paymentStatus).to.eql('paid');",
                   "    pm.expect(d.remainingAmount).to.eql(0);",
-                  "    pm.expect(d.paidAmount).to.eql(d.price - d.cardFee);   // paidAmount is net, price is by card",
-                  "    pm.expect(d.remainderByCard).to.eql(0);",
-                  "    pm.expect(d.remainderInCash).to.eql(0);",
+                  "    pm.expect(d.paidAmount).to.eql(d.price);   // the deposit and the remainder add up to D",
                   "});",
                   "pm.test('money stays whole tiyin', function () {",
                   "    var d = pm.response.json().data;",
@@ -5393,12 +5385,10 @@
                   "    // Captured so the cancel request can check it was honoured.",
                   "    pm.environment.set('refundIfCancelledNow', d.refundIfCancelledNow);",
                   "});",
-                  "pm.test('offers the rest by card or in cash', function () {",
+                  "pm.test('one remainder, the same in the app or in cash: paid + remaining = price', function () {",
                   "    var d = pm.response.json().data;",
-                  "    pm.expect(d.remainderInCash).to.eql(d.remainingAmount);",
-                  "    pm.expect(d.remainderByCard).to.be.at.least(d.remainderInCash);",
-                  "    pm.expect(d.price - d.cardFee, 'net price').to.eql(d.paidAmount + d.remainingAmount);",
-                  "    pm.expect(d).to.not.have.property('netPrice');",
+                  "    pm.expect(d.paidAmount + d.remainingAmount).to.eql(d.price);",
+                  "    pm.expect(d).to.not.have.any.keys('cardFee', 'netPrice', 'remainderByCard', 'remainderInCash');",
                   "});"
                 ]
               }
@@ -9689,12 +9679,10 @@
                                                                    "    var teams = pm.response.json().data.teams;",
                                                                    "    pm.expect(teams, \u0027teams\u0027).to.be.an(\u0027array\u0027).with.lengthOf(1);",
                                                                    "    pm.expect(teams[0].side).to.eql(\u0027a\u0027);",
-                                                                   "    pm.expect(teams[0].feeAmount, \u0027feeAmount\u0027).to.be.a(\u0027number\u0027);",
-                                                                   "    pm.expect(teams[0].advanceAmount, \u0027advanceAmount\u0027).to.be.a(\u0027number\u0027);",
-                                                                   "    pm.expect(teams[0].remainderStatus).to.eql(\u0027unpaid\u0027);",
-                                                                   "    pm.expect(teams[0].price - teams[0].cardFee).to.be.at.least(teams[0].feeAmount + teams[0].advanceAmount);",
-                                                                   "    pm.expect(teams[0].remainderInCash).to.eql(teams[0].remainderAmount);",
-                                                                   "    pm.expect(teams[0].remainderByCard).to.be.at.least(teams[0].remainderInCash);",
+                                                                   "    pm.expect(teams[0].price, 'price').to.be.above(0);",
+                                                                   "    pm.expect(teams[0].remainderAmount, 'remainderAmount').to.be.a('number');",
+                                                                   "    pm.expect(teams[0].remainderStatus).to.eql('unpaid');",
+                                                                   "    pm.expect(teams[0]).to.not.have.any.keys('cardFee', 'feeAmount', 'advanceAmount', 'platformFee', 'ownerAdvance', 'remainderByCard', 'remainderInCash');",
                                                                    "});"
                                                                ]
                                                   }
@@ -9760,9 +9748,10 @@
                                                                    "    var mine = pm.response.json().data.content.filter(function (c) {",
                                                                    "        return c.gameId === pm.environment.get(\u0027tvtGameId\u0027);",
                                                                    "    })[0];",
-                                                                   "    // By card: fee + advance grossed up for the card fee.",
-                                                                   "    pm.expect(mine.amountToPayNow - mine.cardFee).to.be.at.least(mine.feeAmount + mine.advanceAmount);",
-                                                                   "    pm.expect(mine.cardFee).to.be.above(0);",
+                                                                   "    // One price: what the joining team pays now, and what it would owe afterwards.",
+                                                                   "    pm.expect(mine.amountToPayNow).to.be.above(0);",
+                                                                   "    pm.expect(mine.remainderAmount).to.be.a('number');",
+                                                                   "    pm.expect(mine).to.not.have.any.keys('cardFee', 'feeAmount', 'advanceAmount');",
                                                                    "    pm.expect(mine.waitingTeamName, \u0027waitingTeamName\u0027).to.be.a(\u0027string\u0027);",
                                                                    "});"
                                                                ]
@@ -13703,7 +13692,7 @@
                   "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
                   "pm.test('returns the three settings', function () {",
                   "    var d = pm.response.json().data;",
-                  "    pm.expect(d).to.have.property('bookingCommissionPercent');",
+                  "    pm.expect(d).to.not.have.property('bookingCommissionPercent');   // the platform takes nothing from bookings",
                   "    pm.expect(d).to.have.property('teamGamePlatformFee');",
                   "    pm.expect(d).to.have.property('casualGameServiceFee');",
                   "    pm.expect(d.cardFeeBps, 'cardFeeBps').to.be.within(0, 1000);",
@@ -13751,7 +13740,7 @@
                   "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
                   "pm.test('the new values are returned', function () {",
                   "    var d = pm.response.json().data;",
-                  "    pm.expect(d.bookingCommissionPercent).to.eql(5);",
+                  "    pm.expect(d).to.not.have.property('bookingCommissionPercent');",
                   "    pm.expect(d.teamGamePlatformFee).to.eql(3000000);",
                   "});"
                 ]
@@ -13772,7 +13761,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"bookingCommissionPercent\": 5,\n  \"teamGamePlatformFee\": 3000000\n}"
+              "raw": "{\n  \"teamGamePlatformFee\": 3000000\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/admin/settings",
@@ -13789,7 +13778,7 @@
           }
         },
         {
-          "name": "400 commission above 50",
+          "name": "400 negative team game fee",
           "event": [
             {
               "listen": "test",
@@ -13798,7 +13787,7 @@
                 "exec": [
                   "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
                   "pm.test('the message names the field', function () {",
-                  "    pm.expect(pm.response.json().message).to.include('bookingCommissionPercent');",
+                  "    pm.expect(pm.response.json().message).to.include('teamGamePlatformFee');",
                   "});"
                 ]
               }
@@ -13818,7 +13807,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"bookingCommissionPercent\": 51\n}"
+              "raw": "{\n  \"teamGamePlatformFee\": -1\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/admin/settings",
@@ -14942,7 +14931,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-000000000001\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"stadiumName\": \"Chilonzor Arena\",\n        \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n        \"source\": \"app\",\n        \"status\": \"confirmed\",\n        \"startsAt\": \"2026-11-02T15:00:00Z\",\n        \"endsAt\": \"2026-11-02T16:00:00Z\",\n        \"durationHours\": 1,\n        \"price\": 20310000,\n        \"netPrice\": 20000000,\n        \"cardFee\": 310000,\n        \"paidAmount\": 10000000,\n        \"remainingAmount\": 10000000,\n        \"remainderByCard\": 10160000,\n        \"remainderInCash\": 10000000,\n        \"paymentStatus\": \"partially_paid\",\n        \"isWalkin\": false,\n        \"cancellationPolicy\": {\n          \"cancellationHours\": 24\n        },\n        \"cancellationDeadline\": \"2026-11-01T15:00:00Z\",\n        \"refundIfCancelledNow\": 10160000,\n        \"createdAt\": \"2026-10-30T08:00:00Z\",\n        \"userName\": \"Jasur Toshmatov\",\n        \"userPhone\": \"998901234567\",\n        \"paidInApp\": 10160000,\n        \"cashReceived\": 10000000,\n        \"cashReceivedAt\": \"2026-11-02T16:05:00Z\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-000000000001\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"stadiumName\": \"Chilonzor Arena\",\n        \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n        \"source\": \"app\",\n        \"status\": \"confirmed\",\n        \"startsAt\": \"2026-11-02T15:00:00Z\",\n        \"endsAt\": \"2026-11-02T16:00:00Z\",\n        \"durationHours\": 1,\n        \"price\": 20310000,\n        \"ownerPrice\": 20000000,\n        \"paidAmount\": 20160000,\n        \"remainingAmount\": 150000,\n        \"paymentStatus\": \"partially_paid\",\n        \"isWalkin\": false,\n        \"cancellationPolicy\": {\n          \"cancellationHours\": 24\n        },\n        \"cancellationDeadline\": \"2026-11-01T15:00:00Z\",\n        \"refundIfCancelledNow\": 10160000,\n        \"createdAt\": \"2026-10-30T08:00:00Z\",\n        \"userName\": \"Jasur Toshmatov\",\n        \"userPhone\": \"998901234567\",\n        \"paidInApp\": 10160000,\n        \"cashReceived\": 10000000,\n        \"cashReceivedAt\": \"2026-11-02T16:05:00Z\",\n        \"ownerReceives\": 20007600,\n        \"atmosFee\": 152400\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
             }
           ]
         },
@@ -14955,7 +14944,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
-                  "pm.test('card and net price', function () { var d = pm.response.json().data; pm.expect(d).to.have.property('price'); pm.expect(d).to.have.property('netPrice'); pm.expect(d).to.have.property('paidInApp'); });"
+                  "pm.test('the player price, the owner price and what the owner receives', function () { var d = pm.response.json().data; ['price', 'ownerPrice', 'paidInApp', 'ownerReceives', 'atmosFee'].forEach(function (k) { pm.expect(d).to.have.property(k); }); pm.expect(d).to.not.have.any.keys('cardFee', 'netPrice'); });"
                 ]
               }
             }
@@ -15016,7 +15005,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-000000000001\",\n    \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"stadiumName\": \"Chilonzor Arena\",\n    \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n    \"source\": \"app\",\n    \"status\": \"confirmed\",\n    \"startsAt\": \"2026-11-02T15:00:00Z\",\n    \"endsAt\": \"2026-11-02T16:00:00Z\",\n    \"durationHours\": 1,\n    \"price\": 20310000,\n    \"netPrice\": 20000000,\n    \"cardFee\": 310000,\n    \"paidAmount\": 10000000,\n    \"remainingAmount\": 10000000,\n    \"remainderByCard\": 10160000,\n    \"remainderInCash\": 10000000,\n    \"paymentStatus\": \"partially_paid\",\n    \"isWalkin\": false,\n    \"cancellationPolicy\": {\n      \"cancellationHours\": 24\n    },\n    \"cancellationDeadline\": \"2026-11-01T15:00:00Z\",\n    \"refundIfCancelledNow\": 10160000,\n    \"createdAt\": \"2026-10-30T08:00:00Z\",\n    \"userName\": \"Jasur Toshmatov\",\n    \"userPhone\": \"998901234567\",\n    \"paidInApp\": 10160000,\n    \"cashReceived\": 10000000,\n    \"cashReceivedAt\": \"2026-11-02T16:05:00Z\"\n  },\n  \"message\": null\n}"
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-000000000001\",\n    \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"stadiumName\": \"Chilonzor Arena\",\n    \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n    \"source\": \"app\",\n    \"status\": \"confirmed\",\n    \"startsAt\": \"2026-11-02T15:00:00Z\",\n    \"endsAt\": \"2026-11-02T16:00:00Z\",\n    \"durationHours\": 1,\n    \"price\": 20310000,\n    \"ownerPrice\": 20000000,\n    \"paidAmount\": 20160000,\n    \"remainingAmount\": 150000,\n    \"paymentStatus\": \"partially_paid\",\n    \"isWalkin\": false,\n    \"cancellationPolicy\": {\n      \"cancellationHours\": 24\n    },\n    \"cancellationDeadline\": \"2026-11-01T15:00:00Z\",\n    \"refundIfCancelledNow\": 10160000,\n    \"createdAt\": \"2026-10-30T08:00:00Z\",\n    \"userName\": \"Jasur Toshmatov\",\n    \"userPhone\": \"998901234567\",\n    \"paidInApp\": 10160000,\n    \"cashReceived\": 10000000,\n    \"cashReceivedAt\": \"2026-11-02T16:05:00Z\",\n    \"ownerReceives\": 20007600,\n    \"atmosFee\": 152400\n  },\n  \"message\": null\n}"
             }
           ]
         },
@@ -15345,7 +15334,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-000000000004\",\n    \"type\": \"team_vs_team\",\n    \"status\": \"confirmed\",\n    \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"stadiumName\": \"Chilonzor Arena\",\n    \"startsAt\": \"2026-11-03T15:00:00Z\",\n    \"endsAt\": \"2026-11-03T16:00:00Z\",\n    \"totalPrice\": 20000000,\n    \"creatorId\": \"0190a1b2-0000-7000-8000-000000000005\",\n    \"creatorName\": \"Leader A\",\n    \"teamAName\": \"Lions\",\n    \"teamBName\": \"Tigers\",\n    \"bookingId\": \"0190a1b2-0000-7000-8000-000000000006\",\n    \"createdAt\": \"2026-10-30T08:00:00Z\",\n    \"teams\": [\n      {\n        \"side\": \"a\",\n        \"teamId\": \"0190a1b2-0000-7000-8000-000000000007\",\n        \"teamName\": \"Lions\",\n        \"leaderId\": \"0190a1b2-0000-7000-8000-000000000005\",\n        \"leaderName\": \"Leader A\",\n        \"feeAmount\": 2500000,\n        \"advanceAmount\": 5000000,\n        \"remainderAmount\": 5000000,\n        \"remainderStatus\": \"unpaid\",\n        \"paidInApp\": 7620000,\n        \"price\": 7620000,\n        \"cardFee\": 120000,\n        \"remainderByCard\": 5080000,\n        \"remainderInCash\": 5000000,\n        \"cancellationDeadline\": \"2026-11-02T15:00:00Z\",\n        \"refundIfCancelledNow\": 7620000,\n        \"players\": [\n          {\n            \"userId\": \"0190a1b2-0000-7000-8000-000000000005\",\n            \"userName\": \"Leader A\",\n            \"status\": \"paid\"\n          }\n        ]\n      }\n    ]\n  },\n  \"message\": null\n}"
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-000000000004\",\n    \"type\": \"team_vs_team\",\n    \"status\": \"confirmed\",\n    \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"stadiumName\": \"Chilonzor Arena\",\n    \"startsAt\": \"2026-11-03T15:00:00Z\",\n    \"endsAt\": \"2026-11-03T16:00:00Z\",\n    \"totalPrice\": 20000000,\n    \"creatorId\": \"0190a1b2-0000-7000-8000-000000000005\",\n    \"creatorName\": \"Leader A\",\n    \"teamAName\": \"Lions\",\n    \"teamBName\": \"Tigers\",\n    \"bookingId\": \"0190a1b2-0000-7000-8000-000000000006\",\n    \"createdAt\": \"2026-10-30T08:00:00Z\",\n    \"teams\": [\n      {\n        \"side\": \"a\",\n        \"teamId\": \"0190a1b2-0000-7000-8000-000000000007\",\n        \"teamName\": \"Lions\",\n        \"leaderId\": \"0190a1b2-0000-7000-8000-000000000005\",\n        \"leaderName\": \"Leader A\",\n        \"platformFee\": 2500000,\n        \"ownerAdvance\": 5000000,\n        \"remainderAmount\": 5080000,\n        \"ownerRemainder\": 5000000,\n        \"remainderStatus\": \"unpaid\",\n        \"paidInApp\": 7620000,\n        \"price\": 7620000,\n        \"cancellationDeadline\": \"2026-11-02T15:00:00Z\",\n        \"refundIfCancelledNow\": 7620000,\n        \"players\": [\n          {\n            \"userId\": \"0190a1b2-0000-7000-8000-000000000005\",\n            \"userName\": \"Leader A\",\n            \"status\": \"paid\"\n          }\n        ],\n        \"ownerReceives\": 5005699,\n        \"atmosFee\": 114301\n      }\n    ]\n  },\n  \"message\": null\n}"
             }
           ]
         },
@@ -15510,7 +15499,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000a\",\n        \"createdAt\": \"2026-10-30T08:01:02Z\",\n        \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n        \"userName\": \"Jasur Toshmatov\",\n        \"userPhone\": \"998901234567\",\n        \"paymentType\": \"booking\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"stadiumName\": \"Chilonzor Arena\",\n        \"bookingId\": \"0190a1b2-0000-7000-8000-000000000001\",\n        \"amount\": 20310000,\n        \"ownerAmount\": 20304569,\n        \"platformAmount\": 5431,\n        \"cardFee\": 310000,\n        \"providerCommission\": 304650,\n        \"commissionPercent\": 0,\n        \"method\": \"card\",\n        \"provider\": \"atmos\",\n        \"providerTxnId\": \"5001,5002\",\n        \"status\": \"paid\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000a\",\n        \"createdAt\": \"2026-10-30T08:01:02Z\",\n        \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n        \"userName\": \"Jasur Toshmatov\",\n        \"userPhone\": \"998901234567\",\n        \"paymentType\": \"booking\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"stadiumName\": \"Chilonzor Arena\",\n        \"bookingId\": \"0190a1b2-0000-7000-8000-000000000001\",\n        \"amount\": 20310000,\n        \"ownerAmount\": 20304569,\n        \"platformAmount\": 5431,\n        \"atmosFee\": 310000,\n        \"providerCommission\": 304650,\n        \"commissionPercent\": 0,\n        \"method\": \"card\",\n        \"provider\": \"atmos\",\n        \"providerTxnId\": \"5001,5002\",\n        \"status\": \"paid\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
             }
           ]
         },
@@ -15593,7 +15582,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000b\",\n        \"createdAt\": \"2026-10-30T08:01:02Z\",\n        \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n        \"userName\": \"Jasur Toshmatov\",\n        \"userPhone\": \"998901234567\",\n        \"paymentType\": \"refund\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"stadiumName\": \"Chilonzor Arena\",\n        \"bookingId\": \"0190a1b2-0000-7000-8000-000000000001\",\n        \"amount\": -20310000,\n        \"ownerAmount\": -20304569,\n        \"platformAmount\": -5431,\n        \"cardFee\": -310000,\n        \"commissionPercent\": 0,\n        \"method\": \"card\",\n        \"provider\": \"atmos\",\n        \"providerTxnId\": \"5001,5002-refund\",\n        \"status\": \"failed\",\n        \"refundReason\": \"Pitch flooded\",\n        \"refundOfPaymentId\": \"0190a1b2-0000-7000-8000-00000000000a\",\n        \"failureReason\": \"Transaction declined by issuer (STPIMS-ERR-057)\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000b\",\n        \"createdAt\": \"2026-10-30T08:01:02Z\",\n        \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n        \"userName\": \"Jasur Toshmatov\",\n        \"userPhone\": \"998901234567\",\n        \"paymentType\": \"refund\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"stadiumName\": \"Chilonzor Arena\",\n        \"bookingId\": \"0190a1b2-0000-7000-8000-000000000001\",\n        \"amount\": -20310000,\n        \"ownerAmount\": -20304569,\n        \"platformAmount\": -5431,\n        \"atmosFee\": -310000,\n        \"commissionPercent\": 0,\n        \"method\": \"card\",\n        \"provider\": \"atmos\",\n        \"providerTxnId\": \"5001,5002-refund\",\n        \"status\": \"failed\",\n        \"refundReason\": \"Pitch flooded\",\n        \"refundOfPaymentId\": \"0190a1b2-0000-7000-8000-00000000000a\",\n        \"failureReason\": \"Transaction declined by issuer (STPIMS-ERR-057)\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
             }
           ]
         },
@@ -15667,7 +15656,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-00000000000a\",\n    \"createdAt\": \"2026-10-30T08:01:02Z\",\n    \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n    \"userName\": \"Jasur Toshmatov\",\n    \"userPhone\": \"998901234567\",\n    \"paymentType\": \"booking\",\n    \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"stadiumName\": \"Chilonzor Arena\",\n    \"bookingId\": \"0190a1b2-0000-7000-8000-000000000001\",\n    \"amount\": 20310000,\n    \"ownerAmount\": 20304569,\n    \"platformAmount\": 5431,\n    \"cardFee\": 310000,\n    \"providerCommission\": 304650,\n    \"commissionPercent\": 0,\n    \"method\": \"card\",\n    \"provider\": \"atmos\",\n    \"providerTxnId\": \"5001,5002\",\n    \"status\": \"paid\",\n    \"linkedPayments\": []\n  },\n  \"message\": null\n}"
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-00000000000a\",\n    \"createdAt\": \"2026-10-30T08:01:02Z\",\n    \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n    \"userName\": \"Jasur Toshmatov\",\n    \"userPhone\": \"998901234567\",\n    \"paymentType\": \"booking\",\n    \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"stadiumName\": \"Chilonzor Arena\",\n    \"bookingId\": \"0190a1b2-0000-7000-8000-000000000001\",\n    \"amount\": 20310000,\n    \"ownerAmount\": 20304569,\n    \"platformAmount\": 5431,\n    \"atmosFee\": 310000,\n    \"providerCommission\": 304650,\n    \"commissionPercent\": 0,\n    \"method\": \"card\",\n    \"provider\": \"atmos\",\n    \"providerTxnId\": \"5001,5002\",\n    \"status\": \"paid\",\n    \"linkedPayments\": []\n  },\n  \"message\": null\n}"
             }
           ]
         },
@@ -16377,7 +16366,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"name\": \"Chilonzor Arena\",\n        \"address\": \"Toshkent, Chilonzor 12\",\n        \"district\": \"Chilonzor\",\n        \"photoUrl\": \"https://cdn.minipolya.uz/s/1.jpg\",\n        \"pricePerHour\": 20000000,\n        \"price\": 20310000,\n        \"ownerContractStatus\": \"signed\",\n        \"ownerName\": \"Owner One\",\n        \"ownerId\": \"0190a1b2-0000-7000-8000-00000000000c\",\n        \"status\": \"approved\",\n        \"format\": \"5x5\",\n        \"surfaceType\": \"artificial\",\n        \"averageRating\": 4.5,\n        \"reviewCount\": 2,\n        \"totalBookings\": 40,\n        \"totalRevenue\": 812400000,\n        \"createdAt\": \"2026-10-01T08:00:00Z\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"name\": \"Chilonzor Arena\",\n        \"address\": \"Toshkent, Chilonzor 12\",\n        \"district\": \"Chilonzor\",\n        \"photoUrl\": \"https://cdn.minipolya.uz/s/1.jpg\",\n        \"pricePerHour\": 20000000,\n        \"playerPrice\": 20310000,\n        \"ownerReceives\": 20005350,\n        \"atmosFee\": 304650,\n        \"ownerContractStatus\": \"signed\",\n        \"ownerName\": \"Owner One\",\n        \"ownerId\": \"0190a1b2-0000-7000-8000-00000000000c\",\n        \"status\": \"approved\",\n        \"format\": \"5x5\",\n        \"surfaceType\": \"artificial\",\n        \"averageRating\": 4.5,\n        \"reviewCount\": 2,\n        \"totalBookings\": 40,\n        \"totalRevenue\": 812400000,\n        \"createdAt\": \"2026-10-01T08:00:00Z\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
             }
           ]
         },
@@ -16473,7 +16462,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
-                  "pm.test('pricing rules and both prices', function () { var d = pm.response.json().data; pm.expect(d).to.have.property('pricingRules'); pm.expect(d).to.have.property('netPrice'); pm.expect(d).to.have.property('price'); });"
+                  "pm.test('pricing rules and every price', function () { var d = pm.response.json().data; pm.expect(d).to.have.property('pricingRules'); ['pricePerHour', 'playerPrice', 'ownerReceives', 'atmosFee'].forEach(function (k) { pm.expect(d).to.have.property(k); }); pm.expect(d).to.not.have.any.keys('cardFee', 'netPrice', 'price'); });"
                 ]
               }
             }
@@ -16534,7 +16523,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"ownerId\": \"0190a1b2-0000-7000-8000-00000000000c\",\n    \"ownerName\": \"Owner One\",\n    \"ownerPhone\": \"998901112233\",\n    \"name\": \"Chilonzor Arena\",\n    \"address\": \"Toshkent, Chilonzor 12\",\n    \"district\": \"Chilonzor\",\n    \"latitude\": 41.2856,\n    \"longitude\": 69.2034,\n    \"phone\": \"+998901112233\",\n    \"description\": \"Yopiq maydon\",\n    \"format\": \"5x5\",\n    \"surfaceType\": \"artificial\",\n    \"openTime\": \"08:00:00\",\n    \"closeTime\": \"23:00:00\",\n    \"pricePerHour\": 20000000,\n    \"price\": 20310000,\n    \"netPrice\": 20000000,\n    \"cardFee\": 310000,\n    \"minBookingAmount\": 10000000,\n    \"status\": \"pending\",\n    \"isActive\": true,\n    \"cancellationPolicy\": {\n      \"cancellationHours\": 24\n    },\n    \"photos\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000d\",\n        \"url\": \"https://cdn.minipolya.uz/s/1.jpg\",\n        \"position\": 0\n      }\n    ],\n    \"amenities\": {\n      \"parking\": true,\n      \"lighting\": true,\n      \"showers\": false,\n      \"lockerRoom\": true,\n      \"wifi\": false,\n      \"cafe\": false,\n      \"equipmentRental\": true,\n      \"tribune\": false\n    },\n    \"createdAt\": \"2026-10-01T08:00:00Z\",\n    \"updatedAt\": \"2026-10-01T08:00:00Z\",\n    \"photoUrl\": \"https://cdn.minipolya.uz/s/1.jpg\",\n    \"ownerContractStatus\": \"signed\",\n    \"cancellationHours\": 24,\n    \"averageRating\": 0,\n    \"reviewCount\": 0,\n    \"totalBookings\": 0,\n    \"totalRevenue\": 0,\n    \"pricingRules\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000e\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"dayOfWeek\": 5,\n        \"startTime\": \"18:00:00\",\n        \"endTime\": \"23:00:00\",\n        \"pricePerHour\": 30000000,\n        \"price\": 30460000,\n        \"netPrice\": 30000000,\n        \"cardFee\": 460000,\n        \"isActive\": true,\n        \"createdAt\": \"2026-10-01T08:00:00Z\"\n      }\n    ]\n  },\n  \"message\": null\n}"
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"ownerId\": \"0190a1b2-0000-7000-8000-00000000000c\",\n    \"ownerName\": \"Owner One\",\n    \"ownerPhone\": \"998901112233\",\n    \"name\": \"Chilonzor Arena\",\n    \"address\": \"Toshkent, Chilonzor 12\",\n    \"district\": \"Chilonzor\",\n    \"latitude\": 41.2856,\n    \"longitude\": 69.2034,\n    \"phone\": \"+998901112233\",\n    \"description\": \"Yopiq maydon\",\n    \"format\": \"5x5\",\n    \"surfaceType\": \"artificial\",\n    \"openTime\": \"08:00:00\",\n    \"closeTime\": \"23:00:00\",\n    \"pricePerHour\": 20000000,\n    \"playerPrice\": 20310000,\n    \"ownerReceives\": 20005350,\n    \"atmosFee\": 304650,\n    \"minBookingAmount\": 10000000,\n    \"playerMinBookingAmount\": 10160000,\n    \"status\": \"pending\",\n    \"isActive\": true,\n    \"cancellationPolicy\": {\n      \"cancellationHours\": 24\n    },\n    \"photos\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000d\",\n        \"url\": \"https://cdn.minipolya.uz/s/1.jpg\",\n        \"position\": 0\n      }\n    ],\n    \"amenities\": {\n      \"parking\": true,\n      \"lighting\": true,\n      \"showers\": false,\n      \"lockerRoom\": true,\n      \"wifi\": false,\n      \"cafe\": false,\n      \"equipmentRental\": true,\n      \"tribune\": false\n    },\n    \"createdAt\": \"2026-10-01T08:00:00Z\",\n    \"updatedAt\": \"2026-10-01T08:00:00Z\",\n    \"photoUrl\": \"https://cdn.minipolya.uz/s/1.jpg\",\n    \"ownerContractStatus\": \"signed\",\n    \"cancellationHours\": 24,\n    \"averageRating\": 0,\n    \"reviewCount\": 0,\n    \"totalBookings\": 0,\n    \"totalRevenue\": 0,\n    \"pricingRules\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000e\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"dayOfWeek\": 5,\n        \"startTime\": \"18:00:00\",\n        \"endTime\": \"23:00:00\",\n        \"pricePerHour\": 30000000,\n        \"playerPrice\": 30460000,\n        \"ownerReceives\": 30003100,\n        \"atmosFee\": 456900,\n        \"isActive\": true,\n        \"createdAt\": \"2026-10-01T08:00:00Z\"\n      }\n    ]\n  },\n  \"message\": null\n}"
             }
           ]
         },
