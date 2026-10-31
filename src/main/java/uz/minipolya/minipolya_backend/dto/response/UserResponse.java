@@ -24,6 +24,10 @@ public class UserResponse {
     private UUID id;
     private String phone;
     private String name;
+    /** Only ever set by the user (PATCH /api/users/me), never from Telegram; absent until then. */
+    private String firstName;
+    /** Same rule as firstName. */
+    private String lastName;
     private Long telegramId;
     /** Admins who sign in with a password only; absent for everyone else. */
     private String username;

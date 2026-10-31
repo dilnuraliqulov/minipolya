@@ -42,6 +42,14 @@ public class User {
     @Column(nullable = false, length = 120)
     private String name;
 
+    /** Set only by the user themselves (PATCH /api/users/me), never from Telegram; null until then. */
+    @Column(name = "first_name", length = 60)
+    private String firstName;
+
+    /** Same rule as {@link #firstName}. */
+    @Column(name = "last_name", length = 60)
+    private String lastName;
+
     @Column(name = "telegram_id", unique = true)
     private Long telegramId;
 

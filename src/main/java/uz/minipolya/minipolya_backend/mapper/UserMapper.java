@@ -3,6 +3,7 @@ package uz.minipolya.minipolya_backend.mapper;
 import org.mapstruct.BeanMapping;
 import org.mapstruct.Builder;
 import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
 import org.mapstruct.MappingTarget;
 import org.mapstruct.NullValuePropertyMappingStrategy;
 import uz.minipolya.minipolya_backend.dto.request.UpdateUserRequest;
@@ -20,6 +21,10 @@ public interface UserMapper {
     UserResponse toResponse(User user);
 
     /** Applies only the non-null fields from the request onto the existing user. */
+    // firstName, lastName and phone are validated and applied by UserService.
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
+    @Mapping(target = "firstName", ignore = true)
+    @Mapping(target = "lastName", ignore = true)
+    @Mapping(target = "phone", ignore = true)
     void updateUserFromRequest(UpdateUserRequest request, @MappingTarget User user);
 }

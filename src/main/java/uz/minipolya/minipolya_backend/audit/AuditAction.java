@@ -55,6 +55,7 @@ public enum AuditAction {
     GAME_CANCELLED,
     GAME_OPPONENT_LEFT,
     GAME_REMAINDER_PAID,
+    PROFILE_UPDATED,
 
     // ---- System ----
     BOOKING_CONFIRMED,
