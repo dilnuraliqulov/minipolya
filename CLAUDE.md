@@ -191,7 +191,8 @@ db/changelog/
     ├── 037-owner-legal-details.sql   # owner_legal_details; moves users.atmos_recipient_id there and drops it
     ├── 038-stadium-rejected.sql      # rejected stadium status + status_reason; old rejections converted
     ├── 039-stadium-notes.sql         # stadium_notes (admins' internal notes)
-    └── 040-player-price.sql          # drops platform_settings.booking_commission_percent; bookings.pricing_model
+    ├── 040-player-price.sql          # drops platform_settings.booking_commission_percent; bookings.pricing_model
+    └── 041-user-profile-names.sql    # users.first_name, users.last_name (set only by the user)
 ```
 
 ### Adding New Migrations
@@ -225,7 +226,17 @@ When you need to change the schema (add column, new table, alter constraint):
   - `is_admin = true` → platform admin, sees admin panel
 - One user can be both owner and player simultaneously
 - An owner CANNOT book their own stadium through the player flow (use manual booking instead)
-- 3 languages: uz (default), ru, en — stored in `user.language`
+- 3 languages: uz (default), ru, en — stored in `user.language`. A user created on their
+  first Telegram sign-in **always starts in `uz`**, whatever Telegram's `language_code`
+  says; `PATCH /api/users/me` `language` is the only way to change it.
+- **Profile** (`PATCH /api/users/me`, all optional, non-null applied): `name`,
+  `language`, `firstName` / `lastName` (trimmed, 1–60 — "firstName must be between 1
+  and 60 characters") and `phone` (`^\+998\d{9}$` — "phone must be in the format
+  +998XXXXXXXXX"). `firstName` / `lastName` are **only ever set by the user**, never from
+  Telegram (absent from `UserResponse` until then); setting either rewrites `name` as
+  "first last". Phones are unique: another account's phone is **409 `PHONE_TAKEN`**
+  "Phone is already used by another account". Audited `PROFILE_UPDATED` (PLAYER); the
+  phone number itself is never logged, only `phoneChanged`.
 
 ### Stadiums
 
@@ -238,6 +249,16 @@ When you need to change the schema (add column, new table, alter constraint):
   rejecting has none to cancel.
 - Only `approved` (and active) stadiums are visible to players — rejected and blocked
   ones never are.
+- **The player list** (`GET /api/stadiums`, public; `GET /api/favorites` is the same card):
+  filters `q`, `format`, `maxPrice` (a player price) and `district` (one of the twelve,
+  else 400 "Invalid district"), all optional — a JPA specification
+  (`StadiumSpecifications.publicFilter`). Each `StadiumResponse` carries
+  `coverPhotoUrl` (the lowest-position photo; absent when none), `averageRating` (absent
+  with no reviews), `reviewCount`, and for a signed-in caller `isFavorited`. Ratings,
+  cover photos and favorites are loaded for the whole page in one grouped query each
+  (`StadiumService.toPublicResponses`; `PublicStadiumListTest` counts the queries with 22
+  stadiums). The detail (`GET /api/stadiums/{id}`) carries `averageRating` /
+  `reviewCount` too.
 - Owner adds stadium → admin reviews (`GET /api/admin/stadiums/{id}` works in any
   status) → approves or rejects.
 - **Approval needs the owner's ATMOS contract signed** (`owner_legal_details`, see
@@ -256,12 +277,19 @@ When you need to change the schema (add column, new table, alter constraint):
   - `app` → player booked via Mini App
   - `manual` → owner added walk-in/phone booking (client_name, client_phone, is_walkin=true)
   - `game` → created automatically when a game is confirmed
-- Duration: any number of consecutive whole hours, minimum 1, no fixed maximum. The practical limit is the stadium's opening hours, closures, and existing bookings (a booking is a run of free consecutive 1-hour slots).
+- **A booking is exactly one hour** — one availability slot (`Booking.HOURS`), for player
+  bookings, manual owner bookings, team and friends games and recurring bookings alike;
+  `endsAt = startsAt + 1h`. The length fields that requests may still send
+  (`durationHours` on `POST /api/bookings`; `duration` on manual bookings, series and
+  games) are optional: absent or 1 is accepted, anything else is **400 "A booking is
+  exactly one hour"** (`BookingWindowValidator.requireOneHour`). Rows stored before this
+  rule may be longer and keep their length; an older series row that says more than one
+  hour generates one-hour bookings. There is no multi-hour code path — don't add one.
   - `startsAt` must be on the hour in `Asia/Tashkent` (minutes/seconds/nanos = 0) so bookings line up with the hourly availability slots.
-  - The whole booking (`startsAt` → `startsAt + durationHours`) must fall within the stadium's `open_time`–`close_time` (Tashkent). `close_time` is treated as a same-day bound: a window where `close_time <= open_time` is unbookable (matches availability, which generates no slots for it), so bookings cannot cross midnight.
-  - The booking must not overlap any `stadium_closure`.
-  - Price = the sum of each 1-hour slot's price (per-hour pricing rule by local weekday/time, falling back to `stadium.price_per_hour`), with the best active promotion applied per hour — identical to what the availability endpoint shows for the same slots.
-  - Violations throw `BadRequestException` → HTTP 400. A multi-hour overlap rejected by the DB EXCLUDE constraint reports "One or more of the selected hours is already booked"; a 1-hour overlap reports "Slot is already booked".
+  - The hour (`startsAt` → `startsAt + 1h`) must fall within the stadium's `open_time`–`close_time` (Tashkent). `close_time` is treated as a same-day bound: a window where `close_time <= open_time` is unbookable (matches availability, which generates no slots for it), so bookings cannot cross midnight.
+  - The hour must not fall in any `stadium_closure`.
+  - Price = the slot's price (pricing rule by local weekday/time, falling back to `stadium.price_per_hour`, `BookingPriceCalculator.hourPrice`), with the best active promotion for that hour applied — identical to what the availability endpoint shows for the slot.
+  - Violations throw `BadRequestException` → HTTP 400. An overlap rejected by the DB EXCLUDE constraint reports 409 "Slot is already booked".
 - Max booking: 4 weeks ahead
 - Hold: unpaid bookings set `expires_at = now + 10 minutes`, status = `pending`
 - Expiry: `BookingExpiryJob` runs every minute, marks expired pending bookings as `expired`
@@ -278,7 +306,7 @@ When you need to change the schema (add column, new table, alter constraint):
 
 | `paymentOption` | Charged | Allowed when |
 |---|---|---|
-| `FULL` | the player price **D**: the sum of each hour's player price | always |
+| `FULL` | the player price **D**: the slot's player price | always |
 | `MINIMUM` | the deposit **d** = `min(playerAmount(stadium.min_booking_amount), D)` | the stadium has one |
 
 All in player prices (see "Payments → The player price"). The rest, **r = D − d**, is
@@ -371,7 +399,7 @@ Players MUST see the stadium's cancellation policy before confirming a booking.
 
 ### Recurring Bookings (booking_series)
 
-- Player says "repeat every Thursday 20:00"
+- Player says "repeat every Thursday 20:00" — one hour each time, like every booking
 - Creates a `booking_series` row + bookings for the next 2 weeks
 - `BookingSeriesJob` runs daily, generates next week's booking when the window needs extending
 - Each generated booking gets the CURRENT price (price changes apply to future bookings)
@@ -644,8 +672,13 @@ Every amount a player sees is the final amount they pay.
   views; `PriceFieldVisibilityTest` fails on one.
 - **Owner**: `pricePerHour` / `minBookingAmount` are the owner's own (what they edit),
   with `playerPrice` / `playerMinBookingAmount` alongside. A booking shows `price` (what
-  the player pays), `ownerPrice`, `paidInApp`, `remainingAmount` (the remainder to
-  collect in cash) and `ownerReceives` (card splits after ATMOS, plus cash).
+  the player pays), `paidAmount` and `remainingAmount` (the remainder to collect in cash)
+  **exactly as the player sees them**, plus `ownerPrice`, `paidInApp` and `ownerReceives`
+  (card splits after ATMOS, plus cash).
+- In the player, owner and admin booking views alike, **`paidAmount + remainingAmount =
+  price` for every booking**: a `net` booking (made before changeset 040, and every game
+  booking) keeps its stored owner's-terms amounts, and `BookingResponseFactory` converts
+  them the one way (`CardPricing.playerPrice` / `remainingForPlayer`) for every view.
 - **Admin**: the owner's view plus `ownerReceives` and `atmosFee` on stadiums, pricing
   rules and bookings; a team adds `platformFee`, `ownerAdvance`, `ownerRemainder`,
   `ownerReceives`, `atmosFee`; a payment shows `ownerAmount`, `platformAmount`,
@@ -807,14 +840,16 @@ credentials or access tokens. The request DTOs and provider records override
 
 ### Availability Calculation
 
-To show free slots for a stadium on a given date:
+Every opening hour of the date is listed, each with a `status`:
 1. Get the stadium's `open_time` and `close_time`
 2. Cut into 1-hour slots
-3. Remove slots that overlap any `pending` or `confirmed` booking
-4. Remove slots that fall within a `stadium_closure`
-5. For each remaining slot, calculate price from `pricing_rules` (match day_of_week + time range)
-6. Mark slots that have a WAITING **team_vs_team** game (show "a team is looking for an opponent" in UI). Casual games are private to whoever was invited and are never marked
-7. Apply any active promotion discount
+3. Today, an hour that has already started is `past`
+4. A slot that overlaps any `pending` or `confirmed` booking is `booked`
+5. A slot within a `stadium_closure` is `closed`; every other one is `free`
+   (`available` is true exactly when `status = free`; precedence past → booked → closed)
+6. For each free slot, calculate price from `pricing_rules` (match day_of_week + time range)
+7. Mark slots that have a WAITING **team_vs_team** game (show "a team is looking for an opponent" in UI). Casual games are private to whoever was invited and are never marked
+8. Apply any active promotion discount
 
 ## Audit log
 
@@ -889,7 +924,7 @@ number is not logged either; their name is part of the booking label.
 |---|---|
 | Admin | `ADMIN_LOGIN_SUCCEEDED`, `ADMIN_LOGIN_FAILED`, `APPLICATION_APPROVED`, `APPLICATION_REJECTED`, `STADIUM_APPROVED`, `STADIUM_REJECTED` (pending → rejected; before changeset 038, pending → blocked), `STADIUM_BLOCKED`, `STADIUM_UNBLOCKED` (blocked → approved), `STADIUM_STATUS_CHANGED` (back to pending) — each with `status` and `statusReason` changes, `STADIUM_NOTE_ADDED` (the note's id, never its text), `USER_BLOCKED`, `USER_UNBLOCKED`, `USER_ROLE_CHANGED`, `OWNER_LEGAL_DETAILS_CHANGED`, `REFUND_RETRIED`, `REFUND_MARKED_MANUAL`, `SETTINGS_CHANGED` |
 | Owner | `STADIUM_CREATED`, `STADIUM_UPDATED` (incl. `pricePerHour`, `minBookingAmount`, `cancellationHours`, photos, amenities), `PRICING_RULE_CREATED` / `_UPDATED` / `_DELETED`, `CLOSURE_CREATED` / `_DELETED`, `PROMOTION_CREATED` / `_DEACTIVATED`, `MANUAL_BOOKING_CREATED`, `CASH_RECEIVED` (a booking, or one team's game remainder), `BOOKING_CANCELLED_BY_OWNER` |
-| Player | `BOOKING_CREATED`, `BOOKING_CANCELLED_BY_USER`, `BOOKING_REMAINDER_PAID`, `BOOKING_SERIES_CREATED` / `_CANCELLED`, `GAME_CREATED`, `GAME_JOINED`, `GAME_LEFT`, `GAME_CANCELLED`, `GAME_OPPONENT_LEFT`, `GAME_REMAINDER_PAID` |
+| Player | `BOOKING_CREATED`, `BOOKING_CANCELLED_BY_USER`, `BOOKING_REMAINDER_PAID`, `BOOKING_SERIES_CREATED` / `_CANCELLED`, `GAME_CREATED`, `GAME_JOINED`, `GAME_LEFT`, `GAME_CANCELLED`, `GAME_OPPONENT_LEFT`, `GAME_REMAINDER_PAID`, `PROFILE_UPDATED` |
 | System | `BOOKING_CONFIRMED` (a payment confirmed it), `BOOKING_EXPIRED`, `BOOKING_COMPLETED`, `BOOKING_CANCELLED_BY_OWNER` (by a stadium block), `GAME_CONFIRMED`, `GAME_AUTO_CANCELLED`, `PAYMENT_COMPLETED`, `PAYMENT_RELEASED`, `REFUND_CREATED`, `REFUND_FAILED` (ATMOS declined; the reason is its error), `PROMOTION_EXPIRED` |
 
 Codes are **stable**: they are stored and filtered on, so never rename one — add a
@@ -1035,8 +1070,24 @@ until an admin fills them in.
    - Compute hash: `HMAC-SHA256(secret, data_check_string)`
    - Compare with `hash` from initData
 3. Extract user info from verified data
-4. Find or create user by `telegram_id`
+4. Find or create user by `telegram_id` (a new user: `name` from Telegram, `language = uz`)
 5. Return JWT
+
+**A blocked user** gets 403 `ACCOUNT_BLOCKED` "Account is blocked" — from this sign-in and
+from `JwtAuthFilter` on every request — with `data: { reason, blockedAt }` from the latest
+`USER_BLOCKED` audit entry (`AccountBlockService`): the reason as the admin typed it
+(absent when none) and when (UTC).
+
+### Dev-only sign-in (`dev` profile)
+
+For testing the Mini App in a plain browser, without Telegram `initData`:
+`GET /api/auth/dev/users` (the 50 newest users: `id`, `name`, `isOwner`, `isAdmin`,
+`isBlocked`) and `POST /api/auth/dev/login` `{ "userId" }` → the same `{ token, user }`
+as the Telegram sign-in (400 "Invalid id", 404 "User not found", 403 `ACCOUNT_BLOCKED`).
+`DevAuthController` / `DevAuthService` exist **only under `SPRING_PROFILES_ACTIVE=dev`**;
+in every other profile the paths are 404. `DevProfileGuard` makes the application
+**refuse to start** when `dev` is active together with `prod` or `atmos`. Never enable it
+on a server.
 
 ### Telegram Login Widget (web dashboard)
 - Same flow, different payload format
