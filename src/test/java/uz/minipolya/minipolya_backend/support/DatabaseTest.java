@@ -29,7 +29,12 @@ import java.lang.annotation.Target;
         "app.scheduling.enabled=false",
         "app.payments.provider=fake",
         "app.jwt.secret=${JWT_SECRET:test-secret-test-secret-test-secret-0123456789}",
-        "app.bot.token=${BOT_TOKEN:test-bot-token}"
+        "app.bot.token=test-bot-token",
+        // Never call the real Telegram API from a test, whatever .env says.
+        "app.bot.enabled=false",
+        "app.bot.mode=webhook",
+        "app.bot.setup-on-startup=false",
+        "app.bot.webhook-secret=test-webhook-secret-test-webhook-secret"
 })
 @AutoConfigureMockMvc
 @Transactional

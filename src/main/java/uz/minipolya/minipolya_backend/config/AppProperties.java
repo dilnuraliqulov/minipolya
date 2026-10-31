@@ -49,6 +49,43 @@ public class AppProperties {
         private String token;
         /** Bot username (without @) used to build game invite deep links. */
         private String username;
+        /**
+         * Master switch for every Telegram API call. Off: nothing is sent and nothing is
+         * received (the bot behaves as if no token were set). Database tests turn it off so
+         * they never message real chats with the token from {@code .env}.
+         */
+        private boolean enabled = true;
+        /** TELEGRAM_BOT_MODE: {@code webhook} (production) or {@code polling} (dev profile only). */
+        private String mode = "webhook";
+        /**
+         * TELEGRAM_WEBHOOK_SECRET: Telegram sends it back in {@code X-Telegram-Bot-Api-Secret-Token}
+         * on every webhook call. 32+ characters of A-Z, a-z, 0-9, _ and -. Empty: every webhook
+         * call is refused.
+         */
+        private String webhookSecret;
+        /** MINIAPP_URL: the Mini App's https URL, opened by the bot's buttons and menu button. */
+        private String miniappUrl;
+        /** SUPPORT_USERNAME (optional, without @): the support contact shown by the bot. */
+        private String supportUsername;
+        /** The Bot API's base URL; overridable only for tests. */
+        private String apiBaseUrl = "https://api.telegram.org";
+        /** Run setMyDescription / setMyCommands / setChatMenuButton on startup (only what differs). */
+        private boolean setupOnStartup = true;
+
+        /** True when the bot can talk to Telegram: switched on and a token is set. */
+        public boolean isActive() {
+            return enabled && token != null && !token.isBlank();
+        }
+
+        public boolean isPolling() {
+            return "polling".equalsIgnoreCase(mode == null ? "" : mode.trim());
+        }
+
+        /** Never render the token or the webhook secret. */
+        @Override
+        public String toString() {
+            return "Bot(username=" + username + ", mode=" + mode + ", enabled=" + enabled + ")";
+        }
     }
 
     @Getter

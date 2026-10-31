@@ -35,6 +35,14 @@ app:
   bot:
     token: ${BOT_TOKEN}
     username: ${BOT_USERNAME:}
+    # webhook (production: Telegram calls POST /webhooks/telegram) or polling (dev profile
+    # only: a getUpdates loop, no public URL needed). The application refuses to start
+    # with polling outside the dev profile.
+    mode: ${TELEGRAM_BOT_MODE:webhook}
+    # Checked against X-Telegram-Bot-Api-Secret-Token on every webhook call; empty refuses all.
+    webhook-secret: ${TELEGRAM_WEBHOOK_SECRET:}
+    miniapp-url: ${MINIAPP_URL:}
+    support-username: ${SUPPORT_USERNAME:}
   booking:
     max-weeks-ahead: 4
     hold-expiry-minutes: 10
