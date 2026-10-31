@@ -1,9 +1,15 @@
 package uz.minipolya.minipolya_backend.config;
 
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import uz.minipolya.minipolya_backend.entity.User;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Date;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -58,5 +64,31 @@ class JwtProviderTest {
         String foreignToken = new JwtProvider(other).generateToken(User.builder().id(OTHER_ID).build());
 
         assertThat(jwtProvider.isValid(foreignToken)).isFalse();
+    }
+
+    @Test
+    void exposesTheIssueTimeToTheMillisecond() {
+        Instant before = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+        String token = jwtProvider.generateToken(User.builder().id(USER_ID).build());
+        Instant after = Instant.now();
+
+        Instant issuedAt = jwtProvider.getIssuedAt(token);
+
+        assertThat(issuedAt).isBetween(before, after);
+        assertThat(issuedAt.getNano() % 1_000_000).isZero();
+    }
+
+    @Test
+    void aTokenWithoutTheMillisecondClaimFallsBackToIat() {
+        Instant issued = Instant.parse("2026-10-28T10:00:00Z");
+        String legacy = Jwts.builder()
+                .subject(USER_ID.toString())
+                .issuedAt(Date.from(issued))
+                .expiration(Date.from(Instant.now().plusSeconds(3600)))
+                .signWith(Keys.hmacShaKeyFor(
+                        SECRET.getBytes(StandardCharsets.UTF_8)))
+                .compact();
+
+        assertThat(jwtProvider.getIssuedAt(legacy)).isEqualTo(issued);
     }
 }

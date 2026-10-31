@@ -51,3 +51,29 @@ databaseChangeLog:
       file: db/changelog/changes/025-game-teams.sql
   - include:
       file: db/changelog/changes/026-opponent-left.sql
+  - include:
+      file: db/changelog/changes/027-admin-password-login.sql
+  - include:
+      file: db/changelog/changes/028-password-changed-at.sql
+  - include:
+      file: db/changelog/changes/029-audit-log-structure.sql
+  - include:
+      file: db/changelog/changes/030-card-fee-settings.sql
+  - include:
+      file: db/changelog/changes/031-card-fee-payments.sql
+  - include:
+      file: db/changelog/changes/032-atmos-operations.sql
+  - include:
+      file: db/changelog/changes/033-payment-pending-steps.sql
+  - include:
+      file: db/changelog/changes/034-saved-card-token-encrypted.sql
+  - include:
+      file: db/changelog/changes/035-refund-failures.sql
+  - include:
+      file: db/changelog/changes/036-stadium-district.sql
+  - include:
+      file: db/changelog/changes/037-owner-legal-details.sql
+  - include:
+      file: db/changelog/changes/038-stadium-rejected.sql
+  - include:
+      file: db/changelog/changes/039-stadium-notes.sql

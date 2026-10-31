@@ -1,9 +1,12 @@
 package uz.minipolya.minipolya_backend.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,4 +23,12 @@ public interface GameParticipantRepository extends JpaRepository<GameParticipant
     int countByGameIdAndStatus(UUID gameId, GameParticipant.Status status);
 
     List<GameParticipant> findByGameIdAndSide(UUID gameId, GameParticipant.Side side);
+
+    /** Everyone in the given games, their user loaded with them — for a detail view. */
+    @Query("SELECT p FROM GameParticipant p JOIN FETCH p.user WHERE p.game.id = :gameId ORDER BY p.joinedAt")
+    List<GameParticipant> findWithUserByGameId(@Param("gameId") UUID gameId);
+
+    /** {@code [gameId, count]} of participants per game, for a list. */
+    @Query("SELECT p.game.id, COUNT(p) FROM GameParticipant p WHERE p.game.id IN :gameIds GROUP BY p.game.id")
+    List<Object[]> countByGameIds(@Param("gameIds") Collection<UUID> gameIds);
 }

@@ -5,6 +5,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.dto.request.CreateOwnerApplicationRequest;
 import uz.minipolya.minipolya_backend.dto.request.ReviewApplicationRequest;
 import uz.minipolya.minipolya_backend.dto.response.OwnerApplicationResponse;
@@ -124,6 +128,14 @@ class OwnerApplicationServiceTest {
         assertThat(application.getStatus()).isEqualTo(OwnerApplication.Status.APPROVED);
         assertThat(applicant.isOwner()).isTrue();
         verify(userRepository).save(applicant);
+
+        AuditEntry approved = Audited.one(auditService, AuditAction.APPLICATION_APPROVED);
+        assertThat(approved.getActorId()).isEqualTo(ADMIN_ID);
+        assertThat(approved.getEntityId()).isEqualTo(APPLICATION_ID);
+        assertThat(approved.getChanges()).containsExactly(AuditChange.of("status", "pending", "approved"));
+        AuditEntry promoted = Audited.one(auditService, AuditAction.USER_ROLE_CHANGED);
+        assertThat(promoted.getEntityId()).isEqualTo(APPLICANT_ID);
+        assertThat(promoted.getChanges()).containsExactly(AuditChange.of("isOwner", false, true));
     }
 
     @Test
@@ -139,6 +151,11 @@ class OwnerApplicationServiceTest {
         assertThat(application.getStatus()).isEqualTo(OwnerApplication.Status.REJECTED);
         assertThat(applicant.isOwner()).isFalse();
         verify(userRepository, never()).save(applicant);
+
+        AuditEntry rejected = Audited.one(auditService, AuditAction.APPLICATION_REJECTED);
+        assertThat(rejected.getChanges()).containsExactly(AuditChange.of("status", "pending", "rejected"));
+        assertThat(rejected.getReason()).isEqualTo("Incomplete");
+        assertThat(Audited.entries(auditService, AuditAction.USER_ROLE_CHANGED)).isEmpty();
     }
 
     @Test

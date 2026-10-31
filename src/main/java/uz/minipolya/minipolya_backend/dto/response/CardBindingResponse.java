@@ -16,4 +16,6 @@ import lombok.NoArgsConstructor;
 public class CardBindingResponse {
 
     private String bindingId;
+    /** Where the SMS code went, masked: ********9999. */
+    private String maskedPhone;
 }

@@ -44,6 +44,15 @@ public class GameTeamResponse {
     /** Everything this team has actually paid through the app so far. */
     private Long paidInApp;
 
+    /** What this team's card is charged on joining: the fee and advance grossed up by the card fee. */
+    private Long price;
+    /** price − (feeAmount + advanceAmount). */
+    private Long cardFee;
+    /** The remainder if the leader pays it in the app: grossed up. 0 once settled. */
+    private Long remainderByCard;
+    /** The remainder if the owner takes it in cash: as it is. 0 once settled. */
+    private Long remainderInCash;
+
     /** The last moment this team can cancel and still get its money back. */
     private OffsetDateTime cancellationDeadline;
 

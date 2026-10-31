@@ -44,6 +44,18 @@ public class PlatformSettings {
     /** The highest commission an admin may set. */
     public static final int MAX_BOOKING_COMMISSION_PERCENT = 50;
 
+    /** Default card fee: 150 basis points = 1.5%, what ATMOS takes from each card payment. */
+    public static final int DEFAULT_CARD_FEE_BPS = 150;
+
+    /** The highest card fee an admin may set: 1000 bps = 10%. */
+    public static final int MAX_CARD_FEE_BPS = 1000;
+
+    /** Default rounding step for player card prices: 10 000 tiyin = 100 so'm. */
+    public static final long DEFAULT_PAYMENT_ROUNDING_STEP = 10_000L;
+
+    /** The largest rounding step an admin may set: 1 000 000 tiyin = 10 000 so'm. */
+    public static final long MAX_PAYMENT_ROUNDING_STEP = 1_000_000L;
+
     @Id
     @UuidGenerator(style = UuidGenerator.Style.VERSION_7)
     private UUID id;
@@ -64,6 +76,16 @@ public class PlatformSettings {
     @Builder.Default
     @Column(name = "casual_game_service_fee", nullable = false)
     private long casualGameServiceFee = DEFAULT_CASUAL_GAME_SERVICE_FEE;
+
+    /** The card fee in basis points; player card prices are grossed up by it. */
+    @Builder.Default
+    @Column(name = "card_fee_bps", nullable = false)
+    private int cardFeeBps = DEFAULT_CARD_FEE_BPS;
+
+    /** Player card prices are rounded up to a multiple of this, in tiyin. */
+    @Builder.Default
+    @Column(name = "payment_rounding_step", nullable = false)
+    private long paymentRoundingStep = DEFAULT_PAYMENT_ROUNDING_STEP;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

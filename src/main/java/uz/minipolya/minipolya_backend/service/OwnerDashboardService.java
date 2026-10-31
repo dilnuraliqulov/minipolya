@@ -187,7 +187,7 @@ public class OwnerDashboardService {
                     .sum();
             schedule.add(OwnerScheduleResponse.builder()
                     .date(date)
-                    .bookings(bookingResponseFactory.of(dayBookings))
+                    .bookings(bookingResponseFactory.forOwner(dayBookings))
                     .waitingGames(waitingByDate.getOrDefault(date, List.of()))
                     .totalSlots(slotsPerDay)
                     .bookedSlots(bookedSlots)

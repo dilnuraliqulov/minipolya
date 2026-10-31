@@ -36,14 +36,23 @@ public class BookingPriceCalculator {
 
     /** Total price for a booking, in tiyin: the sum of each hour's promotion-adjusted price. */
     public long totalPrice(Stadium stadium, OffsetDateTime startsAt, int durationHours) {
+        return slotPrices(stadium, startsAt, durationHours).stream().mapToLong(Long::longValue).sum();
+    }
+
+    /**
+     * Each hour's net (owner) price, in order. A booking's card price is the sum of each
+     * of these grossed up on its own — the same figures the availability endpoint shows —
+     * so the slot prices a player sees add up to exactly what they are charged.
+     */
+    public List<Long> slotPrices(Stadium stadium, OffsetDateTime startsAt, int durationHours) {
         List<PricingRule> rules = pricingRuleRepository.findByStadiumIdAndIsActiveTrue(stadium.getId());
         ZonedDateTime start = startsAt.atZoneSameInstant(TASHKENT);
-        long total = 0;
+        List<Long> prices = new java.util.ArrayList<>(durationHours);
         for (int hour = 0; hour < durationHours; hour++) {
             ZonedDateTime slot = start.plusHours(hour);
-            total += finalHourPrice(stadium, rules, slot.toLocalDate(), slot.toLocalTime(), slot.toOffsetDateTime());
+            prices.add(finalHourPrice(stadium, rules, slot.toLocalDate(), slot.toLocalTime(), slot.toOffsetDateTime()));
         }
-        return total;
+        return prices;
     }
 
     /** Final price for one hour, in tiyin: base rule/fallback price minus the best promotion covering it. */

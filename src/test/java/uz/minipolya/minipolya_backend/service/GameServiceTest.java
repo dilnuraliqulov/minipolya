@@ -4,6 +4,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import uz.minipolya.minipolya_backend.config.AppProperties;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditActorType;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.dto.request.CreateGameRequest;
 import uz.minipolya.minipolya_backend.dto.response.GameDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameParticipantResponse;
@@ -104,7 +109,8 @@ class GameServiceTest {
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, bookingPriceCalculator, bookingRepository,
                 gameMapper, participantMapper, new AppProperties(), paymentService, notificationService,
-                auditService, new BookingWindowValidator(closureService), platformSettingsService, teamGameService);
+                auditService, new BookingWindowValidator(closureService), platformSettingsService, teamGameService,
+                mock(SavedCardService.class));
 
         creator = User.builder().id(CREATOR_ID).name("Creator").build();
         stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000L)
@@ -252,7 +258,8 @@ class GameServiceTest {
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, bookingPriceCalculator, bookingRepository,
                 gameMapper, participantMapper, props, paymentService, notificationService,
-                auditService, new BookingWindowValidator(closureService), platformSettingsService, teamGameService);
+                auditService, new BookingWindowValidator(closureService), platformSettingsService, teamGameService,
+                mock(SavedCardService.class));
         stubCreate();
         CreateGameRequest req = CreateGameRequest.builder()
                 .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(18, 1)).duration(1).build();
@@ -335,6 +342,10 @@ class GameServiceTest {
         service.joinGame(GAME_ID, JOINER_ID, null, null, null);
 
         verify(participantRepository).save(any(GameParticipant.class));
+        AuditEntry entry = Audited.one(auditService, AuditAction.GAME_JOINED);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.PLAYER);
+        assertThat(entry.getActorId()).isEqualTo(JOINER_ID);
+        assertThat(entry.getChanges()).containsExactly(AuditChange.of("players", 0, 1));
     }
 
     @Test
@@ -466,6 +477,14 @@ class GameServiceTest {
         verify(bookingRepository).saveAndFlush(bookingCaptor.capture());
         assertThat(bookingCaptor.getValue().getSource()).isEqualTo("game");
         assertThat(bookingCaptor.getValue().getStatus()).isEqualTo("confirmed");
+
+        // Nobody confirmed it by hand: the last payment landing did.
+        AuditEntry entry = Audited.one(auditService, AuditAction.GAME_CONFIRMED);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.SYSTEM);
+        assertThat(entry.getActorId()).isNull();
+        assertThat(entry.getChanges()).containsExactly(
+                AuditChange.of("status", "open", "confirmed"),
+                AuditChange.of("bookingId", null, BOOKING_ID));
     }
 
     // ---- cancelGamesOnSlot ----
@@ -488,6 +507,10 @@ class GameServiceTest {
         assertThat(game.getStatus()).isEqualTo("cancelled_slot_taken");
         assertThat(paid.getStatus()).isEqualTo(GameParticipant.Status.REFUNDED);
         verify(paymentService).refundInFull(paid.getPayment(), "Slot taken by another booking");
+
+        AuditEntry entry = Audited.one(auditService, AuditAction.GAME_AUTO_CANCELLED);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.SYSTEM);
+        assertThat(entry.getReason()).isEqualTo("Slot taken by another booking");
     }
 
     // ---- cancelUnfilledGames (GameTimeoutJob) ----
@@ -514,6 +537,14 @@ class GameServiceTest {
         assertThat(game.getStatus()).isEqualTo("cancelled_not_filled");
         assertThat(paid.getStatus()).isEqualTo(GameParticipant.Status.REFUNDED);
         verify(paymentService).refundInFull(paid.getPayment(), "Game did not fill in time");
+
+        // A SYSTEM action: no user, the status change, and why.
+        AuditEntry entry = Audited.one(auditService, AuditAction.GAME_AUTO_CANCELLED);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.SYSTEM);
+        assertThat(entry.getActorId()).isNull();
+        assertThat(entry.getEntityId()).isEqualTo(GAME_ID);
+        assertThat(entry.getChanges()).containsExactly(AuditChange.of("status", "open", "cancelled_not_filled"));
+        assertThat(entry.getReason()).isEqualTo("Game did not fill in time");
     }
 
     @Test

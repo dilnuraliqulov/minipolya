@@ -3,6 +3,11 @@ package uz.minipolya.minipolya_backend.service;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import uz.minipolya.minipolya_backend.config.AppProperties;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditActorType;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameParticipant.Side;
 import uz.minipolya.minipolya_backend.entity.GameTeam;
@@ -59,6 +64,7 @@ class TeamGameWaitingEndTest {
     private GameRepository gameRepository;
     private GameTeamRepository gameTeamRepository;
     private PaymentService paymentService;
+    private AuditService auditService;
     private TeamGameService service;
 
     private Stadium stadium;
@@ -71,6 +77,7 @@ class TeamGameWaitingEndTest {
         gameRepository = mock(GameRepository.class);
         gameTeamRepository = mock(GameTeamRepository.class);
         paymentService = mock(PaymentService.class);
+        auditService = mock(AuditService.class);
         PlatformSettingsService platformSettingsService = mock(PlatformSettingsService.class);
         when(platformSettingsService.current()).thenReturn(
                 PlatformSettings.builder().teamGamePlatformFee(FEE).build());
@@ -78,7 +85,7 @@ class TeamGameWaitingEndTest {
         service = new TeamGameService(gameRepository, gameTeamRepository,
                 mock(GameParticipantRepository.class), mock(BookingRepository.class),
                 paymentService, mock(SavedCardService.class), platformSettingsService,
-                mock(NotificationService.class), mock(AuditService.class),
+                mock(NotificationService.class), auditService,
                 new CancellationPolicy(), new AppProperties(),
                 mock(TeamMemberRepository.class), mock(TeamRepository.class));
 
@@ -110,6 +117,29 @@ class TeamGameWaitingEndTest {
         return game;
     }
 
+    // ---- how long the creating team's money is held ----
+
+    @Test
+    void theHoldLastsUntilTheThreeHourPointPlusTwoHours() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        Game game = waitingGame(Duration.ofDays(2));
+
+        int minutes = service.holdMinutes(game, now);
+
+        long untilCutoff = Duration.between(now, game.getStartsAt().minusHours(3)).toMinutes();
+        assertThat(minutes).isEqualTo((int) untilCutoff + 120);
+    }
+
+    @Test
+    void aGameTooFarAheadForTheHoldCapCannotBeCreated() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        Game game = waitingGame(Duration.ofDays(31));   // the default cap is 43 200 min = 30 days
+
+        assertThatThrownBy(() -> service.holdMinutes(game, now))
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.BadRequestException.class)
+                .hasMessageContaining("days before it is played");
+    }
+
     // ---- somebody books the pitch ----
 
     @Test
@@ -120,6 +150,9 @@ class TeamGameWaitingEndTest {
 
         assertThat(game.getStatus()).isEqualTo("cancelled_slot_taken");
         verify(paymentService).giveBackAllTeamPayments(eq(sideA.getId()), anyString());
+        AuditEntry entry = Audited.one(auditService, AuditAction.GAME_AUTO_CANCELLED);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.SYSTEM);
+        assertThat(entry.getChanges()).containsExactly(AuditChange.of("status", "open", "cancelled_slot_taken"));
         assertThat(sideA.getStatus()).isEqualTo(GameTeam.Status.CANCELLED);
         assertThat(sideA.getLeftAt()).isNotNull();
     }
@@ -146,6 +179,8 @@ class TeamGameWaitingEndTest {
         verify(paymentService).keepAllTeamPayments(sideA.getId());
         verify(paymentService, never()).giveBackAllTeamPayments(any(), anyString());
         assertThat(game.getStatus()).isEqualTo("cancelled_by_creator");
+        assertThat(Audited.one(auditService, AuditAction.GAME_CANCELLED).getReason())
+                .isEqualTo("Cancelled after the deadline: nothing back");
     }
 
     @Test
@@ -158,6 +193,12 @@ class TeamGameWaitingEndTest {
         verify(paymentService).giveBackAllTeamPayments(eq(sideA.getId()), anyString());
         verify(paymentService, never()).keepAllTeamPayments(any());
         assertThat(game.getStatus()).isEqualTo("cancelled_not_filled");
+        // The leader cancelled it, so it is their entry — not a SYSTEM auto-cancel.
+        AuditEntry entry = Audited.one(auditService, AuditAction.GAME_CANCELLED);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.PLAYER);
+        assertThat(entry.getActorId()).isEqualTo(LEADER_A_ID);
+        assertThat(entry.getChanges()).containsExactly(AuditChange.of("status", "open", "cancelled_not_filled"));
+        assertThat(Audited.entries(auditService, AuditAction.GAME_AUTO_CANCELLED)).isEmpty();
     }
 
     @Test

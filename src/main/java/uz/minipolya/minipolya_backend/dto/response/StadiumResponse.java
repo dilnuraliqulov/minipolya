@@ -24,12 +24,27 @@ public class StadiumResponse {
     private UUID id;
     private String name;
     private String address;
+    /** The Tashkent district; absent for stadiums added before it existed. */
+    private String district;
     private BigDecimal latitude;
     private BigDecimal longitude;
     private String format;
     private String surfaceType;
+    /**
+     * One hour at the stadium's default price. Public responses: what the player pays by
+     * card. Owner responses: the owner's net price, as they set it.
+     */
     private Long pricePerHour;
+
+    /** One hour at the default price by card, in tiyin: the net price grossed up by the card fee and rounded. */
+    private Long price;
+    /** The owner's own net price. Owner and admin responses only. */
+    private Long netPrice;
+    /** price − netPrice. */
+    private Long cardFee;
     private String status;
+    /** Why the stadium is rejected or blocked — for its owner and admins; absent otherwise. */
+    private String statusReason;
     private String ownerName;
 
     @JsonProperty("isActive")

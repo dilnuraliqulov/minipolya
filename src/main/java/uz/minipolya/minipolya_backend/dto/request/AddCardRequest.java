@@ -26,9 +26,9 @@ public class AddCardRequest {
     @Pattern(regexp = "\\d{2}/\\d{2}", message = "expiry must be MM/YY")
     private String expiry;
 
-    /** Never render the card number. */
+    /** Never render the card number or the expiry. */
     @Override
     public String toString() {
-        return "AddCardRequest(cardNumber=****, expiry=" + expiry + ")";
+        return "AddCardRequest(cardNumber=****, expiry=**/**)";
     }
 }

@@ -1,55 +1,57 @@
 package uz.minipolya.minipolya_backend.provider;
 
+import java.util.List;
+
 /**
- * The card provider every new payment flow goes through (ATMOS in production,
- * {@link FakePaymentProvider} until its API docs land).
+ * The card provider, shaped around the ATMOS operations ({@code AtmosPaymentProvider} in
+ * production, {@link FakePaymentProvider} in dev and tests). Every amount is tiyin.
  *
- * <p>A card is bound once — {@link #startCardBinding} then
- * {@link #confirmCardBinding} with the SMS code — and afterwards charged by
- * token. The full card number is passed straight to the provider and never
- * stored or logged on our side.
+ * <ul>
+ *   <li><b>Cards</b>: {@link #bindCardInit} → SMS code → {@link #bindCardConfirm} gives a
+ *       token; {@link #removeCard} unbinds it.</li>
+ *   <li><b>Charges</b>: {@link #charge} creates one transaction per split;
+ *       {@link #confirmCharge} takes the money (with the SMS code for a card number; a
+ *       token needs none). {@link #getCharge} answers when a response was lost.
+ *       {@link #reverse} gives a confirmed transaction back <em>in full</em> — there is no
+ *       partial refund anywhere.</li>
+ *   <li><b>Holds</b>: {@link #hold} → {@link #confirmHold} reserves the money for a
+ *       duration; it is then settled once, by {@link #captureHold} (always the full
+ *       amount) or {@link #releaseHold}. {@link #getHold} reports where it stands.</li>
+ * </ul>
  *
- * <p>Money moves in one of two shapes. A {@link #charge} takes it immediately.
- * A {@link #hold} reserves it and is then settled exactly once, with
- * {@link #capture} or {@link #release}. Every amount is tiyin, and every
- * {@link #refund} is for the whole transaction: ATMOS cannot refund part of one.
- *
- * <p>A declined card comes back as a {@code FAILED}
- * {@link ProviderTransaction} rather than an exception — callers are expected
- * to handle that outcome. Malformed input (an unknown binding or transaction, a
- * wrong SMS code, a hold settled twice) throws instead.
+ * A declined card is a {@code FAILED} outcome, not an exception. A refusal we recognise
+ * throws {@link TransactionClosedException}, {@link HoldCancelledException} or
+ * {@link HoldExpiredException}; any other one {@link PaymentProviderException}; no answer
+ * at all {@link ProviderTimeoutException}.
  */
 public interface PaymentProvider {
 
-    /**
-     * Begins binding a card. The number and expiry are passed through to the
-     * provider and kept nowhere on our side.
-     *
-     * @param cardNumber the full card number — transient, never persisted or logged
-     * @param expiry     expiry as {@code MM/YY}
-     * @return the provider's handle for the pending binding
-     */
-    CardBinding startCardBinding(String cardNumber, String expiry);
+    /** Starts binding a card. The number and expiry are passed through, never kept. */
+    CardBindingStart bindCardInit(String cardNumber, String expiry);
 
-    /**
-     * Completes a binding with the SMS code the provider sent the cardholder.
-     *
-     * @return the token and masked number — all we are allowed to keep
-     */
-    BoundCard confirmCardBinding(String bindingId, String smsCode);
+    BoundCard bindCardConfirm(String bindingId, String otp);
 
-    /** Takes the money now. */
-    ProviderTransaction charge(ChargeCommand command);
+    void removeCard(String cardId, String cardToken);
 
-    /** Reserves the money, to be captured or released later. */
-    ProviderTransaction hold(ChargeCommand command);
+    PendingCharge charge(ChargeRequest request);
 
-    /** Settles a hold by taking the reserved money. */
-    ProviderTransaction capture(String providerTxnId);
+    /** @param otp the cardholder's SMS code; null for a token charge */
+    ChargeOutcome confirmCharge(List<String> transactionIds, String otp);
 
-    /** Settles a hold by giving the reserved money back. */
-    ProviderTransaction release(String providerTxnId);
+    ChargeOutcome getCharge(String transactionId);
 
-    /** Refunds a transaction in full. Partial refunds are not supported. */
-    ProviderTransaction refund(String providerTxnId);
+    /** Gives one confirmed transaction back in full. */
+    void reverse(String successTransId, String reason);
+
+    HoldOutcome hold(HoldRequest request);
+
+    /** @param otp null for a token hold */
+    HoldOutcome confirmHold(String holdId, String otp);
+
+    /** Takes the whole held amount. */
+    HoldOutcome captureHold(String holdId);
+
+    HoldOutcome releaseHold(String holdId);
+
+    HoldOutcome getHold(String holdId);
 }

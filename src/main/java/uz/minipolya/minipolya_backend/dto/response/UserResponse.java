@@ -25,6 +25,8 @@ public class UserResponse {
     private String phone;
     private String name;
     private Long telegramId;
+    /** Admins who sign in with a password only; absent for everyone else. */
+    private String username;
     private String language;
 
     @JsonProperty("isOwner")

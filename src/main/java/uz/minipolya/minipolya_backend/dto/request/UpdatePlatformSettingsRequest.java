@@ -26,4 +26,10 @@ public class UpdatePlatformSettingsRequest {
 
     /** Tiyin, not negative. */
     private Long casualGameServiceFee;
+
+    /** Basis points, 0..1000 (150 = 1.5%). */
+    private Integer cardFeeBps;
+
+    /** Tiyin, 1..1 000 000 (10 000 = 100 so'm). */
+    private Long paymentRoundingStep;
 }

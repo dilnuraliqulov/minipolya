@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "MiniPolya Backend",
-    "description": "Regression suite for the MiniPolya football-pitch booking API.\n\nSetup\n1. Start the app on http://localhost:8080 with the .env values exported.\n2. Build initData for each test user and put it in the environment:\n     BOT_TOKEN=... scripts/make-init-data.sh 900001 Player1 player1 uz\n   Set the result as player1InitData, and likewise for player2/teamLeaderA/\n   teamLeaderB/owner/admin (telegram ids 900001-900006).\n3. Make the admin user an admin directly in the database:\n     UPDATE users SET is_admin = true WHERE telegram_id = 900006;\n4. Run the folders in order. Tokens and ids are captured into the environment\n   as the run proceeds.\n\nNever put BOT_TOKEN, JWT_SECRET or database passwords into Postman. initData is\na signed, short-lived artefact, so it is safe to paste; the bot token is not.\n\nThe \"open\" game type (individual players joining a public game) is deliberately\nnot covered.\n\nEvery request asserts the HTTP status, the { success, data, message } envelope\nand the success flag. Requests named \"Regression guard\" cover bugs fixed on the\nfeature/endpoint-fix branch.",
+    "description": "Regression suite for the MiniPolya football-pitch booking API.\n\nSetup\n1. Start the app on http://localhost:8080 (it reads .env from the project root itself; nothing needs exporting).\n2. Build initData for each test user and put it in the environment:\n     BOT_TOKEN=... scripts/make-init-data.sh 900001 Player1 player1 uz\n   Set the result as player1InitData, and likewise for player2/teamLeaderA/\n   teamLeaderB/owner/admin (telegram ids 900001-900006).\n3. Make the admin user an admin directly in the database:\n     UPDATE users SET is_admin = true WHERE telegram_id = 900006;\n4. Run the folders in order. Tokens and ids are captured into the environment\n   as the run proceeds.\n\nNever put BOT_TOKEN, JWT_SECRET or database passwords into Postman. initData is\na signed, short-lived artefact, so it is safe to paste; the bot token is not.\n\nThe \"open\" game type (individual players joining a public game) is deliberately\nnot covered.\n\nEvery request asserts the HTTP status, the { success, data, message } envelope\nand the success flag. Requests named \"Regression guard\" cover bugs fixed on the\nfeature/endpoint-fix branch.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -1595,7 +1595,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Chilonzor Arena\",\n  \"address\": \"Chilonzor 12, Tashkent\",\n  \"latitude\": 41.2756,\n  \"longitude\": 69.2034,\n  \"phone\": \"+998901112233\",\n  \"description\": \"Covered pitch\",\n  \"format\": \"5x5\",\n  \"surfaceType\": \"artificial\",\n  \"openTime\": \"08:00\",\n  \"closeTime\": \"23:00\",\n  \"pricePerHour\": 13000000,\n  \"photos\": [\n    \"https://cdn.example.com/a.jpg\"\n  ],\n  \"amenities\": {\n    \"parking\": true,\n    \"lighting\": true,\n    \"showers\": true,\n    \"lockerRoom\": true,\n    \"wifi\": false,\n    \"cafe\": false,\n    \"equipmentRental\": true,\n    \"tribune\": false\n  },\n  \"cancellationHours\": 24\n}",
+              "raw": "{\n  \"name\": \"Chilonzor Arena\",\n  \"address\": \"Chilonzor 12, Tashkent\",\n  \"latitude\": 41.2756,\n  \"longitude\": 69.2034,\n  \"phone\": \"+998901112233\",\n  \"description\": \"Covered pitch\",\n  \"format\": \"5x5\",\n  \"surfaceType\": \"artificial\",\n  \"openTime\": \"08:00\",\n  \"closeTime\": \"23:00\",\n  \"pricePerHour\": 13000000,\n  \"photos\": [\n    \"https://cdn.example.com/a.jpg\"\n  ],\n  \"amenities\": {\n    \"parking\": true,\n    \"lighting\": true,\n    \"showers\": true,\n    \"lockerRoom\": true,\n    \"wifi\": false,\n    \"cafe\": false,\n    \"equipmentRental\": true,\n    \"tribune\": false\n  },\n  \"cancellationHours\": 24,\n  \"district\": \"Chilonzor\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1959,6 +1959,222 @@
           }
         },
         {
+          "name": "400 approve before the owner's ATMOS contract is signed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql(\"The owner's ATMOS contract is not signed\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{stadiumId}}",
+                "status"
+              ]
+            },
+            "description": "R11: approval waits for a signed ATMOS contract with a recipient id.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"approved\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/status",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "stadiums",
+                    "{{stadiumId}}",
+                    "status"
+                  ]
+                },
+                "description": "R11: approval waits for a signed ATMOS contract with a recipient id.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"approved\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"message\": \"The owner's ATMOS contract is not signed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "200 owner's legal details: ATMOS contract signed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('signed', function () { pm.expect(pm.response.json().data.atmosContractStatus).to.eql('signed'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/users/{{ownerId}}/legal-details",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "users",
+                "{{ownerId}}",
+                "legal-details"
+              ]
+            },
+            "description": "R11. tin: 9 digits, or the 14-digit PINFL for self_employed. atmosRecipientId is required when signed and ignored otherwise.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"legalType\": \"mchj\",\n  \"tin\": \"301234567\",\n  \"atmosContractStatus\": \"signed\",\n  \"atmosRecipientId\": \"RCP-OWNER-1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/users/{{ownerId}}/legal-details",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "users",
+                    "{{ownerId}}",
+                    "legal-details"
+                  ]
+                },
+                "description": "R11. tin: 9 digits, or the 14-digit PINFL for self_employed. atmosRecipientId is required when signed and ignored otherwise.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"legalType\": \"mchj\",\n  \"tin\": \"301234567\",\n  \"atmosContractStatus\": \"signed\",\n  \"atmosRecipientId\": \"RCP-OWNER-1\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"legalType\": \"mchj\",\n    \"tin\": \"301234567\",\n    \"atmosContractStatus\": \"signed\",\n    \"atmosRecipientId\": \"RCP-OWNER-1\",\n    \"updatedAt\": \"2026-10-30T09:12:44.512Z\",\n    \"updatedByName\": \"Dilnur Aliqulov\"\n  },\n  \"message\": \"Legal details updated\"\n}"
+            }
+          ]
+        },
+        {
           "name": "200 approve the stadium",
           "event": [
             {
@@ -2247,6 +2463,12 @@
                   "});",
                   "pm.test('shows the cancellation policy before booking', function () {",
                   "    pm.expect(pm.response.json().data.cancellationPolicy).to.have.property('cancellationHours');",
+                  "});",
+                  "pm.test('shows the card price, never the owner net', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.price).to.eql(d.pricePerHour);",
+                  "    pm.expect(d.cardFee, 'cardFee').to.be.a('number');",
+                  "    pm.expect(d).to.not.have.property('netPrice');",
                   "});"
                 ]
               }
@@ -2373,6 +2595,16 @@
                   "});",
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('the owner sees net prices, with the card price alongside', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    var list = Array.isArray(d) ? d : d.content;",
+                  "    pm.expect(list).to.be.an('array').that.is.not.empty;",
+                  "    list.forEach(function (s) {",
+                  "        pm.expect(s.netPrice).to.eql(s.pricePerHour);",
+                  "        pm.expect(s.price).to.eql(s.netPrice + s.cardFee);",
+                  "        pm.expect(s.price).to.be.at.least(s.netPrice);",
+                  "    });",
                   "});"
                 ]
               }
@@ -4132,9 +4364,17 @@
                   "        if (s.available) {",
                   "            pm.expect(s.pricePerHour % 1).to.eql(0);",
                   "            if (s.discountPercent) {",
-                  "                pm.expect(s.pricePerHour).to.eql(Math.round(s.originalPrice * (100 - s.discountPercent) / 100));",
+                  "                pm.expect(s.pricePerHour).to.be.below(s.originalPrice);",
                   "            }",
                   "        }",
+                  "    });",
+                  "});",
+                  "pm.test('slot prices are what the player pays by card', function () {",
+                  "    pm.response.json().data.slots.filter(function (s) { return s.available; }).forEach(function (s) {",
+                  "        pm.expect(s.price).to.eql(s.pricePerHour);",
+                  "        pm.expect(s.cardFee, 'cardFee').to.be.a('number');",
+                  "        pm.expect(s.cardFee).to.be.above(0);",
+                  "        pm.expect(s).to.not.have.property('netPrice');",
                   "    });",
                   "});"
                 ]
@@ -4405,9 +4645,16 @@
                   "    var d = pm.response.json().data;",
                   "    pm.expect(d.status).to.eql('confirmed');",
                   "    pm.expect(d.paymentStatus).to.eql('paid');",
-                  "    pm.expect(d.paidAmount).to.eql(d.price);",
+                  "    pm.expect(d.paidAmount).to.eql(d.price - d.cardFee);   // paidAmount is net, price is by card",
+                  "    pm.expect(d.remainderByCard).to.eql(0);",
+                  "    pm.expect(d.remainderInCash).to.eql(0);",
                   "    pm.expect(d.remainingAmount).to.eql(0);",
                   "    pm.expect(d.source).to.eql('app');",
+                  "});",
+                  "pm.test('a player sees the card price and fee, not the owner net', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.cardFee).to.be.above(0);",
+                  "    pm.expect(d).to.not.have.property('netPrice');",
                   "});"
                 ]
               }
@@ -5005,7 +5252,9 @@
                   "    var d = pm.response.json().data;",
                   "    pm.expect(d.paymentStatus).to.eql('paid');",
                   "    pm.expect(d.remainingAmount).to.eql(0);",
-                  "    pm.expect(d.paidAmount).to.eql(d.price);",
+                  "    pm.expect(d.paidAmount).to.eql(d.price - d.cardFee);   // paidAmount is net, price is by card",
+                  "    pm.expect(d.remainderByCard).to.eql(0);",
+                  "    pm.expect(d.remainderInCash).to.eql(0);",
                   "});",
                   "pm.test('money stays whole tiyin', function () {",
                   "    var d = pm.response.json().data;",
@@ -5143,6 +5392,13 @@
                   "    pm.expect(hours).to.eql(d.cancellationPolicy.cancellationHours);",
                   "    // Captured so the cancel request can check it was honoured.",
                   "    pm.environment.set('refundIfCancelledNow', d.refundIfCancelledNow);",
+                  "});",
+                  "pm.test('offers the rest by card or in cash', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.remainderInCash).to.eql(d.remainingAmount);",
+                  "    pm.expect(d.remainderByCard).to.be.at.least(d.remainderInCash);",
+                  "    pm.expect(d.price - d.cardFee, 'net price').to.eql(d.paidAmount + d.remainingAmount);",
+                  "    pm.expect(d).to.not.have.property('netPrice');",
                   "});"
                 ]
               }
@@ -8683,7 +8939,7 @@
                                                                }
                                                            ]
                                              },
-                                     "description":  "Confirm with POST /webhooks/payme using txnId mock-{{gamePaymentId}}. The slot stays free until every share is paid."
+                                     "description":  "Legacy hosted checkout (no cardId). Confirm with POST /webhooks/payme using txnId mock-{{gamePaymentId}}. The slot stays free until every share is paid. The ATMOS path is POST /api/games/{id}/pay?cardId=<saved card>: it charges playerAmount(share + service fee) to that card at once and answers with status paid / failed / processing."
                                  }
                  },
                  {
@@ -9436,6 +9692,9 @@
                                                                    "    pm.expect(teams[0].feeAmount, \u0027feeAmount\u0027).to.be.a(\u0027number\u0027);",
                                                                    "    pm.expect(teams[0].advanceAmount, \u0027advanceAmount\u0027).to.be.a(\u0027number\u0027);",
                                                                    "    pm.expect(teams[0].remainderStatus).to.eql(\u0027unpaid\u0027);",
+                                                                   "    pm.expect(teams[0].price - teams[0].cardFee).to.be.at.least(teams[0].feeAmount + teams[0].advanceAmount);",
+                                                                   "    pm.expect(teams[0].remainderInCash).to.eql(teams[0].remainderAmount);",
+                                                                   "    pm.expect(teams[0].remainderByCard).to.be.at.least(teams[0].remainderInCash);",
                                                                    "});"
                                                                ]
                                                   }
@@ -9501,7 +9760,9 @@
                                                                    "    var mine = pm.response.json().data.content.filter(function (c) {",
                                                                    "        return c.gameId === pm.environment.get(\u0027tvtGameId\u0027);",
                                                                    "    })[0];",
-                                                                   "    pm.expect(mine.amountToPayNow).to.eql(mine.feeAmount + mine.advanceAmount);",
+                                                                   "    // By card: fee + advance grossed up for the card fee.",
+                                                                   "    pm.expect(mine.amountToPayNow - mine.cardFee).to.be.at.least(mine.feeAmount + mine.advanceAmount);",
+                                                                   "    pm.expect(mine.cardFee).to.be.above(0);",
                                                                    "    pm.expect(mine.waitingTeamName, \u0027waitingTeamName\u0027).to.be.a(\u0027string\u0027);",
                                                                    "});"
                                                                ]
@@ -13445,6 +13706,8 @@
                   "    pm.expect(d).to.have.property('bookingCommissionPercent');",
                   "    pm.expect(d).to.have.property('teamGamePlatformFee');",
                   "    pm.expect(d).to.have.property('casualGameServiceFee');",
+                  "    pm.expect(d.cardFeeBps, 'cardFeeBps').to.be.within(0, 1000);",
+                  "    pm.expect(d.paymentRoundingStep, 'paymentRoundingStep').to.be.within(1, 1000000);",
                   "});",
                   "pm.test('fees are whole integers of tiyin', function () {",
                   "    var d = pm.response.json().data;",
@@ -13769,6 +14032,21 @@
                   "    pm.response.json().data.content.forEach(function (row) {",
                   "        if (row.details) { JSON.parse(row.details); }",
                   "    });",
+                  "});",
+                  "pm.test('every item has the audit shape', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        ['id', 'time', 'action', 'entity', 'changes'].forEach(function (k) { pm.expect(i, k).to.have.property(k); });",
+                  "        pm.expect(i.changes).to.be.an('array');",
+                  "        i.changes.forEach(function (c) {",
+                  "            pm.expect(c).to.have.all.keys('field', 'oldValue', 'newValue');",
+                  "        });",
+                  "    });",
+                  "});",
+                  "pm.test('no secret ever appears', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', 'providertoken', 'eyjhbgci'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
                   "});"
                 ]
               }
@@ -13841,7 +14119,7 @@
           }
         },
         {
-          "name": "200 audit log by user",
+          "name": "200 audit action codes",
           "event": [
             {
               "listen": "test",
@@ -13857,6 +14135,13 @@
                   "});",
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('lists the action codes', function () {",
+                  "    var codes = pm.response.json().data;",
+                  "    pm.expect(codes).to.be.an('array');",
+                  "    ['SETTINGS_CHANGED', 'STADIUM_APPROVED', 'ADMIN_LOGIN_FAILED', 'BOOKING_EXPIRED'].forEach(function (c) {",
+                  "        pm.expect(codes).to.include(c);",
+                  "    });",
                   "});"
                 ]
               }
@@ -13871,7 +14156,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/admin/audit-log/user/{{player1Id}}",
+              "raw": "{{baseUrl}}/api/admin/audit-log/actions",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -13879,15 +14164,14 @@
                 "api",
                 "admin",
                 "audit-log",
-                "user",
-                "{{player1Id}}"
+                "actions"
               ]
             },
-            "description": ""
+            "description": "Every code the audit log uses, for a filter dropdown."
           }
         },
         {
-          "name": "200 audit log by entity",
+          "name": "200 the settings change is recorded with old and new values",
           "event": [
             {
               "listen": "test",
@@ -13903,6 +14187,31 @@
                   "});",
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('every item has the audit shape', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        ['id', 'time', 'action', 'entity', 'changes'].forEach(function (k) { pm.expect(i, k).to.have.property(k); });",
+                  "        pm.expect(i.changes).to.be.an('array');",
+                  "        i.changes.forEach(function (c) {",
+                  "            pm.expect(c).to.have.all.keys('field', 'oldValue', 'newValue');",
+                  "        });",
+                  "    });",
+                  "});",
+                  "pm.test('no secret ever appears', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', 'providertoken', 'eyjhbgci'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "});",
+                  "pm.test('newest SETTINGS_CHANGED by an admin, with its changes', function () {",
+                  "    var i = pm.response.json().data.content[0];",
+                  "    pm.expect(i.action).to.eql('SETTINGS_CHANGED');",
+                  "    pm.expect(i.actor.type).to.eql('ADMIN');",
+                  "    pm.expect(i.actor.id).to.eql(pm.environment.get('adminId'));",
+                  "    pm.expect(i.entity.type).to.eql('platform_settings');",
+                  "    pm.expect(i.changes.length).to.be.above(0);",
+                  "    pm.expect(i.changes[0].oldValue).to.not.eql(i.changes[0].newValue);",
+                  "    pm.expect(i).to.have.property('ip');",
                   "});"
                 ]
               }
@@ -13917,24 +14226,410 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/admin/audit-log/entity/stadium/{{stadiumId}}",
+              "raw": "{{baseUrl}}/api/admin/audit-log?actorType=ADMIN&action=SETTINGS_CHANGED&size=1",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "admin",
-                "audit-log",
-                "entity",
-                "stadium",
-                "{{stadiumId}}"
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "actorType",
+                  "value": "ADMIN"
+                },
+                {
+                  "key": "action",
+                  "value": "SETTINGS_CHANGED"
+                },
+                {
+                  "key": "size",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "Written by \"200 update platform settings\" earlier in this folder."
+          }
+        },
+        {
+          "name": "200 several actions at once",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('every item has the audit shape', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        ['id', 'time', 'action', 'entity', 'changes'].forEach(function (k) { pm.expect(i, k).to.have.property(k); });",
+                  "        pm.expect(i.changes).to.be.an('array');",
+                  "        i.changes.forEach(function (c) {",
+                  "            pm.expect(c).to.have.all.keys('field', 'oldValue', 'newValue');",
+                  "        });",
+                  "    });",
+                  "});",
+                  "pm.test('no secret ever appears', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', 'providertoken', 'eyjhbgci'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "});",
+                  "pm.test('only the asked-for actions', function () {",
+                  "    var items = pm.response.json().data.content;",
+                  "    pm.expect(items.length).to.be.above(0);",
+                  "    items.forEach(function (i) { pm.expect(['STADIUM_APPROVED', 'APPLICATION_APPROVED']).to.include(i.action); });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log?action=STADIUM_APPROVED,APPLICATION_APPROVED",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "STADIUM_APPROVED,APPLICATION_APPROVED"
+                }
               ]
             },
             "description": ""
           }
         },
         {
-          "name": "400 audit log by entity, malformed id",
+          "name": "200 everything about one stadium",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('every item has the audit shape', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        ['id', 'time', 'action', 'entity', 'changes'].forEach(function (k) { pm.expect(i, k).to.have.property(k); });",
+                  "        pm.expect(i.changes).to.be.an('array');",
+                  "        i.changes.forEach(function (c) {",
+                  "            pm.expect(c).to.have.all.keys('field', 'oldValue', 'newValue');",
+                  "        });",
+                  "    });",
+                  "});",
+                  "pm.test('no secret ever appears', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', 'providertoken', 'eyjhbgci'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "});",
+                  "pm.test('only that stadium, created and approved', function () {",
+                  "    var items = pm.response.json().data.content;",
+                  "    items.forEach(function (i) { pm.expect(i.entity.id).to.eql(pm.environment.get('stadiumId')); });",
+                  "    var actions = items.map(function (i) { return i.action; });",
+                  "    pm.expect(actions).to.include('STADIUM_CREATED');",
+                  "    pm.expect(actions).to.include('STADIUM_APPROVED');",
+                  "});",
+                  "pm.test('newest first', function () {",
+                  "    var times = pm.response.json().data.content.map(function (i) { return i.time; });",
+                  "    pm.expect(times.slice().sort().reverse()).to.eql(times);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log?entityType=stadium&entityId={{stadiumId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "entityType",
+                  "value": "stadium"
+                },
+                {
+                  "key": "entityId",
+                  "value": "{{stadiumId}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "200 search by actor name",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('every item has the audit shape', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        ['id', 'time', 'action', 'entity', 'changes'].forEach(function (k) { pm.expect(i, k).to.have.property(k); });",
+                  "        pm.expect(i.changes).to.be.an('array');",
+                  "        i.changes.forEach(function (c) {",
+                  "            pm.expect(c).to.have.all.keys('field', 'oldValue', 'newValue');",
+                  "        });",
+                  "    });",
+                  "});",
+                  "pm.test('no secret ever appears', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', 'providertoken', 'eyjhbgci'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "});",
+                  "pm.test('every entry was made by a matching actor', function () {",
+                  "    var items = pm.response.json().data.content;",
+                  "    pm.expect(items.length).to.be.above(0);",
+                  "    items.forEach(function (i) { pm.expect(i.actor.name.toLowerCase()).to.include('player1'); });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log?actor=player1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "actor",
+                  "value": "player1"
+                }
+              ]
+            },
+            "description": "Matches the actor’s name, username or phone, case-insensitively."
+          }
+        },
+        {
+          "name": "200 only today (Tashkent)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Today in Asia/Tashkent (UTC+5, no DST), the zone the from/to filters use.",
+                  "var d = new Date(Date.now() + 5 * 3600000);",
+                  "pm.collectionVariables.set('auditToday', d.toISOString().slice(0, 10));",
+                  "pm.collectionVariables.set('auditYesterday', new Date(d.getTime() - 86400000).toISOString().slice(0, 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('every item has the audit shape', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        ['id', 'time', 'action', 'entity', 'changes'].forEach(function (k) { pm.expect(i, k).to.have.property(k); });",
+                  "        pm.expect(i.changes).to.be.an('array');",
+                  "        i.changes.forEach(function (c) {",
+                  "            pm.expect(c).to.have.all.keys('field', 'oldValue', 'newValue');",
+                  "        });",
+                  "    });",
+                  "});",
+                  "pm.test('no secret ever appears', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', 'providertoken', 'eyjhbgci'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "});",
+                  "pm.test('this run’s entries are there', function () {",
+                  "    pm.expect(pm.response.json().data.totalElements).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log?from={{auditToday}}&to={{auditToday}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{auditToday}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{auditToday}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "200 SYSTEM entries have no user",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('every item has the audit shape', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        ['id', 'time', 'action', 'entity', 'changes'].forEach(function (k) { pm.expect(i, k).to.have.property(k); });",
+                  "        pm.expect(i.changes).to.be.an('array');",
+                  "        i.changes.forEach(function (c) {",
+                  "            pm.expect(c).to.have.all.keys('field', 'oldValue', 'newValue');",
+                  "        });",
+                  "    });",
+                  "});",
+                  "pm.test('no secret ever appears', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', 'providertoken', 'eyjhbgci'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "});",
+                  "pm.test('system actor, no id or name', function () {",
+                  "    pm.response.json().data.content.forEach(function (i) {",
+                  "        pm.expect(i.actor.type).to.eql('SYSTEM');",
+                  "        pm.expect(i.actor).to.not.have.property('id');",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log?actorType=SYSTEM",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "actorType",
+                  "value": "SYSTEM"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "400 unknown actorType",
           "event": [
             {
               "listen": "test",
@@ -13964,21 +14659,3161 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/admin/audit-log/entity/stadium/not-a-uuid",
+              "raw": "{{baseUrl}}/api/admin/audit-log?actorType=robot",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "admin",
-                "audit-log",
-                "entity",
-                "stadium",
-                "not-a-uuid"
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "actorType",
+                  "value": "robot"
+                }
               ]
             },
             "description": ""
           }
+        },
+        {
+          "name": "400 a range ending before it starts",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Today in Asia/Tashkent (UTC+5, no DST), the zone the from/to filters use.",
+                  "var d = new Date(Date.now() + 5 * 3600000);",
+                  "pm.collectionVariables.set('auditToday', d.toISOString().slice(0, 10));",
+                  "pm.collectionVariables.set('auditYesterday', new Date(d.getTime() - 86400000).toISOString().slice(0, 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log?from={{auditToday}}&to={{auditYesterday}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{auditToday}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{auditYesterday}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "400 malformed entityId",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log?entityId=not-a-uuid",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ],
+              "query": [
+                {
+                  "key": "entityId",
+                  "value": "not-a-uuid"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "405 audit entries cannot be deleted",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 405', function () { pm.response.to.have.status(405); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/audit-log",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "audit-log"
+              ]
+            },
+            "description": "There is no endpoint that changes or deletes an entry."
+          }
+        },
+        {
+          "name": "[R15] 200 bookings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
+                  "pm.test('a page', function () { pm.expect(pm.response.json().data).to.have.property('content'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/bookings?search=&status=confirmed&page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "bookings"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": ""
+                },
+                {
+                  "key": "status",
+                  "value": "confirmed"
+                },
+                {
+                  "key": "page",
+                  "value": 0
+                },
+                {
+                  "key": "size",
+                  "value": 20
+                }
+              ]
+            },
+            "description": "Every booking, newest startsAt first. Filters: search (booking user name/phone, or a walk-in clientName/clientPhone; case-insensitive, spaces and + ignored in phones), stadiumId, status, from/to (Tashkent days on startsAt, inclusive), userId."
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/bookings?search=&status=confirmed&page=0&size=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "bookings"
+                  ],
+                  "query": [
+                    {
+                      "key": "search",
+                      "value": ""
+                    },
+                    {
+                      "key": "status",
+                      "value": "confirmed"
+                    },
+                    {
+                      "key": "page",
+                      "value": 0
+                    },
+                    {
+                      "key": "size",
+                      "value": 20
+                    }
+                  ]
+                },
+                "description": "Every booking, newest startsAt first. Filters: search (booking user name/phone, or a walk-in clientName/clientPhone; case-insensitive, spaces and + ignored in phones), stadiumId, status, from/to (Tashkent days on startsAt, inclusive), userId."
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-000000000001\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"stadiumName\": \"Chilonzor Arena\",\n        \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n        \"source\": \"app\",\n        \"status\": \"confirmed\",\n        \"startsAt\": \"2026-11-02T15:00:00Z\",\n        \"endsAt\": \"2026-11-02T16:00:00Z\",\n        \"durationHours\": 1,\n        \"price\": 20310000,\n        \"netPrice\": 20000000,\n        \"cardFee\": 310000,\n        \"paidAmount\": 10000000,\n        \"remainingAmount\": 10000000,\n        \"remainderByCard\": 10160000,\n        \"remainderInCash\": 10000000,\n        \"paymentStatus\": \"partially_paid\",\n        \"isWalkin\": false,\n        \"cancellationPolicy\": {\n          \"cancellationHours\": 24\n        },\n        \"cancellationDeadline\": \"2026-11-01T15:00:00Z\",\n        \"refundIfCancelledNow\": 10160000,\n        \"createdAt\": \"2026-10-30T08:00:00Z\",\n        \"userName\": \"Jasur Toshmatov\",\n        \"userPhone\": \"998901234567\",\n        \"paidInApp\": 10160000,\n        \"cashReceived\": 10000000,\n        \"cashReceivedAt\": \"2026-11-02T16:05:00Z\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R15] 200 booking detail",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
+                  "pm.test('card and net price', function () { var d = pm.response.json().data; pm.expect(d).to.have.property('price'); pm.expect(d).to.have.property('netPrice'); pm.expect(d).to.have.property('paidInApp'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/bookings/{{bookingId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "bookings",
+                "{{bookingId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/bookings/{{bookingId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "bookings",
+                    "{{bookingId}}"
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-000000000001\",\n    \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"stadiumName\": \"Chilonzor Arena\",\n    \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n    \"source\": \"app\",\n    \"status\": \"confirmed\",\n    \"startsAt\": \"2026-11-02T15:00:00Z\",\n    \"endsAt\": \"2026-11-02T16:00:00Z\",\n    \"durationHours\": 1,\n    \"price\": 20310000,\n    \"netPrice\": 20000000,\n    \"cardFee\": 310000,\n    \"paidAmount\": 10000000,\n    \"remainingAmount\": 10000000,\n    \"remainderByCard\": 10160000,\n    \"remainderInCash\": 10000000,\n    \"paymentStatus\": \"partially_paid\",\n    \"isWalkin\": false,\n    \"cancellationPolicy\": {\n      \"cancellationHours\": 24\n    },\n    \"cancellationDeadline\": \"2026-11-01T15:00:00Z\",\n    \"refundIfCancelledNow\": 10160000,\n    \"createdAt\": \"2026-10-30T08:00:00Z\",\n    \"userName\": \"Jasur Toshmatov\",\n    \"userPhone\": \"998901234567\",\n    \"paidInApp\": 10160000,\n    \"cashReceived\": 10000000,\n    \"cashReceivedAt\": \"2026-11-02T16:05:00Z\"\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R15] 400 bookings, to before from",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/bookings?from=2026-11-02&to=2026-11-01",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "bookings"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2026-11-02"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-11-01"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/bookings?from=2026-11-02&to=2026-11-01",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "bookings"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-11-02"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-11-01"
+                    }
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"message\": \"to must be on or after from\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R15] 404 booking, unknown id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/bookings/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "bookings",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/bookings/00000000-0000-0000-0000-000000000000",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "bookings",
+                    "00000000-0000-0000-0000-000000000000"
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"message\": \"Booking not found\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R15] 200 games",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/games?page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "games"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": 0
+                },
+                {
+                  "key": "size",
+                  "value": 20
+                }
+              ]
+            },
+            "description": "Every game, newest startsAt first. Filters: search (creator or either team name), stadiumId, status, from/to, userId (created it, played in it, or led a team in it)."
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/games?page=0&size=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "games"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": 0
+                    },
+                    {
+                      "key": "size",
+                      "value": 20
+                    }
+                  ]
+                },
+                "description": "Every game, newest startsAt first. Filters: search (creator or either team name), stadiumId, status, from/to, userId (created it, played in it, or led a team in it)."
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-000000000004\",\n        \"type\": \"team_vs_team\",\n        \"status\": \"cancelled_not_filled\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"stadiumName\": \"Chilonzor Arena\",\n        \"startsAt\": \"2026-11-03T15:00:00Z\",\n        \"endsAt\": \"2026-11-03T16:00:00Z\",\n        \"totalPrice\": 20000000,\n        \"creatorId\": \"0190a1b2-0000-7000-8000-000000000005\",\n        \"creatorName\": \"Leader A\",\n        \"teamAName\": \"Lions\",\n        \"cancelledAt\": \"2026-11-03T12:00:30Z\",\n        \"cancellationReason\": \"No opponent was found in time\",\n        \"createdAt\": \"2026-10-30T08:00:00Z\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R15] 200 team game detail",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
+                  "pm.test('teams, no participants', function () { var d = pm.response.json().data; pm.expect(d.type).to.eql('team_vs_team'); pm.expect(d).to.not.have.property('participants'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/games/{{tvtGameId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "games",
+                "{{tvtGameId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/games/{{tvtGameId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "games",
+                    "{{tvtGameId}}"
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-000000000004\",\n    \"type\": \"team_vs_team\",\n    \"status\": \"confirmed\",\n    \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"stadiumName\": \"Chilonzor Arena\",\n    \"startsAt\": \"2026-11-03T15:00:00Z\",\n    \"endsAt\": \"2026-11-03T16:00:00Z\",\n    \"totalPrice\": 20000000,\n    \"creatorId\": \"0190a1b2-0000-7000-8000-000000000005\",\n    \"creatorName\": \"Leader A\",\n    \"teamAName\": \"Lions\",\n    \"teamBName\": \"Tigers\",\n    \"bookingId\": \"0190a1b2-0000-7000-8000-000000000006\",\n    \"createdAt\": \"2026-10-30T08:00:00Z\",\n    \"teams\": [\n      {\n        \"side\": \"a\",\n        \"teamId\": \"0190a1b2-0000-7000-8000-000000000007\",\n        \"teamName\": \"Lions\",\n        \"leaderId\": \"0190a1b2-0000-7000-8000-000000000005\",\n        \"leaderName\": \"Leader A\",\n        \"feeAmount\": 2500000,\n        \"advanceAmount\": 5000000,\n        \"remainderAmount\": 5000000,\n        \"remainderStatus\": \"unpaid\",\n        \"paidInApp\": 7620000,\n        \"price\": 7620000,\n        \"cardFee\": 120000,\n        \"remainderByCard\": 5080000,\n        \"remainderInCash\": 5000000,\n        \"cancellationDeadline\": \"2026-11-02T15:00:00Z\",\n        \"refundIfCancelledNow\": 7620000,\n        \"players\": [\n          {\n            \"userId\": \"0190a1b2-0000-7000-8000-000000000005\",\n            \"userName\": \"Leader A\",\n            \"status\": \"paid\"\n          }\n        ]\n      }\n    ]\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R15] 200 casual game detail",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
+                  "pm.test('participants, no teams', function () { var d = pm.response.json().data; pm.expect(d).to.have.property('participants'); pm.expect(d).to.not.have.property('teams'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/games/{{casualGameId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "games",
+                "{{casualGameId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/games/{{casualGameId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "games",
+                    "{{casualGameId}}"
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-000000000008\",\n    \"type\": \"casual\",\n    \"status\": \"open\",\n    \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"stadiumName\": \"Chilonzor Arena\",\n    \"startsAt\": \"2026-11-04T15:00:00Z\",\n    \"endsAt\": \"2026-11-04T16:00:00Z\",\n    \"totalPrice\": 20000000,\n    \"creatorId\": \"0190a1b2-0000-7000-8000-000000000003\",\n    \"creatorName\": \"Jasur\",\n    \"currentPlayers\": 2,\n    \"maxPlayers\": 10,\n    \"createdAt\": \"2026-10-30T08:00:00Z\",\n    \"serviceFeePerPerson\": 0,\n    \"participants\": [\n      {\n        \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n        \"userName\": \"Jasur\",\n        \"status\": \"paid\"\n      },\n      {\n        \"userId\": \"0190a1b2-0000-7000-8000-000000000009\",\n        \"userName\": \"Aziz\",\n        \"status\": \"joined\"\n      }\n    ]\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R16] 200 payments",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/payments?page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "payments"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": 0
+                },
+                {
+                  "key": "size",
+                  "value": 20
+                }
+              ]
+            },
+            "description": "Every payment and refund, newest first (type=refund: failed refunds first). Filters: search (payer name/phone, or providerTxnId), type, status, method (card|cash), stadiumId, from/to (Tashkent days on createdAt)."
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/payments?page=0&size=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "payments"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": 0
+                    },
+                    {
+                      "key": "size",
+                      "value": 20
+                    }
+                  ]
+                },
+                "description": "Every payment and refund, newest first (type=refund: failed refunds first). Filters: search (payer name/phone, or providerTxnId), type, status, method (card|cash), stadiumId, from/to (Tashkent days on createdAt)."
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000a\",\n        \"createdAt\": \"2026-10-30T08:01:02Z\",\n        \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n        \"userName\": \"Jasur Toshmatov\",\n        \"userPhone\": \"998901234567\",\n        \"paymentType\": \"booking\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"stadiumName\": \"Chilonzor Arena\",\n        \"bookingId\": \"0190a1b2-0000-7000-8000-000000000001\",\n        \"amount\": 20310000,\n        \"ownerAmount\": 20304569,\n        \"platformAmount\": 5431,\n        \"cardFee\": 310000,\n        \"providerCommission\": 304650,\n        \"commissionPercent\": 0,\n        \"method\": \"card\",\n        \"provider\": \"atmos\",\n        \"providerTxnId\": \"5001,5002\",\n        \"status\": \"paid\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R16] 200 refunds, failed first",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/payments?type=refund",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "payments"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "refund"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/payments?type=refund",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "payments"
+                  ],
+                  "query": [
+                    {
+                      "key": "type",
+                      "value": "refund"
+                    }
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000b\",\n        \"createdAt\": \"2026-10-30T08:01:02Z\",\n        \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n        \"userName\": \"Jasur Toshmatov\",\n        \"userPhone\": \"998901234567\",\n        \"paymentType\": \"refund\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"stadiumName\": \"Chilonzor Arena\",\n        \"bookingId\": \"0190a1b2-0000-7000-8000-000000000001\",\n        \"amount\": -20310000,\n        \"ownerAmount\": -20304569,\n        \"platformAmount\": -5431,\n        \"cardFee\": -310000,\n        \"commissionPercent\": 0,\n        \"method\": \"card\",\n        \"provider\": \"atmos\",\n        \"providerTxnId\": \"5001,5002-refund\",\n        \"status\": \"failed\",\n        \"refundReason\": \"Pitch flooded\",\n        \"refundOfPaymentId\": \"0190a1b2-0000-7000-8000-00000000000a\",\n        \"failureReason\": \"Transaction declined by issuer (STPIMS-ERR-057)\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R16] 200 payment detail",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
+                  "pm.test('linked payments listed', function () { pm.expect(pm.response.json().data).to.have.property('linkedPayments'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/payments/{{paymentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "payments",
+                "{{paymentId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/payments/{{paymentId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "payments",
+                    "{{paymentId}}"
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-00000000000a\",\n    \"createdAt\": \"2026-10-30T08:01:02Z\",\n    \"userId\": \"0190a1b2-0000-7000-8000-000000000003\",\n    \"userName\": \"Jasur Toshmatov\",\n    \"userPhone\": \"998901234567\",\n    \"paymentType\": \"booking\",\n    \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"stadiumName\": \"Chilonzor Arena\",\n    \"bookingId\": \"0190a1b2-0000-7000-8000-000000000001\",\n    \"amount\": 20310000,\n    \"ownerAmount\": 20304569,\n    \"platformAmount\": 5431,\n    \"cardFee\": 310000,\n    \"providerCommission\": 304650,\n    \"commissionPercent\": 0,\n    \"method\": \"card\",\n    \"provider\": \"atmos\",\n    \"providerTxnId\": \"5001,5002\",\n    \"status\": \"paid\",\n    \"linkedPayments\": []\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R16] 200 summary for today",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Today's date in Tashkent (UTC+5), for from/to.",
+                  "var d = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);",
+                  "pm.collectionVariables.set('tashkentToday', d);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
+                  "pm.test('owners + platform + fees = appRevenue', function () { var d = pm.response.json().data; pm.expect(d.ownerPayouts + d.platformRevenue + d.cardFees).to.eql(d.appRevenue); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/payments/summary?from={{tashkentToday}}&to={{tashkentToday}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "payments",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{tashkentToday}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{tashkentToday}}"
+                }
+              ]
+            },
+            "description": "Card money only, all tiyin. appRevenue = card payments kept (paid, captured, completed) less card refunds completed in the period; cardFees = what ATMOS took of it; ownerPayouts / platformRevenue = what each actually receives after ATMOS. refunded = card refunds completed in the period; held = on hold right now."
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/payments/summary?from={{tashkentToday}}&to={{tashkentToday}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "payments",
+                    "summary"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "{{tashkentToday}}"
+                    },
+                    {
+                      "key": "to",
+                      "value": "{{tashkentToday}}"
+                    }
+                  ]
+                },
+                "description": "Card money only, all tiyin. appRevenue = card payments kept (paid, captured, completed) less card refunds completed in the period; cardFees = what ATMOS took of it; ownerPayouts / platformRevenue = what each actually receives after ATMOS. refunded = card refunds completed in the period; held = on hold right now."
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"appRevenue\": 27930000,\n    \"cardFees\": 418950,\n    \"ownerPayouts\": 25300000,\n    \"platformRevenue\": 2211050,\n    \"refunded\": 10160000,\n    \"held\": 7620000\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R16] 400 summary without to",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/payments/summary?from=2026-10-01",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "payments",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2026-10-01"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/payments/summary?from=2026-10-01",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "payments",
+                    "summary"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-10-01"
+                    }
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"message\": \"from and to are required\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R17] 400 retry a payment that is not a failed refund",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/payments/{{paymentId}}/retry-refund",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "payments",
+                "{{paymentId}}",
+                "retry-refund"
+              ]
+            },
+            "description": "On a failed refund: calls ATMOS again on the same refund row (the same transactions; one already reversed counts as done, so it can never refund twice). 200 status refunded, or still failed with the new failureReason; 502 \"Payment provider unavailable\" when ATMOS cannot be reached."
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/payments/{{paymentId}}/retry-refund",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "payments",
+                    "{{paymentId}}",
+                    "retry-refund"
+                  ]
+                },
+                "description": "On a failed refund: calls ATMOS again on the same refund row (the same transactions; one already reversed counts as done, so it can never refund twice). 200 status refunded, or still failed with the new failureReason; 502 \"Payment provider unavailable\" when ATMOS cannot be reached."
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"message\": \"Only a failed refund can be retried\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R17] 400 mark refunded, reason too short",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/payments/{{paymentId}}/mark-refunded",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "payments",
+                "{{paymentId}}",
+                "mark-refunded"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"cash\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/payments/{{paymentId}}/mark-refunded",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "payments",
+                    "{{paymentId}}",
+                    "mark-refunded"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"cash\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"message\": \"reason must be at least 10 characters\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R17] 400 mark refunded, not a failed refund",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/payments/{{paymentId}}/mark-refunded",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "payments",
+                "{{paymentId}}",
+                "mark-refunded"
+              ]
+            },
+            "description": "On a failed refund: records money returned outside the platform. 200 with status refunded, refundedManually true, manualRefundReason. reason: 10-500 characters.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Returned in cash at the stadium on 30.10\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/payments/{{paymentId}}/mark-refunded",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "payments",
+                    "{{paymentId}}",
+                    "mark-refunded"
+                  ]
+                },
+                "description": "On a failed refund: records money returned outside the platform. 200 with status refunded, refundedManually true, manualRefundReason. reason: 10-500 characters.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Returned in cash at the stadium on 30.10\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"message\": \"Only a failed refund can be marked as refunded\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R8 R3 R5] 200 stats with failed refunds and comparisons",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
+                  "pm.test('new figures present', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    ['failedRefunds', 'newUsersLast7Days', 'todayBookingsLastWeek', 'previousMonthRevenueToDate',",
+                  "     'newUsersPrevious7Days', 'approvedStadiumsWeekAgo', 'rejectedStadiums'].forEach(function (k) {",
+                  "        pm.expect(d).to.have.property(k);",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stats"
+              ]
+            },
+            "description": "oldestFailedRefundAt is omitted when there are no failed refunds. The comparison figures are values; the panel works out the percentage."
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "stats"
+                  ]
+                },
+                "description": "oldestFailedRefundAt is omitted when there are no failed refunds. The comparison figures are values; the panel works out the percentage."
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"totalUsers\": 120,\n    \"totalOwners\": 6,\n    \"newUsersToday\": 2,\n    \"newUsersThisWeek\": 5,\n    \"newUsersLast7Days\": 9,\n    \"newUsersThisMonth\": 31,\n    \"totalStadiums\": 8,\n    \"approvedStadiums\": 5,\n    \"pendingStadiums\": 1,\n    \"blockedStadiums\": 1,\n    \"rejectedStadiums\": 1,\n    \"totalBookings\": 410,\n    \"todayBookings\": 12,\n    \"weekBookings\": 40,\n    \"monthBookings\": 170,\n    \"totalRevenue\": 912000000,\n    \"todayRevenue\": 24000000,\n    \"weekRevenue\": 98000000,\n    \"monthRevenue\": 401000000,\n    \"totalGames\": 30,\n    \"activeGames\": 3,\n    \"pendingOwnerApplications\": 0,\n    \"pendingStadiumApprovals\": 1,\n    \"todayBookingsLastWeek\": 10,\n    \"previousMonthRevenueToDate\": 377000000,\n    \"newUsersPrevious7Days\": 7,\n    \"approvedStadiumsWeekAgo\": 4,\n    \"failedRefunds\": 1,\n    \"oldestFailedRefundAt\": \"2026-10-30T05:40:00Z\"\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R4] 200 bookings per day, last 30 days",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
+                  "pm.test('30 days', function () { pm.expect(pm.response.json().data.length).to.eql(30); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stats/bookings-daily",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stats",
+                "bookings-daily"
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/stats/bookings-daily",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "stats",
+                    "bookings-daily"
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"date\": \"2026-10-01\",\n      \"bookingCount\": 0\n    },\n    {\n      \"date\": \"2026-10-02\",\n      \"bookingCount\": 7\n    },\n    {\n      \"date\": \"2026-10-30\",\n      \"bookingCount\": 12\n    }\n  ],\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R9] 200 stadiums by district and format",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums?district=Chilonzor&format=5x5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums"
+              ],
+              "query": [
+                {
+                  "key": "district",
+                  "value": "Chilonzor"
+                },
+                {
+                  "key": "format",
+                  "value": "5x5"
+                }
+              ]
+            },
+            "description": "district: one of Bektemir, Chilonzor, Mirobod, Mirzo Ulugʻbek (U+02BB), Olmazor, Sergeli, Shayxontohur, Uchtepa, Yakkasaroy, Yangihayot, Yashnobod, Yunusobod. status also takes rejected."
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/stadiums?district=Chilonzor&format=5x5",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "stadiums"
+                  ],
+                  "query": [
+                    {
+                      "key": "district",
+                      "value": "Chilonzor"
+                    },
+                    {
+                      "key": "format",
+                      "value": "5x5"
+                    }
+                  ]
+                },
+                "description": "district: one of Bektemir, Chilonzor, Mirobod, Mirzo Ulugʻbek (U+02BB), Olmazor, Sergeli, Shayxontohur, Uchtepa, Yakkasaroy, Yangihayot, Yashnobod, Yunusobod. status also takes rejected."
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"name\": \"Chilonzor Arena\",\n        \"address\": \"Toshkent, Chilonzor 12\",\n        \"district\": \"Chilonzor\",\n        \"photoUrl\": \"https://cdn.minipolya.uz/s/1.jpg\",\n        \"pricePerHour\": 20000000,\n        \"price\": 20310000,\n        \"ownerContractStatus\": \"signed\",\n        \"ownerName\": \"Owner One\",\n        \"ownerId\": \"0190a1b2-0000-7000-8000-00000000000c\",\n        \"status\": \"approved\",\n        \"format\": \"5x5\",\n        \"surfaceType\": \"artificial\",\n        \"averageRating\": 4.5,\n        \"reviewCount\": 2,\n        \"totalBookings\": 40,\n        \"totalRevenue\": 812400000,\n        \"createdAt\": \"2026-10-01T08:00:00Z\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R9] 400 unknown district",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums?district=Nowhere",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums"
+              ],
+              "query": [
+                {
+                  "key": "district",
+                  "value": "Nowhere"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/stadiums?district=Nowhere",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "stadiums"
+                  ],
+                  "query": [
+                    {
+                      "key": "district",
+                      "value": "Nowhere"
+                    }
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"message\": \"Invalid district\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R9] 200 stadium to review, any status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
+                  "pm.test('pricing rules and both prices', function () { var d = pm.response.json().data; pm.expect(d).to.have.property('pricingRules'); pm.expect(d).to.have.property('netPrice'); pm.expect(d).to.have.property('price'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{stadiumId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "stadiums",
+                    "{{stadiumId}}"
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"ownerId\": \"0190a1b2-0000-7000-8000-00000000000c\",\n    \"ownerName\": \"Owner One\",\n    \"ownerPhone\": \"998901112233\",\n    \"name\": \"Chilonzor Arena\",\n    \"address\": \"Toshkent, Chilonzor 12\",\n    \"district\": \"Chilonzor\",\n    \"latitude\": 41.2856,\n    \"longitude\": 69.2034,\n    \"phone\": \"+998901112233\",\n    \"description\": \"Yopiq maydon\",\n    \"format\": \"5x5\",\n    \"surfaceType\": \"artificial\",\n    \"openTime\": \"08:00:00\",\n    \"closeTime\": \"23:00:00\",\n    \"pricePerHour\": 20000000,\n    \"price\": 20310000,\n    \"netPrice\": 20000000,\n    \"cardFee\": 310000,\n    \"minBookingAmount\": 10000000,\n    \"status\": \"pending\",\n    \"isActive\": true,\n    \"cancellationPolicy\": {\n      \"cancellationHours\": 24\n    },\n    \"photos\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000d\",\n        \"url\": \"https://cdn.minipolya.uz/s/1.jpg\",\n        \"position\": 0\n      }\n    ],\n    \"amenities\": {\n      \"parking\": true,\n      \"lighting\": true,\n      \"showers\": false,\n      \"lockerRoom\": true,\n      \"wifi\": false,\n      \"cafe\": false,\n      \"equipmentRental\": true,\n      \"tribune\": false\n    },\n    \"createdAt\": \"2026-10-01T08:00:00Z\",\n    \"updatedAt\": \"2026-10-01T08:00:00Z\",\n    \"photoUrl\": \"https://cdn.minipolya.uz/s/1.jpg\",\n    \"ownerContractStatus\": \"signed\",\n    \"cancellationHours\": 24,\n    \"averageRating\": 0,\n    \"reviewCount\": 0,\n    \"totalBookings\": 0,\n    \"totalRevenue\": 0,\n    \"pricingRules\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000e\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"dayOfWeek\": 5,\n        \"startTime\": \"18:00:00\",\n        \"endTime\": \"23:00:00\",\n        \"pricePerHour\": 30000000,\n        \"price\": 30460000,\n        \"netPrice\": 30000000,\n        \"cardFee\": 460000,\n        \"isActive\": true,\n        \"createdAt\": \"2026-10-01T08:00:00Z\"\n      }\n    ]\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R14] 200 one owner’s stadiums",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums?ownerId={{ownerId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums"
+              ],
+              "query": [
+                {
+                  "key": "ownerId",
+                  "value": "{{ownerId}}"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/stadiums?ownerId={{ownerId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "stadiums"
+                  ],
+                  "query": [
+                    {
+                      "key": "ownerId",
+                      "value": "{{ownerId}}"
+                    }
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 0,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R10] 200 owner adds a stadium to be rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
+                  "pm.collectionVariables.set('rejectStadiumId', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/stadiums",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "stadiums"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Rejected Arena\",\n  \"address\": \"Toshkent, Sergeli 5\",\n  \"district\": \"Sergeli\",\n  \"format\": \"7x7\",\n  \"surfaceType\": \"artificial\",\n  \"openTime\": \"08:00\",\n  \"closeTime\": \"23:00\",\n  \"pricePerHour\": 15000000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "[R10] 400 reject without a reason",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{rejectStadiumId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{rejectStadiumId}}",
+                "status"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"rejected\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/stadiums/{{rejectStadiumId}}/status",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "stadiums",
+                    "{{rejectStadiumId}}",
+                    "status"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"rejected\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"message\": \"reason is required\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R10] 200 reject the stadium",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
+                  "pm.test('rejected with its reason', function () { var d = pm.response.json().data; pm.expect(d.status).to.eql('rejected'); pm.expect(d.statusReason).to.eql('Photos do not show the pitch'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{rejectStadiumId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{rejectStadiumId}}",
+                "status"
+              ]
+            },
+            "description": "rejected: only from pending; reason required (also for blocked), max 500. Invisible to players; the owner sees status and statusReason.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"rejected\",\n  \"reason\": \"Photos do not show the pitch\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/stadiums/{{rejectStadiumId}}/status",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "stadiums",
+                    "{{rejectStadiumId}}",
+                    "status"
+                  ]
+                },
+                "description": "rejected: only from pending; reason required (also for blocked), max 500. Invisible to players; the owner sees status and statusReason.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"rejected\",\n  \"reason\": \"Photos do not show the pitch\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-00000000000f\",\n    \"name\": \"Rejected Arena\",\n    \"status\": \"rejected\",\n    \"statusReason\": \"Photos do not show the pitch\"\n  },\n  \"message\": \"Stadium status updated\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R10] 400 reject it again",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{rejectStadiumId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{rejectStadiumId}}",
+                "status"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"rejected\",\n  \"reason\": \"Still wrong\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/stadiums/{{rejectStadiumId}}/status",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "stadiums",
+                    "{{rejectStadiumId}}",
+                    "status"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"rejected\",\n  \"reason\": \"Still wrong\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"message\": \"Only a pending stadium can be rejected\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R10] 200 the owner sees why",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
+                  "pm.test('rejected and its reason', function () { var s = pm.response.json().data.find(function (x) { return x.id === pm.collectionVariables.get('rejectStadiumId'); }); pm.expect(s.status).to.eql('rejected'); pm.expect(s.statusReason).to.eql('Photos do not show the pitch'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/stadiums",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "stadiums"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "[R12] 200 add an internal note",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
+                  "pm.test('note', function () { pm.expect(pm.response.json().message).to.eql('Note added'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/notes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{stadiumId}}",
+                "notes"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"28.10 qo'ng'iroq qilindi, juma kuni shartnoma imzolanadi\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/notes",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "stadiums",
+                    "{{stadiumId}}",
+                    "notes"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"28.10 qo'ng'iroq qilindi, juma kuni shartnoma imzolanadi\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-00000000000g\",\n    \"text\": \"28.10 qo'ng'iroq qilindi, juma kuni shartnoma imzolanadi\",\n    \"authorId\": \"0190a1b2-0000-7000-8000-00000000000h\",\n    \"authorName\": \"Dilnur Aliqulov\",\n    \"createdAt\": \"2026-10-30T09:20:00Z\"\n  },\n  \"message\": \"Note added\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R12] 400 empty note",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/notes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{stadiumId}}",
+                "notes"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"  \"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/notes",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "stadiums",
+                    "{{stadiumId}}",
+                    "notes"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"  \"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"message\": \"text is required\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R12] 200 internal notes, newest first",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/notes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{stadiumId}}",
+                "notes"
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/notes",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "stadiums",
+                    "{{stadiumId}}",
+                    "notes"
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"id\": \"0190a1b2-0000-7000-8000-00000000000g\",\n      \"text\": \"28.10 qo'ng'iroq qilindi, juma kuni shartnoma imzolanadi\",\n      \"authorId\": \"0190a1b2-0000-7000-8000-00000000000h\",\n      \"authorName\": \"Dilnur Aliqulov\",\n      \"createdAt\": \"2026-10-30T09:20:00Z\"\n    }\n  ],\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R11] 200 owner legal details",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/users/{{ownerId}}/legal-details",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "users",
+                "{{ownerId}}",
+                "legal-details"
+              ]
+            },
+            "description": "data is null when nothing has been entered yet."
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/users/{{ownerId}}/legal-details",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "users",
+                    "{{ownerId}}",
+                    "legal-details"
+                  ]
+                },
+                "description": "data is null when nothing has been entered yet."
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"legalType\": \"mchj\",\n    \"tin\": \"301234567\",\n    \"atmosContractStatus\": \"signed\",\n    \"atmosRecipientId\": \"RCP-OWNER-1\",\n    \"updatedAt\": \"2026-10-30T09:12:44.512Z\",\n    \"updatedByName\": \"Dilnur Aliqulov\"\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R11] 400 tin of the wrong length",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/users/{{ownerId}}/legal-details",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "users",
+                "{{ownerId}}",
+                "legal-details"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"legalType\": \"yatt\",\n  \"tin\": \"1234\",\n  \"atmosContractStatus\": \"none\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/users/{{ownerId}}/legal-details",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "users",
+                    "{{ownerId}}",
+                    "legal-details"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"legalType\": \"yatt\",\n  \"tin\": \"1234\",\n  \"atmosContractStatus\": \"none\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"message\": \"tin must be 9 digits (or 14 for self-employed)\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R11] 400 signed without a recipient id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/users/{{ownerId}}/legal-details",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "users",
+                "{{ownerId}}",
+                "legal-details"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"legalType\": \"mchj\",\n  \"tin\": \"301234567\",\n  \"atmosContractStatus\": \"signed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/users/{{ownerId}}/legal-details",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "users",
+                    "{{ownerId}}",
+                    "legal-details"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"legalType\": \"mchj\",\n  \"tin\": \"301234567\",\n  \"atmosContractStatus\": \"signed\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"message\": \"atmosRecipientId is required when the contract is signed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R13] 200 owners who are not blocked",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/users?role=owner&status=active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "users"
+              ],
+              "query": [
+                {
+                  "key": "role",
+                  "value": "owner"
+                },
+                {
+                  "key": "status",
+                  "value": "active"
+                }
+              ]
+            },
+            "description": "role: player (neither owner nor admin) | owner | admin. status: active | blocked. Combined with search by AND."
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/users?role=owner&status=active",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "users"
+                  ],
+                  "query": [
+                    {
+                      "key": "role",
+                      "value": "owner"
+                    },
+                    {
+                      "key": "status",
+                      "value": "active"
+                    }
+                  ]
+                },
+                "description": "role: player (neither owner nor admin) | owner | admin. status: active | blocked. Combined with search by AND."
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000c\",\n        \"name\": \"Owner One\",\n        \"phone\": \"998901112233\",\n        \"language\": \"uz\",\n        \"isOwner\": true,\n        \"isAdmin\": false,\n        \"isBlocked\": false,\n        \"bookingCount\": 0,\n        \"stadiumCount\": 2,\n        \"createdAt\": \"2026-10-01T08:00:00Z\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R13] 400 unknown role",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/users?role=superuser",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "users"
+              ],
+              "query": [
+                {
+                  "key": "role",
+                  "value": "superuser"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/users?role=superuser",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "users"
+                  ],
+                  "query": [
+                    {
+                      "key": "role",
+                      "value": "superuser"
+                    }
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"message\": \"Invalid role\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "[R14] 200 a user’s teams",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is NaN', function () { pm.response.to.have.status(NaN); });",
+                  "pm.test('a list', function () { pm.expect(pm.response.json().data).to.be.an('array'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/users/{{teamLeaderAId}}/teams",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "users",
+                "{{teamLeaderAId}}",
+                "teams"
+              ]
+            },
+            "description": ""
+          },
+          "response": [
+            {
+              "name": "Example",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{adminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/users/{{teamLeaderAId}}/teams",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "users",
+                    "{{teamLeaderAId}}",
+                    "teams"
+                  ]
+                },
+                "description": ""
+              },
+              "status": "NaN",
+              "code": null,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"id\": \"0190a1b2-0000-7000-8000-000000000007\",\n      \"name\": \"Lions\",\n      \"leaderName\": \"Leader A\",\n      \"memberCount\": 3,\n      \"role\": \"leader\"\n    }\n  ],\n  \"message\": null\n}"
+            }
+          ]
         }
       ]
     },
@@ -14396,6 +18231,372 @@
               "path": [
                 "api",
                 "cards"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "15 Admin login",
+      "description": "Username + password sign-in for the admin web panel (CLAUDE.md, \"Admin accounts\").\n\nSetup: create a password admin with the SQL in CLAUDE.md and put its username and\npassword into adminUsername / adminPassword in your local environment only. Never\ncommit a real password. Passwords cannot be changed through the API; they are set\nand reset only in the database (CLAUDE.md, \"Admin accounts\").\n\nThe account lockout (5 wrong passwords -> 423 for 15 minutes) is covered by unit\ntests, not here: running it would lock the admin used by this folder. This folder\nmakes 4 sign-in attempts that count, so a sixth run within 15 minutes reaches the\nper-IP limit of 20 (429 TOO_MANY_ATTEMPTS); restart the app to reset it.",
+      "item": [
+        {
+          "name": "400 sign in without a password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/admin/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "admin",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{adminUsername}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "401 sign in with an unknown username",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('code is INVALID_CREDENTIALS', function () {",
+                  "    pm.expect(pm.response.json().code).to.eql('INVALID_CREDENTIALS');",
+                  "});",
+                  "pm.test('same message for a wrong username and a wrong password', function () {",
+                  "    pm.expect(pm.response.json().message).to.eql(\"Login yoki parol noto'g'ri\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/admin/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "admin",
+                "login"
+              ]
+            },
+            "description": "Same answer as a wrong password, so usernames cannot be discovered.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"no-such-admin-{{$randomUUID}}\",\n  \"password\": \"whatever-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "401 sign in with a wrong password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('code is INVALID_CREDENTIALS', function () {",
+                  "    pm.expect(pm.response.json().code).to.eql('INVALID_CREDENTIALS');",
+                  "});",
+                  "pm.test('same message for a wrong username and a wrong password', function () {",
+                  "    pm.expect(pm.response.json().message).to.eql(\"Login yoki parol noto'g'ri\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/admin/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "admin",
+                "login"
+              ]
+            },
+            "description": "Counts one failed attempt; the successful sign-in that follows resets it.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{adminUsername}}\",\n  \"password\": \"definitely-not-the-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "401 a Telegram-only player cannot sign in this way",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('code is INVALID_CREDENTIALS', function () {",
+                  "    pm.expect(pm.response.json().code).to.eql('INVALID_CREDENTIALS');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/admin/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "admin",
+                "login"
+              ]
+            },
+            "description": "Players have no username or password; any such attempt is INVALID_CREDENTIALS.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"Player1\",\n  \"password\": \"whatever-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "200 sign in with username and password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('captured adminPasswordToken', function () {",
+                  "    var v = pm.response.json().data.token;",
+                  "    pm.expect(v, 'adminPasswordToken').to.be.a('string');",
+                  "    pm.environment.set('adminPasswordToken', v);",
+                  "});",
+                  "pm.test('the user is an admin', function () {",
+                  "    pm.expect(pm.response.json().data.user.isAdmin).to.eql(true);",
+                  "});",
+                  "pm.test('no password or hash in the response', function () {",
+                  "    var raw = pm.response.text().toLowerCase();",
+                  "    ['passwordhash', 'password_hash', '$2a$', '$2b$'].forEach(function (bad) {",
+                  "        pm.expect(raw).to.not.include(bad);",
+                  "    });",
+                  "    var pw = pm.environment.get('adminPassword');",
+                  "    if (pw) { pm.expect(pm.response.text()).to.not.include(pw); }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/admin/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "admin",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{adminUsername}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "200 an admin endpoint accepts the password-login token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminPasswordToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "settings"
               ]
             },
             "description": ""

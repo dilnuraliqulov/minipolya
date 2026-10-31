@@ -2,6 +2,11 @@ package uz.minipolya.minipolya_backend.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditActorType;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.dto.request.CreatePromotionRequest;
 import uz.minipolya.minipolya_backend.dto.response.PromotionResponse;
 import uz.minipolya.minipolya_backend.entity.Promotion;
@@ -36,6 +41,7 @@ class PromotionServiceTest {
     private StadiumRepository stadiumRepository;
     private PromotionMapper promotionMapper;
     private PromotionService service;
+    private AuditService auditService;
 
     private User owner;
     private Stadium stadium;
@@ -45,7 +51,8 @@ class PromotionServiceTest {
         promotionRepository = mock(PromotionRepository.class);
         stadiumRepository = mock(StadiumRepository.class);
         promotionMapper = mock(PromotionMapper.class);
-        service = new PromotionService(promotionRepository, stadiumRepository, promotionMapper);
+        auditService = mock(AuditService.class);
+        service = new PromotionService(promotionRepository, stadiumRepository, promotionMapper, auditService);
 
         owner = User.builder().id(OWNER_ID).name("Owner").build();
         stadium = Stadium.builder().id(STADIUM_ID).name("Arena").owner(owner).build();
@@ -113,6 +120,11 @@ class PromotionServiceTest {
         service.deactivatePromotion(promotionId, OWNER_ID);
 
         assertThat(promotion.isActive()).isFalse();
+        AuditEntry entry = Audited.one(auditService, AuditAction.PROMOTION_DEACTIVATED);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.OWNER);
+        assertThat(entry.getActorId()).isEqualTo(OWNER_ID);
+        assertThat(entry.getEntityId()).isEqualTo(promotionId);
+        assertThat(entry.getChanges()).containsExactly(AuditChange.of("isActive", true, false));
     }
 
     @Test

@@ -8,6 +8,8 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import uz.minipolya.minipolya_backend.entity.Review;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -24,4 +26,8 @@ public interface ReviewRepository extends JpaRepository<Review, UUID> {
     Double averageRatingByStadiumId(@Param("stadiumId") UUID stadiumId);
 
     int countByStadiumId(UUID stadiumId);
+
+    /** {@code [stadiumId, average rating, review count]} for several stadiums at once — for a list. */
+    @Query("SELECT r.stadium.id, AVG(r.rating), COUNT(r) FROM Review r WHERE r.stadium.id IN :ids GROUP BY r.stadium.id")
+    List<Object[]> ratingsByStadiumIds(@Param("ids") Collection<UUID> ids);
 }

@@ -6,11 +6,16 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateStadiumStatusRequest;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateUserRequest;
 import uz.minipolya.minipolya_backend.dto.response.AdminPlatformStatsResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminUserResponse;
+import uz.minipolya.minipolya_backend.dto.response.DailyBookingCountResponse;
 import uz.minipolya.minipolya_backend.dto.response.OwnerRevenueResponse;
 import uz.minipolya.minipolya_backend.dto.response.OwnerRevenueResponse.DailyRevenue;
 import uz.minipolya.minipolya_backend.entity.Booking;
@@ -25,7 +30,6 @@ import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.OwnerApplicationRepository;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
-import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
@@ -38,6 +42,7 @@ import java.time.temporal.TemporalAdjusters;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -53,18 +58,24 @@ public class AdminService {
 
     private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
     private static final List<String> COUNTED_STATUSES = List.of("confirmed", "completed");
+    private static final int MAX_STATUS_REASON = 500;
+    /** The overview chart's span: the last 30 days, today included. */
+    private static final int CHART_DAYS = 30;
 
     private final UserRepository userRepository;
     private final StadiumRepository stadiumRepository;
     private final BookingRepository bookingRepository;
     private final PaymentRepository paymentRepository;
     private final GameRepository gameRepository;
-    private final ReviewRepository reviewRepository;
     private final OwnerApplicationRepository ownerApplicationRepository;
     private final PaymentService paymentService;
     private final NotificationService notificationService;
     private final AuditService auditService;
     private final GameService gameService;
+    private final RevenueService revenueService;
+    private final AdminStadiumService adminStadiumService;
+    private final OwnerLegalDetailsService ownerLegalDetailsService;
+    private final AdminUserService adminUserService;
 
     @Transactional(readOnly = true)
     public AdminPlatformStatsResponse getPlatformStats() {
@@ -76,61 +87,110 @@ public class AdminService {
         OffsetDateTime weekEnd = startOfDay(weekStartDate.plusWeeks(1));
         OffsetDateTime monthStart = startOfDay(today.withDayOfMonth(1));
         OffsetDateTime monthEnd = startOfDay(today.withDayOfMonth(1).plusMonths(1));
-        Payment.Status completed = Payment.Status.COMPLETED;
-
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        // Last month's 1st up to and including the same day of the month (its last day if
+        // last month is shorter): the stretch this month's revenue so far is compared with.
+        LocalDate previousMonthFirst = today.withDayOfMonth(1).minusMonths(1);
+        OffsetDateTime previousMonthStart = startOfDay(previousMonthFirst);
+        OffsetDateTime previousMonthToDateEnd = startOfDay(
+                previousMonthFirst.plusDays(Math.min(today.getDayOfMonth(), previousMonthFirst.lengthOfMonth())));
         return AdminPlatformStatsResponse.builder()
                 .totalUsers(userRepository.count())
                 .totalOwners(userRepository.countByIsOwnerTrue())
                 .newUsersToday(userRepository.countByCreatedAtAfter(todayStart))
                 .newUsersThisWeek(userRepository.countByCreatedAtAfter(weekStart))
+                .newUsersLast7Days(userRepository.countByCreatedAtAfter(now.minusDays(7)))
                 .newUsersThisMonth(userRepository.countByCreatedAtAfter(monthStart))
                 .totalStadiums(stadiumRepository.count())
                 .approvedStadiums(stadiumRepository.countByStatus("approved"))
                 .pendingStadiums(stadiumRepository.countByStatus("pending"))
                 .blockedStadiums(stadiumRepository.countByStatus("blocked"))
+                .rejectedStadiums(stadiumRepository.countByStatus("rejected"))
                 .totalBookings(bookingRepository.countByStatusIn(COUNTED_STATUSES))
-                .todayBookings(bookingRepository.countByStatusInAndStartsAtBetween(COUNTED_STATUSES, todayStart, todayEnd))
-                .weekBookings(bookingRepository.countByStatusInAndStartsAtBetween(COUNTED_STATUSES, weekStart, weekEnd))
-                .monthBookings(bookingRepository.countByStatusInAndStartsAtBetween(COUNTED_STATUSES, monthStart, monthEnd))
-                .totalRevenue(paymentRepository.sumTotalRevenue(completed))
-                .todayRevenue(paymentRepository.sumRevenueAfter(completed, todayStart))
-                .weekRevenue(paymentRepository.sumRevenueAfter(completed, weekStart))
-                .monthRevenue(paymentRepository.sumRevenueAfter(completed, monthStart))
+                .todayBookings(countedBookings(todayStart, todayEnd))
+                .weekBookings(countedBookings(weekStart, weekEnd))
+                .monthBookings(countedBookings(monthStart, monthEnd))
+                // Card money kept, cash excluded: the same calculation as /api/admin/payments/summary.
+                .totalRevenue(revenueService.total().appRevenue())
+                .todayRevenue(appRevenue(todayStart, todayEnd))
+                .weekRevenue(appRevenue(weekStart, weekEnd))
+                .monthRevenue(appRevenue(monthStart, monthEnd))
                 .totalGames(gameRepository.count())
                 .activeGames(gameRepository.countByStatus("open"))
                 .pendingOwnerApplications(ownerApplicationRepository.countByStatus(OwnerApplication.Status.PENDING))
                 .pendingStadiumApprovals(stadiumRepository.countByStatus("pending"))
+                .todayBookingsLastWeek(countedBookings(startOfDay(today.minusDays(7)), startOfDay(today.minusDays(6))))
+                .previousMonthRevenueToDate(appRevenue(previousMonthStart, previousMonthToDateEnd))
+                .newUsersPrevious7Days(userRepository.countByCreatedAtGreaterThanEqualAndCreatedAtLessThan(
+                        now.minusDays(14), now.minusDays(7)))
+                .approvedStadiumsWeekAgo(adminStadiumService.approvedCountAt(now.minusDays(7)))
+                .failedRefunds(paymentRepository.countByPaymentTypeAndStatus(
+                        Payment.PaymentType.REFUND, Payment.Status.FAILED))
+                .oldestFailedRefundAt(paymentRepository.findFirstByPaymentTypeAndStatusOrderByCreatedAtAsc(
+                                Payment.PaymentType.REFUND, Payment.Status.FAILED)
+                        .map(Payment::getCreatedAt)
+                        .orElse(null))
                 .build();
     }
 
+    /**
+     * The overview chart: card money kept on each of the last 30 Tashkent days, every day
+     * present — the same calculation as the payments summary.
+     */
     @Transactional(readOnly = true)
     public OwnerRevenueResponse getPlatformRevenue() {
         LocalDate today = LocalDate.now(TASHKENT);
-        OffsetDateTime from = startOfDay(today.minusDays(29));
-        Map<LocalDate, long[]> byDate = new LinkedHashMap<>(); // [revenue in tiyin, count]
-        for (Payment payment : paymentRepository.findPositiveCompletedSince(Payment.Status.COMPLETED, from)) {
-            LocalDate date = payment.getCreatedAt().atZoneSameInstant(TASHKENT).toLocalDate();
-            long[] agg = byDate.computeIfAbsent(date, d -> new long[2]);
-            agg[0] += payment.getAmount();
-            agg[1] += 1;
-        }
-        List<DailyRevenue> daily = byDate.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
+        LocalDate first = today.minusDays(CHART_DAYS - 1);
+        Map<LocalDate, Long> bookings = dailyBookingCounts(first, today);
+        List<DailyRevenue> daily = revenueService.daily(first, today).entrySet().stream()
                 .map(e -> DailyRevenue.builder()
-                        .date(e.getKey()).revenue(e.getValue()[0]).bookingCount((int) e.getValue()[1]).build())
+                        .date(e.getKey())
+                        .revenue(e.getValue().appRevenue())
+                        // The same figure as /stats/bookings-daily, which the chart should read.
+                        .bookingCount(bookings.get(e.getKey()).intValue())
+                        .build())
                 .toList();
         return OwnerRevenueResponse.builder().stadiumId(null).dailyRevenue(daily).build();
     }
 
-    // ---- Users ----
-
+    /**
+     * The overview chart: bookings starting on each of the last 30 Tashkent days, today
+     * included, every day present — counted like {@code todayBookings} (confirmed or
+     * completed).
+     */
     @Transactional(readOnly = true)
-    public Page<AdminUserResponse> getUsers(String search, Pageable pageable) {
-        Page<User> page = (search == null || search.isBlank())
-                ? userRepository.findAll(pageable)
-                : userRepository.searchUsers(search.trim(), pageable);
-        return page.map(this::buildUser);
+    public List<DailyBookingCountResponse> getDailyBookings() {
+        LocalDate today = LocalDate.now(TASHKENT);
+        return dailyBookingCounts(today.minusDays(CHART_DAYS - 1), today).entrySet().stream()
+                .map(e -> DailyBookingCountResponse.builder().date(e.getKey()).bookingCount(e.getValue()).build())
+                .toList();
     }
+
+    /** Each day from {@code first} to {@code last}, both included, with its count — zero when none. */
+    private Map<LocalDate, Long> dailyBookingCounts(LocalDate first, LocalDate last) {
+        Map<LocalDate, Long> byDay = new LinkedHashMap<>();
+        for (LocalDate day = first; !day.isAfter(last); day = day.plusDays(1)) {
+            byDay.put(day, 0L);
+        }
+        for (Object[] row : bookingRepository.countStartingPerTashkentDay(
+                COUNTED_STATUSES, startOfDay(first), startOfDay(last.plusDays(1)))) {
+            LocalDate day = row[0] instanceof java.sql.Date date ? date.toLocalDate() : (LocalDate) row[0];
+            byDay.put(day, ((Number) row[1]).longValue());
+        }
+        return byDay;
+    }
+
+    /** Bookings counted by the overview (confirmed or completed) starting in {@code [from, to)}. */
+    private long countedBookings(OffsetDateTime from, OffsetDateTime to) {
+        return bookingRepository.countByStatusInAndStartsAtGreaterThanEqualAndStartsAtLessThan(
+                COUNTED_STATUSES, from, to);
+    }
+
+    private long appRevenue(OffsetDateTime from, OffsetDateTime to) {
+        return revenueService.between(from, to).revenue().appRevenue();
+    }
+
+    // ---- Users (the list is AdminUserService) ----
 
     @Transactional(readOnly = true)
     public AdminUserResponse getUser(UUID userId) {
@@ -150,9 +210,9 @@ public class AdminService {
             throw new BadRequestException("You cannot block yourself");
         }
 
-        boolean ownerChanged = request.getIsOwner() != null && request.getIsOwner() != user.isOwner();
-        boolean adminChanged = request.getIsAdmin() != null && request.getIsAdmin() != user.isAdmin();
-        boolean blockedChanged = request.getIsBlocked() != null && request.getIsBlocked() != user.isBlocked();
+        boolean wasOwner = user.isOwner();
+        boolean wasAdmin = user.isAdmin();
+        boolean wasBlocked = user.isBlocked();
         if (request.getIsOwner() != null) {
             user.setOwner(request.getIsOwner());
         }
@@ -164,45 +224,27 @@ public class AdminService {
         }
         userRepository.save(user);
 
-        if (ownerChanged) {
-            auditService.log(adminUserId, "USER_ROLE_CHANGED", "user", userId, "{\"isOwner\":" + user.isOwner() + "}");
+        String label = AuditLabels.user(user);
+        if (wasOwner != user.isOwner() || wasAdmin != user.isAdmin()) {
+            auditService.record(AuditEntry.admin(adminUserId, AuditAction.USER_ROLE_CHANGED)
+                    .entity(AuditEntityType.USER, userId, label)
+                    .change("isOwner", wasOwner, user.isOwner())
+                    .change("isAdmin", wasAdmin, user.isAdmin())
+                    .reason(request.getReason()));
         }
-        if (adminChanged) {
-            auditService.log(adminUserId, "USER_ROLE_CHANGED", "user", userId, "{\"isAdmin\":" + user.isAdmin() + "}");
-        }
-        if (blockedChanged) {
-            auditService.log(adminUserId, user.isBlocked() ? "USER_BLOCKED" : "USER_UNBLOCKED", "user", userId,
-                    "{\"isBlocked\":" + user.isBlocked() + "}");
+        if (wasBlocked != user.isBlocked()) {
+            auditService.record(AuditEntry.admin(adminUserId,
+                            user.isBlocked() ? AuditAction.USER_BLOCKED : AuditAction.USER_UNBLOCKED)
+                    .entity(AuditEntityType.USER, userId, label)
+                    .change("isBlocked", wasBlocked, user.isBlocked())
+                    .reason(request.getReason()));
         }
         log.info("Admin {} updated user {}: owner={} admin={} blocked={}",
                 adminUserId, userId, user.isOwner(), user.isAdmin(), user.isBlocked());
         return buildUser(user);
     }
 
-    // ---- Stadiums ----
-
-    @Transactional(readOnly = true)
-    public Page<AdminStadiumResponse> getStadiums(String status, String search, Pageable pageable) {
-        boolean hasStatus = status != null && !status.isBlank();
-        boolean hasSearch = search != null && !search.isBlank();
-        Page<Stadium> page;
-        if (hasStatus && hasSearch) {
-            page = stadiumRepository.searchStadiumsByStatus(status.trim(), search.trim(), pageable);
-        } else if (hasStatus) {
-            page = stadiumRepository.findByStatus(status.trim(), pageable);
-        } else if (hasSearch) {
-            page = stadiumRepository.searchStadiums(search.trim(), pageable);
-        } else {
-            page = stadiumRepository.findAll(pageable);
-        }
-        return page.map(this::buildStadium);
-    }
-
-    @Transactional(readOnly = true)
-    public AdminStadiumResponse getStadium(UUID stadiumId) {
-        return buildStadium(stadiumRepository.findById(stadiumId)
-                .orElseThrow(() -> new ResourceNotFoundException("Stadium not found")));
-    }
+    // ---- Stadiums (the list and detail are AdminStadiumService) ----
 
     @Transactional
     public AdminStadiumResponse updateStadiumStatus(UUID stadiumId, AdminUpdateStadiumStatusRequest request,
@@ -210,10 +252,35 @@ public class AdminService {
         Stadium stadium = stadiumRepository.findById(stadiumId)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
         String status = request.getStatus().trim();
-        String reason = request.getReason();
+        String reason = request.getReason() == null || request.getReason().isBlank() ? null : request.getReason().trim();
+        String oldStatus = stadium.getStatus();
+        String oldReason = stadium.getStatusReason();
+        boolean turnedDown = "rejected".equals(status) || "blocked".equals(status);
+        if (turnedDown && reason == null) {
+            throw new BadRequestException("reason is required");
+        }
+        if (reason != null && reason.length() > MAX_STATUS_REASON) {
+            throw new BadRequestException("reason must be at most 500 characters");
+        }
+        if ("rejected".equals(status) && !"pending".equals(oldStatus)) {
+            throw new BadRequestException("Only a pending stadium can be rejected");
+        }
+        if ("approved".equals(status) && !"approved".equals(oldStatus)) {
+            // Players will pay this owner by card: the payouts need a signed ATMOS contract.
+            ownerLegalDetailsService.requireSignedContract(stadium.getOwner().getId());
+        }
         stadium.setStatus(status);
+        // The owner sees why it was turned down; approving or reopening clears it.
+        stadium.setStatusReason(turnedDown ? reason : null);
         stadiumRepository.save(stadium);
         UUID ownerId = stadium.getOwner().getId();
+        if (!status.equals(oldStatus) || !Objects.equals(oldReason, stadium.getStatusReason())) {
+            auditService.record(AuditEntry.admin(adminUserId, statusAction(oldStatus, status))
+                    .entity(AuditEntityType.STADIUM, stadiumId, AuditLabels.stadium(stadium))
+                    .change("status", oldStatus, status)
+                    .change("statusReason", oldReason, stadium.getStatusReason())
+                    .reason(reason));
+        }
 
         switch (status) {
             case "approved" -> {
@@ -221,28 +288,43 @@ public class AdminService {
                 if (!owner.isOwner()) {
                     owner.setOwner(true);
                     userRepository.save(owner);
+                    auditService.record(AuditEntry.admin(adminUserId, AuditAction.USER_ROLE_CHANGED)
+                            .entity(AuditEntityType.USER, owner.getId(), AuditLabels.user(owner))
+                            .change("isOwner", false, true)
+                            .reason("Stadium approved: " + stadium.getName()));
                 }
                 notify(ownerId, Notification.Type.STADIUM_APPROVED, "Стадион одобрен",
                         "Ваш стадион «" + stadium.getName() + "» одобрен!",
                         Notification.ReferenceType.STADIUM, stadiumId);
-                auditService.log(adminUserId, "STADIUM_APPROVED", "stadium", stadiumId);
             }
+            case "rejected" -> notify(ownerId, Notification.Type.STADIUM_REJECTED, "Стадион отклонён",
+                    "Ваш стадион «" + stadium.getName() + "» отклонён. Причина: " + reason,
+                    Notification.ReferenceType.STADIUM, stadiumId);
             case "blocked" -> {
                 notify(ownerId, Notification.Type.STADIUM_REJECTED, "Стадион заблокирован",
-                        "Ваш стадион «" + stadium.getName() + "» заблокирован. Причина: "
-                                + (reason == null ? "не указана" : reason),
+                        "Ваш стадион «" + stadium.getName() + "» заблокирован. Причина: " + reason,
                         Notification.ReferenceType.STADIUM, stadiumId);
                 cancelFutureBookings(stadium, reason);
-                auditService.log(adminUserId, "STADIUM_BLOCKED", "stadium", stadiumId);
             }
-            default -> auditService.log(adminUserId, "STADIUM_STATUS_CHANGED", "stadium", stadiumId,
-                    "{\"status\":\"" + status + "\"}");
+            default -> {
+                // pending: nothing beyond the status itself, which is audited above.
+            }
         }
         log.info("Admin {} set stadium {} status to {}", adminUserId, stadiumId, status);
         return buildStadium(stadium);
     }
 
     // ---- Helpers ----
+
+    /** Which code a stadium status change gets. */
+    private static AuditAction statusAction(String oldStatus, String newStatus) {
+        return switch (newStatus) {
+            case "approved" -> "blocked".equals(oldStatus) ? AuditAction.STADIUM_UNBLOCKED : AuditAction.STADIUM_APPROVED;
+            case "rejected" -> AuditAction.STADIUM_REJECTED;
+            case "blocked" -> AuditAction.STADIUM_BLOCKED;
+            default -> AuditAction.STADIUM_STATUS_CHANGED;
+        };
+    }
 
     private void cancelFutureBookings(Stadium stadium, String reason) {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
@@ -252,10 +334,16 @@ public class AdminService {
             if (!"pending".equals(booking.getStatus()) && !"confirmed".equals(booking.getStatus())) {
                 continue;
             }
+            String oldStatus = booking.getStatus();
             booking.setStatus("cancelled_by_owner");
             booking.setCancelledAt(now);
             booking.setCancellationReason(cancelReason);
             bookingRepository.save(booking);
+            // A consequence of the block, not something anyone did to this booking by hand.
+            auditService.record(AuditEntry.system(AuditAction.BOOKING_CANCELLED_BY_OWNER)
+                    .entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
+                    .change("status", oldStatus, booking.getStatus())
+                    .reason(cancelReason));
             // Blocking a stadium is the platform's doing, so it follows the
             // owner rule: every card payment back in full, whatever the window.
             // A game booking holds none of its teams' money, so the game gives
@@ -275,39 +363,11 @@ public class AdminService {
     }
 
     private AdminUserResponse buildUser(User user) {
-        return AdminUserResponse.builder()
-                .id(user.getId())
-                .name(user.getName())
-                .phone(user.getPhone())
-                .telegramId(user.getTelegramId())
-                .language(user.getLanguage())
-                .isOwner(user.isOwner())
-                .isAdmin(user.isAdmin())
-                .isBlocked(user.isBlocked())
-                .bookingCount((int) bookingRepository.countByUserId(user.getId()))
-                .stadiumCount(user.isOwner() ? (int) stadiumRepository.countByOwnerId(user.getId()) : 0)
-                .createdAt(user.getCreatedAt())
-                .build();
+        return adminUserService.toResponse(user);
     }
 
     private AdminStadiumResponse buildStadium(Stadium stadium) {
-        Double avg = reviewRepository.averageRatingByStadiumId(stadium.getId());
-        return AdminStadiumResponse.builder()
-                .id(stadium.getId())
-                .name(stadium.getName())
-                .address(stadium.getAddress())
-                .ownerName(stadium.getOwner().getName())
-                .ownerId(stadium.getOwner().getId())
-                .status(stadium.getStatus())
-                .format(stadium.getFormat())
-                .surfaceType(stadium.getSurfaceType())
-                .averageRating(avg == null ? 0.0 : avg)
-                .reviewCount(reviewRepository.countByStadiumId(stadium.getId()))
-                .totalBookings((int) bookingRepository.countByStadiumIdAndStatusIn(stadium.getId(), COUNTED_STATUSES))
-                .totalRevenue(paymentRepository.sumRevenueByStadium(
-                        stadium.getId(), Payment.Status.COMPLETED, Payment.PaymentType.BOOKING))
-                .createdAt(stadium.getCreatedAt())
-                .build();
+        return adminStadiumService.toResponse(stadium);
     }
 
     private void notify(UUID userId, Notification.Type type, String title, String message,

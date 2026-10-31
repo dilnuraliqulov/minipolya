@@ -8,6 +8,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.config.AppProperties;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.request.CreateGameRequest;
 import uz.minipolya.minipolya_backend.dto.response.GameChallengeResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameDetailResponse;
@@ -17,6 +21,8 @@ import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
+import uz.minipolya.minipolya_backend.entity.Payment;
+import uz.minipolya.minipolya_backend.entity.SavedCard;
 import uz.minipolya.minipolya_backend.entity.PlatformSettings;
 import uz.minipolya.minipolya_backend.entity.Notification;
 import uz.minipolya.minipolya_backend.entity.Stadium;
@@ -78,6 +84,7 @@ public class GameService {
     private final BookingWindowValidator bookingWindowValidator;
     private final PlatformSettingsService platformSettingsService;
     private final TeamGameService teamGameService;
+    private final SavedCardService savedCardService;
 
     @Transactional
     public GameDetailResponse createGame(CreateGameRequest request, UUID creatorUserId) {
@@ -143,13 +150,21 @@ public class GameService {
             teamGameService.createWaitingGame(saved, teamA, creator, request.getCardId());
         }
 
-        auditService.log(creatorUserId, "GAME_CREATED", "game", saved.getId(), "{\"type\":\"" + type + "\"}");
+        auditService.record(AuditEntry.player(creatorUserId, AuditAction.GAME_CREATED)
+                .entity(AuditEntityType.GAME, saved.getId(), AuditLabels.game(saved))
+                .created("type", saved.getType())
+                .created("status", saved.getStatus())
+                .created("startsAt", saved.getStartsAt())
+                .created("endsAt", saved.getEndsAt())
+                .created("maxPlayers", saved.getMaxPlayers())
+                .created("totalPrice", saved.getTotalPrice())
+                .created("teamA", saved.getTeamA() == null ? null : saved.getTeamA().getName()));
         log.info("Game created: id={} type={} stadiumId={} creatorId={}",
                 saved.getId(), type, stadium.getId(), creatorUserId);
         return toDetail(saved);
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = uz.minipolya.minipolya_backend.exception.PaymentStepFailedException.class)
     public GameParticipantResponse joinGame(UUID gameId, UUID userId, String side, UUID teamId, UUID cardId) {
         Game game = requireGame(gameId);
         if (!STATUS_OPEN.equals(game.getStatus())) {
@@ -160,6 +175,8 @@ public class GameService {
         }
 
         GameParticipant.Side assignedSide = null;
+        long playersBefore = participantRepository.findByGameId(gameId).size();
+        String joinedTeam = null;
         if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
             // A leader joins with an explicit side; invited members join without one (no payment).
             assignedSide = parseSide(side);
@@ -171,6 +188,7 @@ public class GameService {
                 User leader = userRepository.findById(userId)
                         .orElseThrow(() -> new ResourceNotFoundException("User not found"));
                 teamGameService.join(game, teamB, leader, cardId);
+                joinedTeam = teamB.getName();
                 // The game has just taken the slot, so any other team still
                 // waiting on it must be cleared and refunded — the same rule an
                 // ordinary booking follows. This game is 'confirmed' by now, so
@@ -178,8 +196,7 @@ public class GameService {
                 cancelGamesOnSlot(game.getStadium().getId(), game.getStartsAt(), game.getEndsAt());
             }
         } else {
-            long current = participantRepository.findByGameId(gameId).size();
-            if (current >= game.getMaxPlayers()) {
+            if (playersBefore >= game.getMaxPlayers()) {
                 throw new BadRequestException("Game is already full");
             }
         }
@@ -192,6 +209,11 @@ public class GameService {
         safeNotify(() -> notificationService.notify(game.getCreator().getId(),
                 Notification.Type.GAME_PLAYER_JOINED, "Новый игрок",
                 user.getName() + " присоединился к вашей игре.", Notification.ReferenceType.GAME, game.getId()));
+        auditService.record(AuditEntry.player(userId, AuditAction.GAME_JOINED)
+                .entity(AuditEntityType.GAME, gameId, AuditLabels.game(game))
+                .change("players", playersBefore, playersBefore + 1)
+                .created("side", assignedSide)
+                .created("team", joinedTeam));
         log.info("Game joined: gameId={} userId={} side={}", gameId, userId, assignedSide);
         return participantMapper.toResponse(participant);
     }
@@ -204,7 +226,7 @@ public class GameService {
     }
 
     /** A team leader settles their own team's remainder from a saved card. */
-    @Transactional
+    @Transactional(noRollbackFor = uz.minipolya.minipolya_backend.exception.PaymentStepFailedException.class)
     public void payTeamRemainder(UUID gameId, UUID userId, UUID cardId) {
         teamGameService.payRemainder(gameId, userId, cardId);
     }
@@ -224,6 +246,26 @@ public class GameService {
         return paymentService.initiateGamePayment(gameId, provider, userId);
     }
 
+    /**
+     * A casual player pays their share from a saved card through ATMOS: charged now,
+     * grossed up by the card fee, and reversed in full if the game is called off. The
+     * existing rule is unchanged — each player pays as they go, and the slot is booked once
+     * everyone has; nothing is held.
+     */
+    @Transactional
+    public PaymentInitResponse payForGameByCard(UUID gameId, UUID userId, UUID cardId) {
+        SavedCard card = savedCardService.requireOwnedCard(userId, cardId);
+        Payment payment = paymentService.chargeGameShare(gameId, userId, card);
+        if (payment.getStatus() == Payment.Status.FAILED) {
+            throw new BadRequestException("Card payment was declined");
+        }
+        return PaymentInitResponse.builder()
+                .paymentId(payment.getId())
+                .provider(Payment.Provider.ATMOS.getValue())
+                .status(payment.getStatus().getValue())
+                .build();
+    }
+
     @Transactional
     public void leaveGame(UUID gameId, UUID userId) {
         Game game = requireGame(gameId);
@@ -238,7 +280,11 @@ public class GameService {
         if (participant.getStatus() == GameParticipant.Status.PAID && participant.getPayment() != null) {
             paymentService.refundInFull(participant.getPayment(), "Left the game");
         }
+        long playersBefore = participantRepository.findByGameId(gameId).size();
         participantRepository.delete(participant);
+        auditService.record(AuditEntry.player(userId, AuditAction.GAME_LEFT)
+                .entity(AuditEntityType.GAME, gameId, AuditLabels.game(game))
+                .change("players", playersBefore, playersBefore - 1));
         safeNotify(() -> notificationService.notify(game.getCreator().getId(),
                 Notification.Type.GAME_PLAYER_LEFT, "Игрок вышел",
                 participant.getUser().getName() + " покинул вашу игру.",
@@ -279,12 +325,15 @@ public class GameService {
         if (!STATUS_OPEN.equals(game.getStatus())) {
             throw new BadRequestException("Only an open game can be cancelled");
         }
+        String oldStatus = game.getStatus();
         game.setStatus("cancelled_by_creator");
         gameRepository.save(game);
         refundPaidParticipants(game, "Game cancelled by creator");
+        auditService.record(AuditEntry.player(userId, AuditAction.GAME_CANCELLED)
+                .entity(AuditEntityType.GAME, gameId, AuditLabels.game(game))
+                .change("status", oldStatus, game.getStatus()));
         notifyParticipants(game, Notification.Type.GAME_CANCELLED, "Игра отменена",
                 "Игра в «" + game.getStadium().getName() + "» отменена создателем.");
-        auditService.log(userId, "GAME_CANCELLED", "game", gameId, "{\"reason\":\"cancelled_by_creator\"}");
         log.info("Game cancelled by creator: id={} userId={}", gameId, userId);
     }
 
@@ -306,12 +355,13 @@ public class GameService {
             return teamGameService.cancelForBookingCancelled(gameId, reason);
         }
         if (STATUS_OPEN.equals(game.getStatus()) || "confirmed".equals(game.getStatus())) {
+            String oldStatus = game.getStatus();
             game.setStatus("cancelled_slot_taken");
             gameRepository.save(game);
             refundPaidParticipants(game, reason);
+            auditAutoCancelled(game, oldStatus, reason);
             notifyParticipants(game, Notification.Type.GAME_CANCELLED, "Игра отменена",
                     "Игра в «" + game.getStadium().getName() + "» отменена.");
-            auditService.log(null, "GAME_CANCELLED", "game", gameId, "{\"reason\":\"booking_cancelled\"}");
         }
         // A casual game's refunds go through its participants' own payment
         // rows, which the booking does not own either.
@@ -346,12 +396,13 @@ public class GameService {
                         "Slot taken by another booking");
                 continue;
             }
+            String oldStatus = game.getStatus();
             game.setStatus("cancelled_slot_taken");
             gameRepository.save(game);
             refundPaidParticipants(game, "Slot taken by another booking");
+            auditAutoCancelled(game, oldStatus, "Slot taken by another booking");
             notifyParticipants(game, Notification.Type.GAME_CANCELLED, "Игра отменена",
                     "Слот игры в «" + game.getStadium().getName() + "» занят другим бронированием.");
-            auditService.log(null, "GAME_CANCELLED", "game", game.getId(), "{\"reason\":\"slot_taken\"}");
             log.info("Game {} cancelled: slot taken on stadium {}", game.getId(), stadiumId);
         }
     }
@@ -377,12 +428,13 @@ public class GameService {
         List<Game> others = gameRepository.findByStatusAndTypeNotAndStartsAtBefore(
                 STATUS_OPEN, TYPE_TEAM_VS_TEAM, now);
         for (Game game : others) {
+            String oldStatus = game.getStatus();
             game.setStatus("cancelled_not_filled");
             gameRepository.save(game);
             refundPaidParticipants(game, "Game did not fill in time");
+            auditAutoCancelled(game, oldStatus, "Game did not fill in time");
             notifyParticipants(game, Notification.Type.GAME_CANCELLED, "Игра отменена",
                     "Игра в «" + game.getStadium().getName() + "» не набрала игроков вовремя.");
-            auditService.log(null, "GAME_CANCELLED", "game", game.getId(), "{\"reason\":\"not_filled\"}");
         }
 
         int cancelled = teamGames.size() + others.size();
@@ -408,23 +460,38 @@ public class GameService {
                 .build();
         try {
             Booking saved = bookingRepository.saveAndFlush(booking);
+            String oldStatus = game.getStatus();
             game.setBookingId(saved.getId());
             game.setStatus("confirmed");
             assignSides(game);
             gameRepository.save(game);
             notifyParticipants(game, Notification.Type.GAME_CONFIRMED, "Игра подтверждена",
                     "Игра в «" + game.getStadium().getName() + "» подтверждена. Слот забронирован.");
-            auditService.log(game.getCreator().getId(), "GAME_CONFIRMED", "game", game.getId());
+            auditService.record(AuditEntry.system(AuditAction.GAME_CONFIRMED)
+                    .entity(AuditEntityType.GAME, game.getId(), AuditLabels.game(game))
+                    .change("status", oldStatus, game.getStatus())
+                    .created("bookingId", saved.getId())
+                    .reason("Every player has paid"));
             log.info("Game confirmed: id={} bookingId={}", game.getId(), saved.getId());
         } catch (DataIntegrityViolationException ex) {
+            String oldStatus = game.getStatus();
             game.setStatus("cancelled_slot_taken");
             gameRepository.save(game);
             refundPaidParticipants(game, "Slot was taken before the game was confirmed");
+            auditAutoCancelled(game, oldStatus, "Slot was taken before the game was confirmed");
             log.info("Game {} could not get its slot and was cancelled", game.getId());
         }
     }
 
     /** Team games are charged the per-team platform fee; everything else the casual service fee. */
+    /** A casual game the system had to call off: a SYSTEM entry, never one of the players'. */
+    private void auditAutoCancelled(Game game, String oldStatus, String reason) {
+        auditService.record(AuditEntry.system(AuditAction.GAME_AUTO_CANCELLED)
+                .entity(AuditEntityType.GAME, game.getId(), AuditLabels.game(game))
+                .change("status", oldStatus, game.getStatus())
+                .reason(reason));
+    }
+
     private long serviceFeeFor(String type) {
         PlatformSettings settings = platformSettingsService.current();
         return TYPE_TEAM_VS_TEAM.equals(type)
@@ -461,6 +528,11 @@ public class GameService {
         }
     }
 
+    /** The card fee with the settings in force now; a quote never asks the payment service. */
+    private CardPricing cardPricing() {
+        return new CardPricing(platformSettingsService::current);
+    }
+
     private GameDetailResponse toDetail(Game game) {
         GameDetailResponse dto = gameMapper.toDetailResponse(game);
         List<GameParticipant> participants = participantRepository.findByGameId(game.getId());
@@ -469,6 +541,11 @@ public class GameService {
         dto.setInviteLink(inviteLink(game.getId()));
         if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
             dto.setTeams(teamGameService.teamsOf(game));
+        } else if (game.getTotalPrice() != null) {
+            // What one player's share costs by card.
+            uz.minipolya.minipolya_backend.util.CardFeeSplit share = cardPricing().gameShareSplit(game);
+            dto.setPrice(share.playerAmount());
+            dto.setCardFee(share.cardFee());
         }
         return dto;
     }

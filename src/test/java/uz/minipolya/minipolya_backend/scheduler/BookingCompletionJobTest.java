@@ -5,8 +5,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditActorType;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
+import uz.minipolya.minipolya_backend.service.AuditService;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -24,6 +30,8 @@ class BookingCompletionJobTest {
 
     @Mock
     private BookingRepository bookingRepository;
+    @Mock
+    private AuditService auditService;
 
     @InjectMocks
     private BookingCompletionJob job;

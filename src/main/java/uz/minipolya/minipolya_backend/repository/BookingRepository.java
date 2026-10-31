@@ -3,6 +3,7 @@ package uz.minipolya.minipolya_backend.repository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -14,7 +15,7 @@ import java.util.List;
 import java.util.UUID;
 
 @Repository
-public interface BookingRepository extends JpaRepository<Booking, UUID> {
+public interface BookingRepository extends JpaRepository<Booking, UUID>, JpaSpecificationExecutor<Booking> {
 
     List<Booking> findByUserIdAndStatusIn(UUID userId, Collection<String> statuses);
 
@@ -43,9 +44,36 @@ public interface BookingRepository extends JpaRepository<Booking, UUID> {
 
     long countByUserId(UUID userId);
 
+    /** {@code [userId, count]} of the bookings each of several users made. */
+    @Query("SELECT b.user.id, COUNT(b) FROM Booking b WHERE b.user.id IN :ids GROUP BY b.user.id")
+    List<Object[]> countByUserIds(@Param("ids") Collection<UUID> ids);
+
     long countByStatusIn(Collection<String> statuses);
 
+    /** {@code [stadiumId, count]} of bookings in these statuses, for several stadiums at once. */
+    @Query("SELECT b.stadium.id, COUNT(b) FROM Booking b WHERE b.stadium.id IN :ids AND b.status IN :statuses GROUP BY b.stadium.id")
+    List<Object[]> countByStadiumIdsAndStatusIn(@Param("ids") Collection<UUID> ids,
+                                                @Param("statuses") Collection<String> statuses);
+
     long countByStatusInAndStartsAtBetween(Collection<String> statuses, OffsetDateTime from, OffsetDateTime to);
+
+    /** Bookings in these statuses starting in {@code [from, to)}: a booking at the boundary is in one period only. */
+    long countByStatusInAndStartsAtGreaterThanEqualAndStartsAtLessThan(Collection<String> statuses,
+                                                                    OffsetDateTime from, OffsetDateTime to);
+
+    /**
+     * {@code [Tashkent date, count]} of bookings in these statuses starting in {@code [from, to)},
+     * one row per day that has any.
+     */
+    @Query(value = """
+            SELECT CAST(b.starts_at AT TIME ZONE 'Asia/Tashkent' AS date) AS day, COUNT(*) AS bookings
+            FROM bookings b
+            WHERE b.status IN (:statuses) AND b.starts_at >= :from AND b.starts_at < :to
+            GROUP BY day
+            """, nativeQuery = true)
+    List<Object[]> countStartingPerTashkentDay(@Param("statuses") Collection<String> statuses,
+                                               @Param("from") OffsetDateTime from,
+                                               @Param("to") OffsetDateTime to);
 
     @Query("""
             SELECT COUNT(b) FROM Booking b

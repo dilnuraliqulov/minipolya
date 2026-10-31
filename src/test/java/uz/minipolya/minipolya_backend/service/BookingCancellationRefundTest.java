@@ -11,8 +11,7 @@ import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.mapper.BookingMapper;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
-import uz.minipolya.minipolya_backend.provider.ProviderTransaction;
-import uz.minipolya.minipolya_backend.provider.ProviderTransactionStatus;
+import uz.minipolya.minipolya_backend.repository.OwnerLegalDetailsRepository;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -63,15 +62,13 @@ class BookingCancellationRefundTest {
         paymentService = new PaymentService(paymentRepository, mock(BookingRepository.class),
                 mock(UserRepository.class), mock(GameRepository.class), mock(GameParticipantRepository.class),
                 mock(PaymentMapper.class), List.of(), mock(GameService.class),
-                mock(NotificationService.class), mock(AuditService.class), paymentProvider, settings);
+                mock(NotificationService.class), mock(AuditService.class), paymentProvider, settings, mock(OwnerLegalDetailsRepository.class));
 
         BookingMapper bookingMapper = mock(BookingMapper.class);
         when(bookingMapper.toResponse(any(Booking.class))).thenAnswer(inv -> new BookingResponse());
-        responseFactory = new BookingResponseFactory(bookingMapper, policy, paymentService);
+        responseFactory = new BookingResponseFactory(bookingMapper, policy, paymentService, CardPricing.withDefaults());
 
-        when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(paymentProvider.refund(anyString())).thenAnswer(inv ->
-                new ProviderTransaction(inv.getArgument(0), ProviderTransactionStatus.REFUNDED));
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(ProviderStubs.savedWithId());
 
         player = User.builder().id(USER_ID).name("Player").build();
         stadium = Stadium.builder().id(UUID.randomUUID()).name("Arena").cancellationHours(24).build();
@@ -138,8 +135,9 @@ class BookingCancellationRefundTest {
         assertThat(refunded).isEqualTo(MINIMUM + REMAINDER);
         assertThat(first.getStatus()).isEqualTo(Payment.Status.REFUNDED);
         assertThat(second.getStatus()).isEqualTo(Payment.Status.REFUNDED);
-        verify(paymentProvider).refund("txn-" + MINIMUM);
-        verify(paymentProvider).refund("txn-" + REMAINDER);
+        // Each transaction is reversed in full; reversal is the only refund ATMOS has.
+        verify(paymentProvider).reverse("txn-" + MINIMUM, "cancelled");
+        verify(paymentProvider).reverse("txn-" + REMAINDER, "cancelled");
     }
 
     @Test

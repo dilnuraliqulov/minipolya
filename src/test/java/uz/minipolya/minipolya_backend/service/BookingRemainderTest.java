@@ -2,8 +2,14 @@ package uz.minipolya.minipolya_backend.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import uz.minipolya.minipolya_backend.util.CardFeeSplit;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditActorType;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.SavedCard;
@@ -24,6 +30,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -69,10 +76,10 @@ class BookingRemainderTest {
 
         service = new BookingService(bookingRepository, mock(StadiumRepository.class),
                 mock(UserRepository.class), mock(BookingPriceCalculator.class), new CancellationPolicy(),
-                new BookingResponseFactory(bookingMapper, new CancellationPolicy(), paymentService),
+                new BookingResponseFactory(bookingMapper, new CancellationPolicy(), paymentService, CardPricing.withDefaults()),
                 new AppProperties(), paymentService, mock(GameService.class),
                 mock(NotificationService.class), auditService,
-                new BookingWindowValidator(mock(StadiumClosureService.class)), savedCardService);
+                new BookingWindowValidator(mock(StadiumClosureService.class)), savedCardService, CardPricing.withDefaults());
 
         player = User.builder().id(USER_ID).name("Player").build();
         stadium = Stadium.builder().id(STADIUM_ID).name("Arena").build();
@@ -94,7 +101,7 @@ class BookingRemainderTest {
     }
 
     private void chargeSucceeds(Booking booking) {
-        when(paymentService.chargeForBooking(any(Booking.class), any(SavedCard.class), anyLong(),
+        when(paymentService.chargeForBooking(any(Booking.class), any(SavedCard.class), any(CardFeeSplit.class),
                 eq(Payment.PaymentType.REMAINDER)))
                 .thenAnswer(inv -> {
                     booking.setPaidAmount(PRICE);
@@ -110,7 +117,7 @@ class BookingRemainderTest {
 
         service.payRemainder(USER_ID, BOOKING_ID, CARD_ID);
 
-        verify(paymentService).chargeForBooking(booking, card, REMAINDER, Payment.PaymentType.REMAINDER);
+        verify(paymentService).chargeForBooking(booking, card, TestPrices.net(REMAINDER), Payment.PaymentType.REMAINDER);
     }
 
     @Test
@@ -120,7 +127,7 @@ class BookingRemainderTest {
 
         service.payRemainder(USER_ID, BOOKING_ID, CARD_ID);
 
-        verify(paymentService).chargeForBooking(booking, card, REMAINDER, Payment.PaymentType.REMAINDER);
+        verify(paymentService).chargeForBooking(booking, card, TestPrices.net(REMAINDER), Payment.PaymentType.REMAINDER);
     }
 
     @Test
@@ -131,7 +138,7 @@ class BookingRemainderTest {
                 .isInstanceOf(BadRequestException.class)
                 .hasMessage("Already paid");
 
-        verify(paymentService, never()).chargeForBooking(any(), any(), anyLong(), any());
+        verify(paymentService, never()).chargeForBooking(any(), any(), any(CardFeeSplit.class), any());
     }
 
     @Test
@@ -141,7 +148,7 @@ class BookingRemainderTest {
         assertThatThrownBy(() -> service.payRemainder(USER_ID, BOOKING_ID, CARD_ID))
                 .isInstanceOf(BadRequestException.class);
 
-        verify(paymentService, never()).chargeForBooking(any(), any(), anyLong(), any());
+        verify(paymentService, never()).chargeForBooking(any(), any(), any(CardFeeSplit.class), any());
     }
 
     @Test
@@ -151,7 +158,7 @@ class BookingRemainderTest {
         assertThatThrownBy(() -> service.payRemainder(USER_ID, BOOKING_ID, CARD_ID))
                 .isInstanceOf(BadRequestException.class);
 
-        verify(paymentService, never()).chargeForBooking(any(), any(), anyLong(), any());
+        verify(paymentService, never()).chargeForBooking(any(), any(), any(CardFeeSplit.class), any());
     }
 
     @Test
@@ -161,13 +168,13 @@ class BookingRemainderTest {
         assertThatThrownBy(() -> service.payRemainder(OTHER_USER_ID, BOOKING_ID, CARD_ID))
                 .isInstanceOf(ForbiddenException.class);
 
-        verify(paymentService, never()).chargeForBooking(any(), any(), anyLong(), any());
+        verify(paymentService, never()).chargeForBooking(any(), any(), any(CardFeeSplit.class), any());
     }
 
     @Test
     void aDeclinedCardLeavesTheBookingPartiallyPaid() {
         Booking booking = booking("confirmed", Booking.PaymentStatus.PARTIALLY_PAID, PAID);
-        when(paymentService.chargeForBooking(any(), any(), anyLong(), eq(Payment.PaymentType.REMAINDER)))
+        when(paymentService.chargeForBooking(any(), any(), any(CardFeeSplit.class), eq(Payment.PaymentType.REMAINDER)))
                 .thenReturn(Payment.builder().amount(REMAINDER).status(Payment.Status.FAILED).build());
 
         service.payRemainder(USER_ID, BOOKING_ID, CARD_ID);
@@ -183,7 +190,36 @@ class BookingRemainderTest {
 
         service.payRemainder(USER_ID, BOOKING_ID, CARD_ID);
 
-        verify(auditService).log(eq(USER_ID), eq("BOOKING_REMAINDER_PAID"), eq("booking"), eq(BOOKING_ID),
-                any(String.class));
+        AuditEntry entry = Audited.one(auditService, AuditAction.BOOKING_REMAINDER_PAID);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.PLAYER);
+        assertThat(entry.getActorId()).isEqualTo(USER_ID);
+        assertThat(entry.getEntityId()).isEqualTo(BOOKING_ID);
+        assertThat(entry.getChanges()).containsExactly(
+                AuditChange.of("paidAmount", PAID, booking.getPrice()),
+                AuditChange.of("paymentStatus", "partially_paid", "paid"));
+    }
+
+    @Test
+    void aDeclinedRemainderRecordsNothing() {
+        Booking booking = booking("confirmed", Booking.PaymentStatus.PARTIALLY_PAID, PAID);
+        when(paymentService.chargeForBooking(any(), any(), any(CardFeeSplit.class), eq(Payment.PaymentType.REMAINDER)))
+                .thenReturn(Payment.builder().amount(REMAINDER).status(Payment.Status.FAILED).build());
+
+        service.payRemainder(USER_ID, BOOKING_ID, CARD_ID);
+
+        assertThat(Audited.entries(auditService)).isEmpty();
+    }
+
+    @Test
+    void theRemainderByCardIsTheNetRemainderGrossedUp() {
+        Booking booking = booking("confirmed", Booking.PaymentStatus.PARTIALLY_PAID, PAID);
+        chargeSucceeds(booking);
+
+        service.payRemainder(USER_ID, BOOKING_ID, CARD_ID);
+
+        verify(paymentService).chargeForBooking(any(Booking.class), any(SavedCard.class),
+                argThat(split -> split != null && split.net() == REMAINDER
+                        && split.playerAmount() == TestPrices.card(REMAINDER)),
+                eq(Payment.PaymentType.REMAINDER));
     }
 }

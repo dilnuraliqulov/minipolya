@@ -43,6 +43,14 @@ public class GameDetailResponse {
     private Long totalPrice;
     private Long serviceFeePerPerson;
 
+    /**
+     * A casual or open game: what one player's share costs by card (pitch share plus
+     * service fee, grossed up). Absent on a team game, whose teams[] carry their own.
+     */
+    private Long price;
+    /** price − the share's net. */
+    private Long cardFee;
+
     private UUID teamAId;
     private String teamAName;
     private UUID teamBId;

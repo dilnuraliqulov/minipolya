@@ -83,9 +83,16 @@ public class Booking {
     @Column(name = "duration_hours", nullable = false)
     private Integer durationHours;
 
-    /** Integer so'm — never floating point for money. */
+    /** The owner's net price in tiyin — what the owner set, never grossed up. */
     @Column(nullable = false)
     private Long price;
+
+    /**
+     * What the player is quoted to pay by card for the whole booking, in tiyin: the sum
+     * of each hour's card price when it was booked. Null for manual and older bookings.
+     */
+    @Column(name = "card_price")
+    private Long cardPrice;
 
     /** Running total of this booking's successful payments, in tiyin. */
     @Builder.Default

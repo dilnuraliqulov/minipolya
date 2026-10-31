@@ -6,6 +6,10 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.request.CreatePromotionRequest;
 import uz.minipolya.minipolya_backend.dto.response.PromotionResponse;
 import uz.minipolya.minipolya_backend.entity.Promotion;
@@ -37,6 +41,7 @@ public class PromotionService {
     private final PromotionRepository promotionRepository;
     private final StadiumRepository stadiumRepository;
     private final PromotionMapper promotionMapper;
+    private final AuditService auditService;
 
     @Transactional
     public PromotionResponse createPromotion(CreatePromotionRequest request, UUID ownerUserId) {
@@ -47,6 +52,15 @@ public class PromotionService {
         Promotion promotion = promotionMapper.toEntity(request);
         promotion.setStadium(stadium);
         Promotion saved = promotionRepository.save(promotion);
+        auditService.record(AuditEntry.owner(ownerUserId, AuditAction.PROMOTION_CREATED)
+                .entity(AuditEntityType.PROMOTION, saved.getId(), AuditLabels.promotion(saved))
+                .created("name", saved.getName())
+                .created("discountPercent", saved.getDiscountPercent())
+                .created("startsAt", saved.getStartsAt())
+                .created("endsAt", saved.getEndsAt())
+                .created("dayOfWeek", saved.getDayOfWeek())
+                .created("startTime", saved.getStartTime())
+                .created("endTime", saved.getEndTime()));
         log.info("Promotion created: id={} stadiumId={} discount={}%",
                 saved.getId(), stadium.getId(), saved.getDiscountPercent());
         return promotionMapper.toResponse(saved);
@@ -72,8 +86,14 @@ public class PromotionService {
         if (!promotion.getStadium().getOwner().getId().equals(ownerUserId)) {
             throw new ForbiddenException("You do not own this stadium");
         }
+        boolean wasActive = promotion.isActive();
         promotion.setActive(false);
         promotionRepository.save(promotion);
+        if (wasActive) {
+            auditService.record(AuditEntry.owner(ownerUserId, AuditAction.PROMOTION_DEACTIVATED)
+                    .entity(AuditEntityType.PROMOTION, promotionId, AuditLabels.promotion(promotion))
+                    .change("isActive", true, false));
+        }
         log.info("Promotion deactivated: id={} ownerId={}", promotionId, ownerUserId);
     }
 
@@ -100,6 +120,12 @@ public class PromotionService {
         ended.forEach(p -> p.setActive(false));
         if (!ended.isEmpty()) {
             promotionRepository.saveAll(ended);
+            for (Promotion promotion : ended) {
+                auditService.record(AuditEntry.system(AuditAction.PROMOTION_EXPIRED)
+                        .entity(AuditEntityType.PROMOTION, promotion.getId(), AuditLabels.promotion(promotion))
+                        .change("isActive", true, false)
+                        .reason("Promotion ended"));
+            }
             log.info("Expired {} promotion(s)", ended.size());
         }
         return ended.size();

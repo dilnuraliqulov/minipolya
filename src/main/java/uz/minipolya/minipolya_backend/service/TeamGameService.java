@@ -8,6 +8,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.config.AppProperties;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.response.GameChallengeResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameTeamResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
@@ -115,11 +119,12 @@ public class TeamGameService {
             throw new BadRequestException("cardId is required to create a team game");
         }
         SavedCard card = savedCardService.requireOwnedCard(leader.getId(), cardId);
+        int holdMinutes = holdMinutes(game, OffsetDateTime.now(ZoneOffset.UTC));
 
         GameTeam sideA = gameTeamRepository.saveAndFlush(
                 teamEntry(game, teamA, leader, Side.A, splitFor(game)));
 
-        Payment hold = paymentService.holdForTeamGame(sideA, card);
+        Payment hold = paymentService.holdForTeamGame(sideA, card, holdMinutes);
         if (hold.getStatus() == Payment.Status.FAILED) {
             throw new BadRequestException("Card payment was declined; the game was not created");
         }
@@ -146,7 +151,7 @@ public class TeamGameService {
      *   <li>confirm the booking and the game.</li>
      * </ol>
      */
-    @Transactional
+    @Transactional(noRollbackFor = uz.minipolya.minipolya_backend.exception.PaymentStepFailedException.class)
     public GameTeam join(Game game, Team teamB, User leader, UUID cardId) {
         if (teamB == null) {
             throw new BadRequestException("teamId is required to join as team B");
@@ -164,6 +169,7 @@ public class TeamGameService {
             throw new BadRequestException(TOO_LATE_TO_JOIN);
         }
         SavedCard card = savedCardService.requireOwnedCard(leader.getId(), cardId);
+        requireWaitingHoldsInPlace(game);
 
         // Not always side B. When the creating team walks out of a confirmed
         // game the team left behind is on side B, so the newcomer takes A.
@@ -187,13 +193,19 @@ public class TeamGameService {
         } else {
             game.setTeamB(teamB);
         }
+        String oldStatus = game.getStatus();
         game.setBookingId(booking.getId());
         game.setStatus(STATUS_CONFIRMED);
         gameRepository.save(game);
 
         notifyConfirmed(game);
-        auditService.log(leader.getId(), "GAME_CONFIRMED", "game", game.getId(),
-                "{\"teamBId\":\"" + teamB.getId() + "\",\"bookingId\":\"" + booking.getId() + "\"}");
+        // The leader's own act is GAME_JOINED (GameService); the confirmation it set off is SYSTEM.
+        auditService.record(AuditEntry.system(AuditAction.GAME_CONFIRMED)
+                .entity(AuditEntityType.GAME, game.getId(), AuditLabels.game(game))
+                .change("status", oldStatus, game.getStatus())
+                .created("team" + freeSide.getValue().toUpperCase(), teamB.getName())
+                .created("bookingId", booking.getId())
+                .reason("An opponent joined"));
         log.info("Team game confirmed: gameId={} teamBId={} bookingId={}",
                 game.getId(), teamB.getId(), booking.getId());
         return joining;
@@ -241,7 +253,7 @@ public class TeamGameService {
             if (waiting) {
                 // The timeout job would have refunded this team within the
                 // minute; racing it by hand must not cost them their money.
-                endWaitingGame(game, "cancelled_not_filled", "No opponent was found in time");
+                endWaitingGame(game, "cancelled_not_filled", "No opponent was found in time", userId);
                 return;
             }
             // Nobody can replace them in time, so the game is over: the leaver
@@ -249,9 +261,7 @@ public class TeamGameService {
             paymentService.keepAllTeamPayments(leaving.getId());
             releaseTeam(leaving, now);
             endWaitingGame(game, "cancelled_not_filled",
-                    "The opponent cancelled too close to kick-off");
-            auditService.log(userId, "GAME_CANCELLED", "game", game.getId(),
-                    "{\"reason\":\"opponent_left_past_deadline\",\"refunded\":false}");
+                    "The opponent cancelled too close to kick-off", userId);
             log.info("Confirmed team game ended: gameId={} leaverForfeited=true", game.getId());
             return;
         }
@@ -265,11 +275,14 @@ public class TeamGameService {
         releaseTeam(leaving, now);
 
         if (waiting) {
+            String oldStatus = game.getStatus();
             game.setStatus("cancelled_by_creator");
             gameRepository.save(game);
             notifyCancelled(game, "Игра отменена создателем.");
-            auditService.log(userId, "GAME_CANCELLED", "game", game.getId(),
-                    "{\"reason\":\"cancelled_by_creator\",\"refunded\":" + refundable + "}");
+            auditService.record(AuditEntry.player(userId, AuditAction.GAME_CANCELLED)
+                    .entity(AuditEntityType.GAME, game.getId(), AuditLabels.game(game))
+                    .change("status", oldStatus, game.getStatus())
+                    .reason(refundOutcome(refundable)));
             log.info("Waiting team game cancelled by its leader: gameId={} refunded={}",
                     game.getId(), refundable);
             return;
@@ -318,10 +331,18 @@ public class TeamGameService {
                 game.getStartsAt(), game.getStadium().getCancellationHours(), now);
     }
 
-    /** Ends a game nobody can play and gives every team still in it everything back. */
+    /** Ends a game nobody can play and gives every team still in it everything back. SYSTEM. */
     @Transactional
     public long endWaitingGame(Game game, String cancelStatus, String reason) {
-        long given = endGame(game, cancelStatus, reason);
+        return endWaitingGame(game, cancelStatus, reason, null);
+    }
+
+    /**
+     * As above, but ended by a leader's own cancellation when {@code cancelledBy} is set:
+     * then it is that player's GAME_CANCELLED, not the system's GAME_AUTO_CANCELLED.
+     */
+    private long endWaitingGame(Game game, String cancelStatus, String reason, UUID cancelledBy) {
+        long given = endGame(game, cancelStatus, reason, cancelledBy);
         notifyCancelled(game, reason);
         log.info("Team game ended: gameId={} status={} reason={} givenBack={}",
                 game.getId(), cancelStatus, reason, given);
@@ -336,7 +357,7 @@ public class TeamGameService {
      *                             nothing, whether because it already settled
      *                             or because its advance covered the pitch
      */
-    @Transactional
+    @Transactional(noRollbackFor = uz.minipolya.minipolya_backend.exception.PaymentStepFailedException.class)
     public GameTeam payRemainder(UUID gameId, UUID userId, UUID cardId) {
         Game game = requireGame(gameId);
         GameTeam team = gameTeamRepository
@@ -349,11 +370,19 @@ public class TeamGameService {
         if (payment.getStatus() == Payment.Status.FAILED) {
             throw new BadRequestException("Card payment was declined; the remainder is still owed");
         }
+        if (payment.getStatus() == Payment.Status.PROCESSING) {
+            // Kept (committed) for the reconcile job, which settles the remainder if it went through.
+            throw new uz.minipolya.minipolya_backend.exception.PaymentStepFailedException(
+                    "The card payment is still being confirmed; the remainder will be marked paid once it is");
+        }
 
+        GameTeam.RemainderStatus statusBefore = team.getRemainderStatus();
         settleRemainder(game, team);
-        auditService.log(userId, "GAME_REMAINDER_PAID", "game", gameId,
-                "{\"side\":\"" + team.getSide().getValue() + "\",\"amount\":"
-                        + team.getRemainderAmount() + ",\"method\":\"card\"}");
+        String side = team.getSide().getValue().toUpperCase();
+        auditService.record(AuditEntry.player(userId, AuditAction.GAME_REMAINDER_PAID)
+                .entity(AuditEntityType.GAME, gameId, AuditLabels.game(game))
+                .change("team" + side + ".remainderStatus", statusBefore, team.getRemainderStatus())
+                .created("team" + side + ".cardAmount", team.getRemainderAmount()));
         log.info("Team remainder paid by card: gameId={} side={} amount={}",
                 gameId, team.getSide().getValue(), team.getRemainderAmount());
         return team;
@@ -375,11 +404,14 @@ public class TeamGameService {
                 .orElseThrow(() -> new ResourceNotFoundException("No team is on side " + side.getValue()));
         requireOwing(team);
 
+        GameTeam.RemainderStatus statusBefore = team.getRemainderStatus();
         paymentService.recordCashTeamRemainder(team, game.getStadium().getOwner());
         settleRemainder(game, team);
-        auditService.log(ownerUserId, "GAME_REMAINDER_PAID", "game", gameId,
-                "{\"side\":\"" + side.getValue() + "\",\"amount\":"
-                        + team.getRemainderAmount() + ",\"method\":\"cash\"}");
+        auditService.record(AuditEntry.owner(ownerUserId, AuditAction.CASH_RECEIVED)
+                .entity(AuditEntityType.GAME, gameId, AuditLabels.game(game))
+                .change("team" + side.getValue().toUpperCase() + ".remainderStatus",
+                        statusBefore, team.getRemainderStatus())
+                .created("team" + side.getValue().toUpperCase() + ".cashAmount", team.getRemainderAmount()));
         log.info("Team remainder taken in cash: gameId={} side={} amount={}",
                 gameId, side.getValue(), team.getRemainderAmount());
         return team;
@@ -419,6 +451,11 @@ public class TeamGameService {
                 .map(this::toChallenge);
     }
 
+    /** The card fee with the settings in force now; a quote never asks the payment service. */
+    private CardPricing cardPricing() {
+        return new CardPricing(platformSettingsService::current);
+    }
+
     /** Each team's money, for the game response. */
     @Transactional(readOnly = true)
     public List<GameTeamResponse> teamsOf(Game game) {
@@ -434,7 +471,13 @@ public class TeamGameService {
                         .advanceAmount(team.getAdvanceAmount())
                         .remainderAmount(team.getRemainderAmount())
                         .remainderStatus(team.getRemainderStatus().getValue())
-                        .paidInApp(team.getFeeAmount() + team.paidTowardsPitch())
+                        // What is on the card now, gross: holds and settled charges not given back.
+                        .paidInApp(paymentService.refundableTeamTotal(team.getId()))
+                        .price(cardPricing().joinSplit(team).playerAmount())
+                        .cardFee(cardPricing().joinSplit(team).cardFee())
+                        .remainderByCard(team.owesRemainder()
+                                ? cardPricing().playerAmount(team.getRemainderAmount()) : 0L)
+                        .remainderInCash(team.owesRemainder() ? team.getRemainderAmount() : 0L)
                         .cancellationDeadline(cancellationPolicy.deadline(
                                 game.getStartsAt(), game.getStadium().getCancellationHours()))
                         .refundIfCancelledNow(refundIfCancelledNow(game, team, now))
@@ -445,6 +488,25 @@ public class TeamGameService {
     /** The last moment a new opponent can still arrive in time to play. */
     public OffsetDateTime opponentDeadline(Game game) {
         return game.getStartsAt().minusHours(appProperties.getGame().getOpponentDeadlineHours());
+    }
+
+    /** Slack past the 3-hour point, so the timeout job can release the hold before it lapses. */
+    static final int HOLD_SLACK_MINUTES = 120;
+
+    /**
+     * How long the creating team's hold must last: until the 3-hour point, when the game
+     * either has an opponent (and the hold is captured) or is over (and it is released),
+     * plus {@value #HOLD_SLACK_MINUTES} minutes of slack. Capped by
+     * {@code app.payments.hold-max-minutes}; a game that would need longer cannot be created.
+     */
+    int holdMinutes(Game game, OffsetDateTime now) {
+        long minutes = Math.max(0, Duration.between(now, opponentDeadline(game)).toMinutes()) + HOLD_SLACK_MINUTES;
+        int max = appProperties.getPayments().getHoldMaxMinutes();
+        if (minutes > max) {
+            throw new BadRequestException("A team game can be created at most "
+                    + (max - HOLD_SLACK_MINUTES) / (24 * 60) + " days before it is played");
+        }
+        return (int) minutes;
     }
 
     // ---- Helpers ----
@@ -485,17 +547,42 @@ public class TeamGameService {
     }
 
     /** A declined joiner costs nobody anything: the booking goes, the game waits on. */
+    /**
+     * Step 2: the joining team's charge. Anything but a confirmed charge removes the
+     * booking and leaves the game waiting. A decline moved no money, so it may roll back;
+     * an unanswered charge may have, so its row is committed and the reconcile job gives it
+     * back if it went through (its team has left the game by then).
+     */
     private void chargeJoiner(Game game, GameTeam joining, SavedCard card, Booking booking) {
         Payment charge = paymentService.chargeForTeamGame(joining, card, Payment.PaymentType.TEAM_GAME);
-        if (charge.getStatus() != Payment.Status.FAILED) {
+        if (charge.getStatus() == Payment.Status.PAID) {
             return;
         }
         bookingRepository.delete(booking);
         joining.setStatus(GameTeam.Status.CANCELLED);
         joining.setLeftAt(OffsetDateTime.now(ZoneOffset.UTC));
         gameTeamRepository.save(joining);
-        throw new BadRequestException(
-                "Card payment was declined; the game is still looking for an opponent");
+        if (charge.getStatus() == Payment.Status.FAILED) {
+            throw new BadRequestException(
+                    "Card payment was declined; the game is still looking for an opponent");
+        }
+        log.warn("Joining charge unanswered: gameId={} paymentId={}; the game goes on waiting",
+                game.getId(), charge.getId());
+        throw new uz.minipolya.minipolya_backend.exception.PaymentStepFailedException(
+                "The card payment could not be confirmed; the game is still looking for an opponent. "
+                        + "If the money was taken it will be returned in full");
+    }
+
+    /** A join must not go ahead while the waiting team's hold is still unconfirmed. */
+    private void requireWaitingHoldsInPlace(Game game) {
+        for (GameTeam waiting : gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)) {
+            boolean unsettled = paymentService.teamPayments(waiting.getId()).stream()
+                    .anyMatch(p -> p.getStatus() == Payment.Status.PROCESSING);
+            if (unsettled) {
+                throw new BadRequestException(
+                        "The other team's payment is still being confirmed; try again in a few minutes");
+            }
+        }
     }
 
     /**
@@ -503,21 +590,34 @@ public class TeamGameService {
      * waiting team's hold can no longer be captured, nobody plays, so the
      * joining team is refunded and the game ends.
      */
+    /**
+     * Step 3, last: take the waiting team's hold. If it lapsed, was let go, or the answer
+     * was lost, the game cannot go ahead, and everything is undone in this order: the
+     * joiner's charge is reversed and the waiting team's hold given back (endGame), the
+     * booking is deleted, the game is cancelled, both teams are told — and all of that is
+     * committed. A hold whose capture went unanswered is left return_pending, which the
+     * reconcile job reverses if it was taken or releases if it was not.
+     */
     private void captureWaitingTeam(Game game, GameTeam joining, Booking booking) {
-        try {
-            for (GameTeam waiting : gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)) {
-                if (!waiting.getId().equals(joining.getId())) {
-                    paymentService.captureAllHeldTeamPayments(waiting.getId());
-                }
+        boolean captured = true;
+        for (GameTeam waiting : gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)) {
+            if (!waiting.getId().equals(joining.getId())) {
+                captured &= paymentService.captureAllHeldTeamPayments(waiting.getId());
             }
-        } catch (RuntimeException ex) {
-            log.error("Could not capture the waiting team's hold on game {}: {}", game.getId(), ex.toString());
-            bookingRepository.delete(booking);
-            // endGame gives every team still in the game its money back — the
-            // joiner included, since its row is active by now.
-            endGame(game, "cancelled_slot_taken", "The other team's payment could not be settled");
-            throw ex;
         }
+        if (captured) {
+            return;
+        }
+        log.error("Could not capture the waiting team's hold on game {}; cancelling it and returning both teams' money",
+                game.getId());
+        // endGame gives every team still in the game its money back — the joiner included,
+        // since its row is active by now.
+        endGame(game, "cancelled_slot_taken", "The other team's payment could not be settled", null);
+        bookingRepository.delete(booking);
+        notifyCancelled(game, "Raqib jamoaning to'lovini yechib bo'lmadi, o'yin bekor qilindi. To'lov to'liq qaytariladi.");
+        throw new uz.minipolya.minipolya_backend.exception.PaymentStepFailedException(
+                "The other team's payment could not be taken, so the game is cancelled; "
+                        + "your payment is being returned in full");
     }
 
     /** Both advances are on the pitch now, so the booking is part-paid (or paid outright). */
@@ -544,7 +644,8 @@ public class TeamGameService {
     }
 
     /** Cancels the game and gives every team still in it everything back. */
-    private long endGame(Game game, String status, String reason) {
+    private long endGame(Game game, String status, String reason, UUID cancelledBy) {
+        String oldStatus = game.getStatus();
         game.setStatus(status);
         gameRepository.save(game);
         long given = 0L;
@@ -552,8 +653,13 @@ public class TeamGameService {
             given += paymentService.giveBackAllTeamPayments(entry.getId(), reason);
             releaseTeam(entry, OffsetDateTime.now(ZoneOffset.UTC));
         }
-        auditService.log(null, "GAME_CANCELLED", "game", game.getId(),
-                "{\"reason\":\"" + status + "\",\"givenBack\":" + given + "}");
+        AuditEntry audit = cancelledBy == null
+                ? AuditEntry.system(AuditAction.GAME_AUTO_CANCELLED)
+                : AuditEntry.player(cancelledBy, AuditAction.GAME_CANCELLED);
+        auditService.record(audit
+                .entity(AuditEntityType.GAME, game.getId(), AuditLabels.game(game))
+                .change("status", oldStatus, game.getStatus())
+                .reason(reason));
         return given;
     }
 
@@ -581,6 +687,11 @@ public class TeamGameService {
      * find a replacement, so the game goes back to WAITING rather than ending.
      */
     private void reopenWithRemainingTeam(Game game, GameTeam leaving, UUID userId, boolean refunded) {
+        String oldStatus = game.getStatus();
+        String side = leaving.getSide().getValue().toUpperCase();
+        String leavingTeam = leaving.getSide() == Side.A
+                ? (game.getTeamA() == null ? null : game.getTeamA().getName())
+                : (game.getTeamB() == null ? null : game.getTeamB().getName());
         if (leaving.getSide() == Side.A) {
             game.setTeamA(null);
         } else {
@@ -602,10 +713,17 @@ public class TeamGameService {
         safeNotify(() -> notificationService.notify(leaverId, Notification.Type.GAME_CANCELLED,
                 "Игра отменена", leaverMessage, Notification.ReferenceType.GAME, game.getId()));
 
-        auditService.log(userId, "GAME_OPPONENT_LEFT", "game", game.getId(),
-                "{\"side\":\"" + leaving.getSide().getValue() + "\",\"refunded\":" + refunded + "}");
+        auditService.record(AuditEntry.player(userId, AuditAction.GAME_OPPONENT_LEFT)
+                .entity(AuditEntityType.GAME, game.getId(), AuditLabels.game(game))
+                .change("status", oldStatus, game.getStatus())
+                .change("team" + side, leavingTeam, null)
+                .reason(refundOutcome(refunded)));
         log.info("Team game reopened after a team left: gameId={} side={} refunded={}",
                 game.getId(), leaving.getSide().getValue(), refunded);
+    }
+
+    private static String refundOutcome(boolean refunded) {
+        return refunded ? "Cancelled in time: everything back" : "Cancelled after the deadline: nothing back";
     }
 
     private void notifyOwner(Game game, String message) {
@@ -631,6 +749,19 @@ public class TeamGameService {
         if (!team.owesRemainder()) {
             throw new BadRequestException("Already paid");
         }
+    }
+
+    /**
+     * A remainder paid by card whose answer came in late (the reconcile job): the team is
+     * settled exactly as if the answer had arrived at once.
+     */
+    @Transactional
+    public void settleRemainderPaidLate(GameTeam team) {
+        if (team.getRemainderStatus() == GameTeam.RemainderStatus.PAID) {
+            return;
+        }
+        settleRemainder(team.getGame(), team);
+        log.info("Team remainder settled after a late answer: gameTeamId={}", team.getId());
     }
 
     /** Marks this team settled and brings the booking's paid amount up to date. */
@@ -736,7 +867,8 @@ public class TeamGameService {
                 .totalPrice(game.getTotalPrice())
                 .feeAmount(split.fee())
                 .advanceAmount(split.advanceFor(freeSide))
-                .amountToPayNow(split.joinAmountFor(freeSide))
+                .amountToPayNow(cardPricing().playerAmount(split.joinAmountFor(freeSide)))
+                .cardFee(cardPricing().cardFee(split.joinAmountFor(freeSide)))
                 .remainderAmount(split.remainderFor(freeSide))
                 .build();
     }

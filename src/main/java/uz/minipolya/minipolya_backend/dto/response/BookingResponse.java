@@ -36,10 +36,22 @@ public class BookingResponse {
     private OffsetDateTime endsAt;
     private Integer durationHours;
 
-    /** All three in tiyin: the total, what has been paid, and what is still owed. */
+    /**
+     * Tiyin. {@code price} is what the player pays by card for the whole booking (the
+     * sum of its slots' card prices); {@code netPrice} is the owner's price and appears
+     * only in owner and admin responses; {@code cardFee} is {@code price - netPrice}.
+     * {@code paidAmount} and {@code remainingAmount} are in the owner's net terms: what
+     * has been credited towards {@code netPrice} and what is still owed of it.
+     */
     private Long price;
+    private Long netPrice;
+    private Long cardFee;
     private Long paidAmount;
     private Long remainingAmount;
+    /** What the rest costs if the player pays it in the app: the net remainder grossed up. */
+    private Long remainderByCard;
+    /** What the rest costs if the owner takes it in cash: the net remainder, no card fee. */
+    private Long remainderInCash;
     private Booking.PaymentStatus paymentStatus;
 
     private String clientName;

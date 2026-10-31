@@ -3,6 +3,7 @@ package uz.minipolya.minipolya_backend.service;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import uz.minipolya.minipolya_backend.util.CardFeeSplit;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.dto.request.CreateBookingRequest;
 import uz.minipolya.minipolya_backend.dto.request.PaymentOption;
@@ -27,6 +28,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -82,10 +84,10 @@ class BookingPaymentTest {
 
         service = new BookingService(bookingRepository, stadiumRepository, userRepository,
                 bookingPriceCalculator, new CancellationPolicy(),
-                new BookingResponseFactory(bookingMapper, new CancellationPolicy(), paymentService),
+                new BookingResponseFactory(bookingMapper, new CancellationPolicy(), paymentService, CardPricing.withDefaults()),
                 new AppProperties(),
                 paymentService, gameService, notificationService, auditService,
-                new BookingWindowValidator(closureService), savedCardService);
+                new BookingWindowValidator(closureService), savedCardService, CardPricing.withDefaults());
 
         player = User.builder().id(USER_ID).name("Player").build();
         stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(5_000_000L)
@@ -97,8 +99,8 @@ class BookingPaymentTest {
 
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
-        when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
-                .thenReturn(PRICE);
+        when(bookingPriceCalculator.slotPrices(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
+                .thenReturn(java.util.List.of(PRICE));
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
         when(savedCardService.requireOwnedCard(USER_ID, CARD_ID)).thenReturn(card);
@@ -123,14 +125,14 @@ class BookingPaymentTest {
     void fullPaymentChargesTheWholePrice() {
         service.createBooking(USER_ID, request(PaymentOption.FULL));
 
-        verify(paymentService).chargeForBooking(any(Booking.class), eq(card), eq(PRICE));
+        verify(paymentService).chargeForBooking(any(Booking.class), eq(card), argThat(split -> split != null && split.net() == PRICE));
     }
 
     @Test
     void minimumPaymentChargesTheStadiumMinimum() {
         service.createBooking(USER_ID, request(PaymentOption.MINIMUM));
 
-        verify(paymentService).chargeForBooking(any(Booking.class), eq(card), eq(MINIMUM));
+        verify(paymentService).chargeForBooking(any(Booking.class), eq(card), argThat(split -> split != null && split.net() == MINIMUM));
     }
 
     @Test
@@ -142,7 +144,7 @@ class BookingPaymentTest {
                 .hasMessageContaining("full payment");
 
         verify(bookingRepository, never()).saveAndFlush(any());
-        verify(paymentService, never()).chargeForBooking(any(), any(), anyLong());
+        verify(paymentService, never()).chargeForBooking(any(), any(), any(CardFeeSplit.class));
     }
 
     @Test
@@ -153,7 +155,7 @@ class BookingPaymentTest {
         assertThatThrownBy(() -> service.createBooking(USER_ID, request(PaymentOption.MINIMUM)))
                 .isInstanceOf(BadRequestException.class);
 
-        verify(paymentService, never()).chargeForBooking(any(), any(), anyLong());
+        verify(paymentService, never()).chargeForBooking(any(), any(), any(CardFeeSplit.class));
     }
 
     @Test
@@ -198,5 +200,61 @@ class BookingPaymentTest {
 
     private static long anyLong() {
         return org.mockito.ArgumentMatchers.anyLong();
+    }
+
+    // ---- The card fee ----
+
+    @Test
+    void fullPaymentChargesTheSumOfEachSlotsCardPrice() {
+        // Two hours at 150 000 and 180 000 so'm: the player pays the two prices they were shown.
+        when(bookingPriceCalculator.slotPrices(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
+                .thenReturn(java.util.List.of(15_000_000L, 18_000_000L));
+
+        service.createBooking(USER_ID, request(PaymentOption.FULL));
+
+        long expected = TestPrices.card(15_000_000L) + TestPrices.card(18_000_000L);
+        org.mockito.ArgumentCaptor<uz.minipolya.minipolya_backend.util.CardFeeSplit> split =
+                org.mockito.ArgumentCaptor.forClass(uz.minipolya.minipolya_backend.util.CardFeeSplit.class);
+        verify(paymentService).chargeForBooking(any(Booking.class), eq(card), split.capture());
+        assertThat(split.getValue().playerAmount()).isEqualTo(expected);
+        assertThat(split.getValue().net()).isEqualTo(33_000_000L);
+        assertThat(split.getValue().ownerGross() + split.getValue().platformGross()).isEqualTo(expected);
+
+        org.mockito.ArgumentCaptor<Booking> booking = org.mockito.ArgumentCaptor.forClass(Booking.class);
+        verify(bookingRepository).saveAndFlush(booking.capture());
+        assertThat(booking.getValue().getPrice()).isEqualTo(33_000_000L);
+        assertThat(booking.getValue().getCardPrice()).isEqualTo(expected);
+    }
+
+    @Test
+    void aDepositChargesTheMinimumGrossedUp() {
+        service.createBooking(USER_ID, request(PaymentOption.MINIMUM));
+
+        org.mockito.ArgumentCaptor<uz.minipolya.minipolya_backend.util.CardFeeSplit> split =
+                org.mockito.ArgumentCaptor.forClass(uz.minipolya.minipolya_backend.util.CardFeeSplit.class);
+        verify(paymentService).chargeForBooking(any(Booking.class), eq(card), split.capture());
+        assertThat(split.getValue().net()).isEqualTo(MINIMUM);
+        assertThat(split.getValue().playerAmount()).isEqualTo(TestPrices.card(MINIMUM));
+    }
+
+    @Test
+    void thePlayerSeesCardPricesAndBothWaysToPayTheRest() {
+        when(bookingMapper.toResponse(any(Booking.class))).thenAnswer(inv -> new BookingResponse());
+        Booking booking = Booking.builder().id(UUID.randomUUID()).stadium(stadium).price(20_000_000L)
+                .cardPrice(20_310_000L).paidAmount(5_000_000L).startsAt(startAt(18, 2)).build();
+        BookingResponseFactory factory = new BookingResponseFactory(bookingMapper, new CancellationPolicy(),
+                paymentService, CardPricing.withDefaults());
+
+        BookingResponse player = factory.of(booking);
+        BookingResponse owner = factory.forOwner(booking);
+
+        assertThat(player.getPrice()).isEqualTo(20_310_000L);
+        assertThat(player.getCardFee()).isEqualTo(310_000L);
+        assertThat(player.getNetPrice()).isNull();
+        // 150 000 so'm still owed: in cash as it is, by card grossed up.
+        assertThat(player.getRemainderInCash()).isEqualTo(15_000_000L);
+        assertThat(player.getRemainderByCard()).isEqualTo(TestPrices.card(15_000_000L));
+        assertThat(owner.getNetPrice()).isEqualTo(20_000_000L);
+        assertThat(owner.getPrice()).isEqualTo(20_310_000L);
     }
 }

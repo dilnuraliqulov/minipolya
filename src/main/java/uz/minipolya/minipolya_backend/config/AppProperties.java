@@ -5,6 +5,9 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Getter
 @Setter
 @Configuration
@@ -16,6 +19,22 @@ public class AppProperties {
     private Booking booking = new Booking();
     private Game game = new Game();
     private Payments payments = new Payments();
+    private AdminLogin adminLogin = new AdminLogin();
+    private Atmos atmos = new Atmos();
+    private Security security = new Security();
+    private Cors cors = new Cors();
+
+    @Getter
+    @Setter
+    public static class Cors {
+        /**
+         * Browser origins allowed to call {@code /api/**} from another origin, e.g.
+         * {@code https://admin.minipolya.uz} — exact origins, never {@code *}. Set with
+         * {@code CORS_ALLOWED_ORIGINS} (comma-separated). Empty, the default, means no CORS
+         * at all: only same-origin pages can call the API.
+         */
+        private List<String> allowedOrigins = new ArrayList<>();
+    }
 
     @Getter
     @Setter
@@ -60,5 +79,67 @@ public class AppProperties {
          * the real ATMOS client will register itself under its own value.
          */
         private String provider = "fake";
+
+        /**
+         * The longest a team game's hold may last, in minutes (default 43 200 = 30 days).
+         * A game whose hold would need longer cannot be created.
+         */
+        private int holdMaxMinutes = 43_200;
+    }
+
+    /**
+     * The ATMOS client, read from the environment (see .env.example). Only used under the
+     * {@code atmos} profile, where AtmosPaymentProvider refuses to start unless every
+     * required value is set.
+     */
+    @Getter
+    @Setter
+    public static class Atmos {
+        /** ATMOS_BASE_URL, e.g. https://apigw.atmos.uz */
+        private String baseUrl;
+        /** ATMOS_CONSUMER_KEY */
+        private String consumerKey;
+        /** ATMOS_CONSUMER_SECRET */
+        private String consumerSecret;
+        /** ATMOS_STORE_ID: our merchant store, used to pre-apply, apply and look up payments. */
+        private String storeId;
+        /** ATMOS_PLATFORM_RECIPIENT_ID: where the platform's split of every payment goes. */
+        private String platformRecipientId;
+        /** ATMOS_OFD_CODE_RENTAL (optional): IKPU code for the pitch-rental receipt line. */
+        private String ofdCodeRental;
+        /** ATMOS_OFD_CODE_SERVICE (optional): IKPU code for the platform-service receipt line. */
+        private String ofdCodeService;
+        /** How long to wait for ATMOS before treating a call as timed out. */
+        private int timeoutSeconds = 30;
+
+        /** Never render the credentials. */
+        @Override
+        public String toString() {
+            return "Atmos(baseUrl=" + baseUrl + ", storeId=" + storeId + ")";
+        }
+    }
+
+    @Getter
+    @Setter
+    public static class Security {
+        /** CARD_TOKEN_KEY: 32 bytes, base64. Encrypts saved card tokens at rest. */
+        private String cardTokenKey;
+
+        @Override
+        public String toString() {
+            return "Security(cardTokenKey=****)";
+        }
+    }
+
+    @Getter
+    @Setter
+    public static class AdminLogin {
+        /** Wrong passwords in a row that lock an admin account. */
+        private int maxFailedAttempts = 5;
+        /** How long a locked account stays locked. */
+        private int lockMinutes = 15;
+        /** Sign-in attempts one IP address may make per window, right or wrong. */
+        private int maxAttemptsPerIp = 20;
+        private int ipWindowMinutes = 15;
     }
 }

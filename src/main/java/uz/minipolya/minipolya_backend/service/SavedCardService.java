@@ -14,7 +14,8 @@ import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.SavedCardMapper;
 import uz.minipolya.minipolya_backend.provider.BoundCard;
-import uz.minipolya.minipolya_backend.provider.CardBinding;
+import uz.minipolya.minipolya_backend.provider.CardBindingStart;
+import uz.minipolya.minipolya_backend.provider.PaymentProviderException;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.repository.SavedCardRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
@@ -48,22 +49,27 @@ public class SavedCardService {
     @Transactional(readOnly = true)
     public CardBindingResponse addCard(UUID userId, AddCardRequest request) {
         requireUser(userId);
-        CardBinding binding = paymentProvider.startCardBinding(request.getCardNumber(), request.getExpiry());
+        CardBindingStart binding = paymentProvider.bindCardInit(request.getCardNumber(), request.getExpiry());
         log.info("Card binding started for userId={} bindingId={}", userId, binding.bindingId());
-        return CardBindingResponse.builder().bindingId(binding.bindingId()).build();
+        return CardBindingResponse.builder()
+                .bindingId(binding.bindingId())
+                .maskedPhone(binding.maskedPhone())
+                .build();
     }
 
     /** Step two: confirm with the SMS code and keep the token plus masked number. */
     @Transactional
     public SavedCardResponse confirmCard(UUID userId, ConfirmCardRequest request) {
         User user = requireUser(userId);
-        BoundCard bound = paymentProvider.confirmCardBinding(request.getBindingId(), request.getSmsCode());
+        BoundCard bound = paymentProvider.bindCardConfirm(request.getBindingId(), request.getSmsCode());
 
         SavedCard saved = savedCardRepository.save(SavedCard.builder()
                 .user(user)
-                .providerToken(bound.token())
-                .maskedNumber(bound.maskedNumber())
-                .cardType(bound.cardType())
+                .providerToken(bound.cardToken())
+                .providerCardId(bound.cardId())
+                .maskedNumber(bound.maskedPan())
+                .expiry(bound.expiry())
+                .cardType(cardTypeOf(bound.maskedPan()))
                 .isActive(true)
                 .build());
 
@@ -87,9 +93,29 @@ public class SavedCardService {
         if (card.getUser() == null || !card.getUser().getId().equals(userId)) {
             throw new ForbiddenException("This card does not belong to you");
         }
+        if (card.getProviderCardId() != null) {
+            try {
+                paymentProvider.removeCard(card.getProviderCardId(), card.getProviderToken());
+            } catch (PaymentProviderException ex) {
+                // The player asked for the card to be gone; it is unusable here either way.
+                log.warn("Provider could not remove card {}: code={}", cardId, ex.getCode());
+            }
+        }
         card.setActive(false);
         savedCardRepository.save(card);
         log.info("Card deleted: id={} userId={}", cardId, userId);
+    }
+
+    /** uzcard (8600…), humo (9860…), or unknown — from the masked number's first digits. */
+    static String cardTypeOf(String maskedPan) {
+        String digits = maskedPan == null ? "" : maskedPan.replaceAll("\\D", "");
+        if (digits.startsWith("8600")) {
+            return "uzcard";
+        }
+        if (digits.startsWith("9860")) {
+            return "humo";
+        }
+        return "unknown";
     }
 
     /**

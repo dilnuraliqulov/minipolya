@@ -8,6 +8,11 @@ import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditActorType;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.dto.request.CreateStadiumRequest;
 import uz.minipolya.minipolya_backend.dto.request.UpdateStadiumRequest;
 import uz.minipolya.minipolya_backend.dto.response.StadiumDetailResponse;
@@ -51,6 +56,9 @@ class StadiumServiceTest {
     private AuditService auditService;
     @Mock
     private EntityManager entityManager;
+
+    @org.mockito.Spy
+    private CardPricing cardPricing = CardPricing.withDefaults();
 
     @InjectMocks
     private StadiumService stadiumService;
@@ -101,6 +109,44 @@ class StadiumServiceTest {
         inOrder.verify(stadiumRepository).saveAndFlush(stadium);
         inOrder.verify(entityManager).refresh(stadium);
         inOrder.verify(stadiumMapper).toDetailResponse(stadium);
+    }
+
+    @Test
+    void anEditRecordsOnlyTheFieldsThatChanged() {
+        User owner = User.builder().id(OWNER_ID).name("Owner").build();
+        Stadium stadium = Stadium.builder().id(STADIUM_ID).owner(owner).name("Arena")
+                .pricePerHour(15_000_000L).cancellationHours(24).build();
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.saveAndFlush(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+        // The mapper is a mock here, so apply the request the way the real one would.
+        org.mockito.Mockito.doAnswer(inv -> {
+            Stadium target = inv.getArgument(1);
+            target.setName("Arena");                 // sent, but the same value
+            target.setMinBookingAmount(5_000_000L);  // null → 50 000 so'm
+            target.setCancellationHours(12);         // 24 → 12
+            return null;
+        }).when(stadiumMapper).updateStadiumFromRequest(any(), any());
+
+        stadiumService.update(OWNER_ID, STADIUM_ID, new UpdateStadiumRequest());
+
+        AuditEntry entry = Audited.one(auditService, AuditAction.STADIUM_UPDATED);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.OWNER);
+        assertThat(entry.getEntityLabel()).isEqualTo("Arena");
+        assertThat(entry.getChanges()).containsExactly(
+                AuditChange.of("minBookingAmount", null, 5_000_000L),
+                AuditChange.of("cancellationHours", 24, 12));
+    }
+
+    @Test
+    void anEditThatChangesNothingRecordsNothing() {
+        User owner = User.builder().id(OWNER_ID).name("Owner").build();
+        Stadium stadium = Stadium.builder().id(STADIUM_ID).owner(owner).name("Arena").build();
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.saveAndFlush(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        stadiumService.update(OWNER_ID, STADIUM_ID, new UpdateStadiumRequest());
+
+        assertThat(Audited.entries(auditService)).isEmpty();
     }
 
     @Test
@@ -202,5 +248,33 @@ class StadiumServiceTest {
         stadiumService.update(OWNER_ID, STADIUM_ID, UpdateStadiumRequest.builder().build());
 
         verify(stadiumRepository).saveAndFlush(existing);
+    }
+
+    // ---- Card prices ----
+
+    @Test
+    void playersSeeTheCardPriceAndOwnersTheirNetPrice() {
+        User owner = User.builder().id(OWNER_ID).name("Owner").build();
+        Stadium stadium = Stadium.builder().id(STADIUM_ID).owner(owner).status("approved").isActive(true)
+                .pricePerHour(20_000_000L).minBookingAmount(5_000_000L).build();
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(stadiumMapper.toDetailResponse(any(Stadium.class))).thenAnswer(inv -> StadiumDetailResponse.builder()
+                .pricePerHour(20_000_000L).minBookingAmount(5_000_000L).build());
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.saveAndFlush(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        StadiumDetailResponse player = stadiumService.getPublicDetail(STADIUM_ID, null);
+        StadiumDetailResponse forOwner = stadiumService.update(OWNER_ID, STADIUM_ID, new UpdateStadiumRequest());
+
+        assertThat(player.getPricePerHour()).isEqualTo(20_310_000L);
+        assertThat(player.getPrice()).isEqualTo(20_310_000L);
+        assertThat(player.getCardFee()).isEqualTo(310_000L);
+        assertThat(player.getNetPrice()).isNull();
+        assertThat(player.getMinBookingAmount()).isEqualTo(TestPrices.card(5_000_000L));
+
+        assertThat(forOwner.getPricePerHour()).isEqualTo(20_000_000L);
+        assertThat(forOwner.getNetPrice()).isEqualTo(20_000_000L);
+        assertThat(forOwner.getPrice()).isEqualTo(20_310_000L);
+        assertThat(forOwner.getMinBookingAmount()).isEqualTo(5_000_000L);
     }
 }

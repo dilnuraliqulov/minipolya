@@ -51,6 +51,9 @@ public class GameChallengeResponse {
     /** What the joining team's card is charged in the app: fee + advance. */
     private Long amountToPayNow;
 
+    /** amountToPayNow − (feeAmount + advanceAmount): what paying by card adds. */
+    private Long cardFee;
+
     /** What the joining team would still owe afterwards. */
     private Long remainderAmount;
 }

@@ -2,9 +2,12 @@ package uz.minipolya.minipolya_backend.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import tools.jackson.databind.ObjectMapper;
 import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditActorType;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.PlatformSettings;
@@ -16,6 +19,7 @@ import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
 import uz.minipolya.minipolya_backend.provider.ClickProvider;
 import uz.minipolya.minipolya_backend.provider.PaymeProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
+import uz.minipolya.minipolya_backend.repository.OwnerLegalDetailsRepository;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -27,7 +31,6 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -80,7 +83,7 @@ class PaymentServiceTest {
         service = new PaymentService(paymentRepository, bookingRepository, userRepository,
                 gameRepository, gameParticipantRepository, paymentMapper,
                 List.of(new PaymeProvider(), new ClickProvider()), gameService, notificationService, auditService,
-                paymentProvider, platformSettingsService);
+                paymentProvider, platformSettingsService, mock(OwnerLegalDetailsRepository.class));
 
         player = User.builder().id(PLAYER_ID).name("Player").build();
         owner = User.builder().id(OWNER_ID).name("Owner").build();
@@ -184,23 +187,32 @@ class PaymentServiceTest {
     }
 
     @Test
-    void refundInFullWritesParseableJsonAuditDetails() {
+    void aRefundIsASystemEntryOnThePaymentItGivesBack() {
         Booking booking = pendingBooking();
         Payment original = Payment.builder().id(PAYMENT_ID).booking(booking).user(player).amount(100_000L)
                 .ownerAmount(100_000L).platformAmount(0L).commissionPercent(0).method(Payment.Method.CARD)
                 .paymentType(Payment.PaymentType.BOOKING).provider(Payment.Provider.PAYME)
                 .status(Payment.Status.COMPLETED).build();
-        when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> {
+            Payment row = inv.getArgument(0);
+            if (row.getId() == null) {
+                row.setId(UUID.randomUUID()); // as the database would
+            }
+            return row;
+        });
 
         service.refundInFull(original, "user cancelled");
 
-        ArgumentCaptor<String> details = ArgumentCaptor.forClass(String.class);
-        verify(auditService).log(eq(PLAYER_ID), eq("REFUND_CREATED"), eq("payment"), any(), details.capture());
-
-        // The UUID must be quoted, otherwise the details column holds unparseable JSON.
-        assertThat(details.getValue())
-                .isEqualTo("{\"originalPaymentId\":\"" + PAYMENT_ID + "\",\"amount\":-100000}");
-        assertThatCode(() -> new ObjectMapper().readTree(details.getValue())).doesNotThrowAnyException();
+        AuditEntry entry = Audited.one(auditService, AuditAction.REFUND_CREATED);
+        assertThat(entry.getActorType()).isEqualTo(AuditActorType.SYSTEM);
+        assertThat(entry.getActorId()).isNull();
+        assertThat(entry.getEntityId()).isEqualTo(PAYMENT_ID);
+        assertThat(entry.getEntityLabel()).startsWith("booking — ");
+        assertThat(entry.getReason()).isEqualTo("user cancelled");
+        assertThat(entry.getChanges()).extracting(AuditChange::field)
+                .containsExactly("status", "refundAmount", "refundPaymentId");
+        assertThat(entry.getChanges().get(0)).isEqualTo(AuditChange.of("status", "completed", "refunded"));
+        assertThat(entry.getChanges().get(1)).isEqualTo(AuditChange.of("refundAmount", null, -100_000L));
     }
 
     @Test

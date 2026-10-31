@@ -1,6 +1,7 @@
 package uz.minipolya.minipolya_backend.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import org.hibernate.annotations.UuidGenerator;
@@ -44,8 +45,12 @@ public class SavedCard {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    /** The provider's handle for this card — what we charge. */
-    @Column(name = "provider_token", nullable = false, length = 255, unique = true)
+    /**
+     * The provider's handle for this card — what we charge. A secret: encrypted at rest
+     * (AES-GCM, CARD_TOKEN_KEY), never logged, never in any API response.
+     */
+    @Convert(converter = CardTokenConverter.class)
+    @Column(name = "provider_token", nullable = false, length = 512, unique = true)
     private String providerToken;
 
     /** Display only, e.g. {@code 8600 •••• 1234}. */
@@ -55,6 +60,14 @@ public class SavedCard {
     /** {@code uzcard}, {@code humo} or {@code unknown}. */
     @Column(name = "card_type", length = 20)
     private String cardType;
+
+    /** The provider's own id for the card, needed to remove it there. */
+    @Column(name = "provider_card_id", length = 64)
+    private String providerCardId;
+
+    /** The expiry the provider reports, MM/YY — shown to the player. */
+    @Column(length = 5)
+    private String expiry;
 
     @Builder.Default
     @Column(name = "is_active", nullable = false)

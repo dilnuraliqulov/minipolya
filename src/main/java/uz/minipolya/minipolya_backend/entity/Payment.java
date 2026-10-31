@@ -68,9 +68,24 @@ public class Payment {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    /** Integer so'm — positive for charges, negative for refunds. */
+    /**
+     * Tiyin: the gross a card was charged (card fee included) or the cash taken —
+     * positive for charges, negative for refunds.
+     */
     @Column(nullable = false)
     private Long amount;
+
+    /**
+     * Tiyin the card fee and the price rounding added on top of the net this payment
+     * covers, so {@code amount - cardFeeExpected} is that net. 0 for cash.
+     */
+    @Builder.Default
+    @Column(name = "card_fee_expected", nullable = false)
+    private Long cardFeeExpected = 0L;
+
+    /** The commission the provider reports having taken; null until it does. */
+    @Column(name = "provider_commission")
+    private Long providerCommission;
 
     /**
      * The part of {@link #amount} owed to the stadium owner. Together with
@@ -83,6 +98,11 @@ public class Payment {
     /** The part of {@link #amount} the platform keeps. */
     @Column(name = "platform_amount", nullable = false)
     private Long platformAmount;
+
+    /** What this payment is worth to its recipients: the gross less the card fee. */
+    public long netAmount() {
+        return (amount == null ? 0L : amount) - (cardFeeExpected == null ? 0L : cardFeeExpected);
+    }
 
     /** The booking commission in force when this payment was taken. */
     @Column(name = "commission_percent", nullable = false)
@@ -101,9 +121,24 @@ public class Payment {
     @Column(nullable = false, length = 20)
     private Provider provider;
 
-    /** Null for cash. UNIQUE at the DB level — the webhook idempotency key. */
+    /**
+     * The provider's handle: the charge's transaction ids (comma-separated, one per split)
+     * or the hold id. Null for cash. UNIQUE at the DB level.
+     */
     @Column(name = "provider_txn_id", length = 255, unique = true)
     private String providerTxnId;
+
+    /** The ids a confirmed charge returned, comma-separated: what a reverse needs. */
+    @Column(name = "provider_success_txn_ids", length = 500)
+    private String providerSuccessTxnIds;
+
+    /** The fiscal receipt for this payment, when the provider issued one. */
+    @Column(name = "ofd_url", length = 500)
+    private String ofdUrl;
+
+    /** When an unsettled hold lapses at the provider. */
+    @Column(name = "hold_expires_at")
+    private OffsetDateTime holdExpiresAt;
 
     @Builder.Default
     @Convert(converter = StatusConverter.class)
@@ -112,6 +147,22 @@ public class Payment {
 
     @Column(name = "refund_reason", length = 255)
     private String refundReason;
+
+    /** On a refund the provider declined: the provider's error, for the admin. */
+    @Column(name = "failure_reason", length = 500)
+    private String failureReason;
+
+    /** A failed refund an admin marked as returned outside the platform (cash, bank transfer). */
+    @Builder.Default
+    @Column(name = "refunded_manually", nullable = false)
+    private boolean refundedManually = false;
+
+    @Column(name = "manual_refund_reason", length = 500)
+    private String manualRefundReason;
+
+    /** The admin who marked it refunded by hand. */
+    @Column(name = "manual_refund_by")
+    private UUID manualRefundBy;
 
     /** For refund rows: the original payment being refunded. */
     @ManyToOne(fetch = FetchType.LAZY)
@@ -202,6 +253,18 @@ public class Payment {
      * checkout and disappear with it.
      */
     public enum Status {
+        /** Written, provider called, answer not in yet (or lost): settled by the reconcile job. */
+        PROCESSING,
+        /** Being given back — a charge reversed or a hold released; the reconcile job finishes it. */
+        RETURN_PENDING,
+        /** A hold being taken; the reconcile job finishes it. */
+        CAPTURE_PENDING,
+        /**
+         * The provider declined to give this payment back: the money is still owed. Its
+         * {@code failed} refund row waits for an admin to retry it or mark it refunded by hand;
+         * the reconcile job leaves it alone.
+         */
+        REFUND_FAILED,
         HELD, CAPTURED, RELEASED, PAID, REFUNDED, FAILED, PENDING, COMPLETED;
 
         @JsonValue

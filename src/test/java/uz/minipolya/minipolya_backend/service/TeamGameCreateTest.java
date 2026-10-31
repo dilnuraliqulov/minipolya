@@ -125,7 +125,7 @@ class TeamGameCreateTest {
         when(participantRepository.findByGameId(any())).thenReturn(List.of());
         when(gameMapper.toDetailResponse(any(Game.class))).thenReturn(new GameDetailResponse());
         when(savedCardService.requireOwnedCard(LEADER_A_ID, CARD_ID)).thenReturn(card);
-        when(paymentService.holdForTeamGame(any(), any())).thenAnswer(inv ->
+        when(paymentService.holdForTeamGame(any(), any(), anyInt())).thenAnswer(inv ->
                 Payment.builder().id(UUID.randomUUID()).status(Payment.Status.HELD)
                         .providerTxnId("txn-hold-a").gameTeam(inv.getArgument(0)).build());
 
@@ -138,7 +138,8 @@ class TeamGameCreateTest {
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, priceCalculator, bookingRepository, gameMapper, participantMapper,
                 new AppProperties(), paymentService, notificationService, auditService,
-                new BookingWindowValidator(closureService), platformSettingsService, teamGameService);
+                new BookingWindowValidator(closureService), platformSettingsService, teamGameService,
+                savedCardService);
     }
 
     private CreateGameRequest request(UUID cardId) {
@@ -175,7 +176,7 @@ class TeamGameCreateTest {
         assertThat(sideA.getFeeAmount()).isEqualTo(FEE);
         assertThat(sideA.getAdvanceAmount()).isEqualTo(2_500_000L);      // M / 2
         assertThat(sideA.getRemainderAmount()).isEqualTo(7_500_000L);    // (P - M) / 2
-        verify(paymentService).holdForTeamGame(sideA, card);
+        verify(paymentService).holdForTeamGame(org.mockito.ArgumentMatchers.eq(sideA), org.mockito.ArgumentMatchers.eq(card), anyInt());
         verify(bookingRepository, never()).saveAndFlush(any(Booking.class));
         assertThat(savedGame().getStatus()).isEqualTo("open");
     }
@@ -193,7 +194,7 @@ class TeamGameCreateTest {
 
     @Test
     void aDeclinedCardMeansNoGame() {
-        when(paymentService.holdForTeamGame(any(), any())).thenAnswer(inv ->
+        when(paymentService.holdForTeamGame(any(), any(), anyInt())).thenAnswer(inv ->
                 Payment.builder().id(UUID.randomUUID()).status(Payment.Status.FAILED)
                         .gameTeam(inv.getArgument(0)).build());
 
@@ -208,7 +209,7 @@ class TeamGameCreateTest {
                 .isInstanceOf(BadRequestException.class)
                 .hasMessageContaining("cardId");
 
-        verify(paymentService, never()).holdForTeamGame(any(), any());
+        verify(paymentService, never()).holdForTeamGame(any(), any(), anyInt());
     }
 
     @Test

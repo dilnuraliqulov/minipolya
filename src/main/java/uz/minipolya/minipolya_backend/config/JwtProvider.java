@@ -16,12 +16,16 @@ import java.util.UUID;
 
 /**
  * Issues and verifies HS256 JWTs. Tokens carry the user id (subject) plus
- * {@code phone}, {@code isOwner} and {@code isAdmin} claims. Expiry comes from
+ * {@code phone}, {@code isOwner} and {@code isAdmin} claims, plus {@code iatMs}: the issue
+ * time in milliseconds, because the standard {@code iat} is whole seconds and too coarse
+ * to tell a token from a password change made in the same second. Expiry comes from
  * {@code app.jwt.expiration-ms} (default 24h).
  */
 @Slf4j
 @Component
 public class JwtProvider {
+
+    private static final String ISSUED_AT_MS = "iatMs";
 
     private final SecretKey key;
     private final long expirationMs;
@@ -42,6 +46,7 @@ public class JwtProvider {
                 .claim("isOwner", user.isOwner())
                 .claim("isAdmin", user.isAdmin())
                 .issuedAt(Date.from(now))
+                .claim(ISSUED_AT_MS, now.toEpochMilli())
                 .expiration(Date.from(now.plusMillis(expirationMs)))
                 .signWith(key)
                 .compact();
@@ -71,6 +76,16 @@ public class JwtProvider {
 
     public boolean isAdmin(String token) {
         return Boolean.TRUE.equals(parse(token).get("isAdmin", Boolean.class));
+    }
+
+    /**
+     * When the token was issued, to the millisecond. A token from before {@code iatMs}
+     * existed falls back to the whole-second {@code iat}.
+     */
+    public Instant getIssuedAt(String token) {
+        Claims claims = parse(token);
+        Long millis = claims.get(ISSUED_AT_MS, Long.class);
+        return millis != null ? Instant.ofEpochMilli(millis) : claims.getIssuedAt().toInstant();
     }
 
     private Claims parse(String token) {

@@ -10,7 +10,7 @@ Football pitch booking platform for Telegram Mini App. Built for the Uzbekistan 
 - Maven
 - Lombok
 - Spring Security + JWT
-- spring-dotenv for environment variables
+- `.env` read by Spring itself via `spring.config.import` (no dotenv library)
 - Liquibase for database migrations
 - MapStruct for Entity ↔ DTO mapping
 
@@ -18,12 +18,12 @@ Football pitch booking platform for Telegram Mini App. Built for the Uzbekistan 
 
 ```
 src/main/java/uz/minipolya/minipolya_backend/
-├── config/                  # Security, JWT, CORS, app properties config
+├── config/                  # Security (incl. CORS from CORS_ALLOWED_ORIGINS), JWT, app properties, scheduling
 │   ├── SecurityConfig.java
 │   ├── JwtProvider.java
 │   ├── JwtAuthFilter.java
-│   ├── AppProperties.java          # @ConfigurationProperties for app.*
-│   └── CorsConfig.java
+│   ├── SchedulingConfig.java       # @EnableScheduling; app.scheduling.enabled=false turns the jobs off (DB tests)
+│   └── AppProperties.java          # @ConfigurationProperties for app.*
 ├── controller/              # REST controllers (thin — delegate to services)
 │   ├── AuthController.java
 │   ├── StadiumController.java
@@ -31,9 +31,11 @@ src/main/java/uz/minipolya/minipolya_backend/
 │   ├── GameController.java
 │   ├── TeamController.java
 │   ├── ReviewController.java
-│   └── admin/
-│       ├── AdminUserController.java
-│       ├── AdminStadiumController.java
+│   └── admin/                      # see "Admin panel API"
+│       ├── AdminUserController.java        # users, legal details, a user's teams
+│       ├── AdminStadiumController.java     # stadiums, status, internal notes
+│       ├── AdminActivityController.java    # every booking and every game
+│       ├── AdminPaymentController.java     # payments, summary, failed-refund recovery
 │       └── AdminStatsController.java
 ├── service/                 # Business logic (all writes are @Transactional)
 │   ├── AuthService.java
@@ -111,7 +113,8 @@ src/main/java/uz/minipolya/minipolya_backend/
 │   ├── GameTimeoutJob.java          # Cancel unfilled games (team: 3h before start; others: at start)
 │   ├── ReminderJob.java             # Send reminders 2h before game
 │   ├── BookingSeriesJob.java        # Generate next week's recurring bookings
-│   └── PromotionExpiryJob.java      # Mark expired promotions
+│   ├── PromotionExpiryJob.java      # Mark expired promotions
+│   └── PaymentReconcileJob.java     # Every 5 min: settle payments stuck mid-step (see "Payments")
 ├── telegram/                # Bot webhook
 │   ├── TelegramWebhookController.java
 │   └── TelegramBotService.java
@@ -121,6 +124,7 @@ src/main/java/uz/minipolya/minipolya_backend/
 │   ├── BookingMapper.java
 │   ├── GameMapper.java
 │   └── ...
+├── audit/                   # Audit log: AuditEntry builder, AuditAction codes, labels (see "Audit log")
 └── util/                    # Pure helper functions
     ├── CancellationPolicy.java
     ├── TeamGameSplit.java          # Fee / advance / remainder arithmetic for a team game
@@ -173,7 +177,20 @@ db/changelog/
     ├── 017-create-triggers.sql       # set_updated_at() function + triggers
     ├── ...                           # 018–024: duration, blocking, tiyin, settings, cards, payments, cancellation
     ├── 025-game-teams.sql            # game_teams + payments.game_team_id; drops games.creator_share_pct
-    └── 026-opponent-left.sql         # bookings status cancelled_opponent_left + notification game_opponent_left
+    ├── 026-opponent-left.sql         # bookings status cancelled_opponent_left + notification game_opponent_left
+    ├── 027-admin-password-login.sql  # pgcrypto + users.username/password_hash/lockout columns; audit_log.entity_id nullable
+    ├── 028-password-changed-at.sql   # users.password_changed_at — tokens issued earlier are refused
+    ├── 029-audit-log-structure.sql   # audit_log actor_type, actor_name, entity_label, changes, reason
+    ├── 030-card-fee-settings.sql     # platform_settings card_fee_bps, payment_rounding_step
+    ├── 031-card-fee-payments.sql     # payments card_fee_expected, provider_commission; bookings.card_price
+    ├── 032-atmos-operations.sql      # processing status, provider ids, ofd_url, hold_expires_at; saved card id/expiry; users.atmos_recipient_id (moved by 037)
+    ├── 033-payment-pending-steps.sql # return_pending / capture_pending statuses
+    ├── 034-saved-card-token-encrypted.sql # provider_token widened for AES-GCM
+    ├── 035-refund-failures.sql       # payments failure_reason, refunded_manually, manual_refund_*; refund_failed status
+    ├── 036-stadium-district.sql      # stadiums.district (12 Tashkent districts, CHECK)
+    ├── 037-owner-legal-details.sql   # owner_legal_details; moves users.atmos_recipient_id there and drops it
+    ├── 038-stadium-rejected.sql      # rejected stadium status + status_reason; old rejections converted
+    └── 039-stadium-notes.sql         # stadium_notes (admins' internal notes)
 ```
 
 ### Adding New Migrations
@@ -212,10 +229,25 @@ When you need to change the schema (add column, new table, alter constraint):
 ### Stadiums
 
 - 1 stadium = 1 pitch (format, surface_type on stadiums table)
-- Status flow: `pending` → `approved` → `blocked`
-- Only `approved` stadiums visible to players
-- Owner adds stadium → admin reviews → approves/rejects
-- On approval: stadium status → approved, user.is_owner → true
+- Statuses: `pending` → `approved` or `rejected` (turned down at review, only from
+  pending); `approved` → `blocked` (taken off after approval) → `approved` again
+  (unblocked). Rejecting or blocking needs a reason, kept in `stadiums.status_reason`
+  and shown to the owner as `statusReason` on the owner endpoints; approving or setting
+  back to pending clears it. Blocking cancels future bookings with full refunds;
+  rejecting has none to cancel.
+- Only `approved` (and active) stadiums are visible to players — rejected and blocked
+  ones never are.
+- Owner adds stadium → admin reviews (`GET /api/admin/stadiums/{id}` works in any
+  status) → approves or rejects.
+- **Approval needs the owner's ATMOS contract signed** (`owner_legal_details`, see
+  "Owner legal details"): otherwise `PUT /api/admin/stadiums/{id}/status` answers 400
+  "The owner's ATMOS contract is not signed". On approval: status → approved,
+  user.is_owner → true.
+- `district`: optional, one of the twelve Tashkent districts — `Bektemir`, `Chilonzor`,
+  `Mirobod`, `Mirzo Ulugʻbek` (with U+02BB, not an apostrophe), `Olmazor`, `Sergeli`,
+  `Shayxontohur`, `Uchtepa`, `Yakkasaroy`, `Yangihayot`, `Yashnobod`, `Yunusobod`
+  (`util/Districts`, CHECK `chk_stadiums_district`). The owner sends it on create/update;
+  anything else is 400 "Invalid district". Null on stadiums added before it existed.
 
 ### Bookings
 
@@ -245,16 +277,20 @@ When you need to change the schema (add column, new table, alter constraint):
 
 | `paymentOption` | Charged | Allowed when |
 |---|---|---|
-| `FULL` | the whole price | always |
-| `MINIMUM` | `stadium.min_booking_amount` | the stadium has one **and** it is below this booking's price |
+| `FULL` | the booking's card price: the sum of each hour's card price | always |
+| `MINIMUM` | `playerAmount(stadium.min_booking_amount)` | the stadium has one **and** it is below this booking's price |
+
+Both include the card fee (see "Payments → The card fee"); cash never does.
 
 There are no other amounts. `min_booking_amount` is nullable — null means full
 payment is required — and when set must be at least 50 000 tiyin (500 so'm, the
 smallest payment ATMOS takes).
 
 - `bookings.payment_status` is `unpaid` / `partially_paid` / `paid`, and
-  `paid_amount` is the running total of successful payments. Responses carry
-  `price`, `paidAmount` and `remainingAmount` (all tiyin).
+  `paid_amount` is the running total of the **net** successful payments cover.
+  Responses carry `price` (card), `cardFee`, `netPrice` (owner/admin only),
+  `paidAmount` and `remainingAmount` (net), `remainderByCard` and `remainderInCash`
+  (all tiyin).
 - A successful charge confirms the booking. A **declined** card leaves it
   `pending` with a `failed` payment row, so the usual hold timeout expires it;
   the create call still answers 200 with `paymentStatus: unpaid`, and the
@@ -307,6 +343,14 @@ else                 → the booking is still cancelled, but nothing is refunded
   is no method that refunds an arbitrary amount, so a partial refund cannot be
   written by accident. A failed row, a cash row and an already-refunded row are
   all skipped.
+- **A refund ATMOS declines never undoes the cancellation.** The refund row is still
+  written, `status = failed` with the provider's message and code in `failure_reason`;
+  the payment it was to give back becomes `refund_failed` (the money is still owed);
+  audit `REFUND_FAILED` (SYSTEM). An admin then retries it or marks it refunded by hand
+  (see "Admin panel API → Failed refunds"). A lost answer is different: the row stays
+  `return_pending` for the reconcile job. A **hold** release ATMOS refuses is not a failed
+  refund (no money left the card, and the hold lapses on its own): it is logged and left
+  `return_pending` for the job.
 - Booking responses carry **`cancellationDeadline`** and
   **`refundIfCancelledNow`** (tiyin). Both come from `CancellationPolicy` and the
   same refundable payments that a real cancellation uses, so the figure a player
@@ -375,10 +419,11 @@ when the stadium has no minimum) — all tiyin, see `util/TeamGameSplit.java`:
 
 Where a halving is odd the extra tiyin goes to the **second** team, so the two
 advances add up to exactly `base` and the two remainders to exactly `P − base`.
-The ATMOS split of a joining payment is `ownerAmount = advance`,
-`platformAmount = fee`; **no booking commission is applied to a team game**,
-because the fee *is* the platform's cut, and a remainder is therefore all the
-owner's (`platformAmount = 0`).
+By card each team pays `playerAmount(fee + advance)`, split so the owner nets the
+advance and the platform nets the fee after the card fee; **no booking commission is
+applied to a team game**, because the fee *is* the platform's cut, and a remainder is
+therefore all the owner's (the platform's split of it is only the rounding remainder).
+See "Payments → Team game money → ATMOS operations" for holds, captures and reversals.
 
 *The two deadlines.*
 - **the deadline** — `starts_at − stadium.cancellation_hours` (default 24).
@@ -502,8 +547,9 @@ pay for the pitch.
   back (team games through `TeamGameService`, casual through participants)
 - Game statuses: `open` → `confirmed` → `completed`
 - Cancel statuses: `cancelled_slot_taken`, `cancelled_by_creator`, `cancelled_not_filled`
-- `POST /api/games/{id}/pay` is the **casual** hosted checkout and refuses a team
-  game: a team pays when creating or joining, from a saved card
+- `POST /api/games/{id}/pay` is the **casual** payment and refuses a team game (a team
+  pays when creating or joining). With `cardId` it charges that saved card through
+  ATMOS (`playerAmount(share + service fee)`); without it, the legacy hosted checkout.
 
 ### Platform Settings
 
@@ -515,53 +561,223 @@ config. Admins read and change them at `GET` / `PUT /api/admin/settings`.
 | `booking_commission_percent` | 0 | Percent of a booking price the platform keeps |
 | `team_game_platform_fee` | 2 500 000 tiyin (25 000 so'm) | Charged per team on a team game |
 | `casual_game_service_fee` | 0 | Charged per player on a casual game |
+| `card_fee_bps` | 150 (1.5%) | The card fee ATMOS takes; card prices are grossed up by it (0–1000) |
+| `payment_rounding_step` | 10 000 tiyin (100 so'm) | Card prices are rounded up to a multiple of it (1–1 000 000) |
 
 - The row is seeded by changeset 021; `singleton` is UNIQUE and CHECKed true, so a
   second row is impossible.
-- Validation: commission 0–50, fees not negative. A rejected value writes nothing.
-- Every change writes one `PLATFORM_SETTINGS_UPDATED` audit entry naming each
-  changed field with its old and new value.
+- Validation: commission 0–50, fees not negative, card fee 0–1000 bps, rounding step
+  1–1 000 000 tiyin. A rejected value writes nothing.
+- Every change writes one `SETTINGS_CHANGED` audit entry listing each changed
+  field with its old and new value (see "Audit log").
 
 ### Payments
 
-**Provider.** ATMOS is the card provider. Every new flow goes through the
-`PaymentProvider` interface in `provider/`: bind a card once
-(`startCardBinding` → `confirmCardBinding` with the SMS code), then `charge`,
-`hold`, `capture`, `release` and `refund` it by token. Amounts are tiyin.
+#### The card fee
 
-- `FakePaymentProvider` stands in until the ATMOS docs land. It is active only
-  when `app.payments.provider=fake` and **refuses to start under the `prod`
-  profile**. Its SMS code is always `111111`, and a card number ending in `0002`
-  is always declined so failure paths can be tested.
-- A declined card comes back as a `FAILED` `ProviderTransaction`, not an
-  exception. Malformed input (unknown binding or transaction, wrong SMS code,
-  a hold settled twice) throws.
-- **Refunds are always for the whole transaction** — ATMOS cannot refund part of
-  one.
-- `LegacyCheckoutProvider` (Payme/Click hosted checkout) is **legacy**. It now
-  survives only for the casual game payment path (`POST /api/games/{id}/pay`),
-  which refuses team games. Never use it in a new flow.
+ATMOS takes a commission from every card payment (`card_fee_bps`, default 150 =
+1.5%). Card prices are grossed up so the owner and the platform still net their full
+amounts, then rounded up to `payment_rounding_step` (default 10 000 tiyin = 100 so'm).
+One pure function, integer math only (`PriceCalculator.playerAmount`):
 
-**Saved cards** (`saved_cards`): the provider token, a masked number
-(`8600 •••• 1234`), card type and an active flag. The full card number is passed
-straight to the provider and is **never stored or logged**; `AddCardRequest`
-overrides `toString` to keep it out of stray log lines, and `SavedCardResponse`
-has no token field at all. Deleting a card sets `is_active = false` so past
-payments stay explainable. Endpoints: `POST /api/cards`,
-`POST /api/cards/confirm`, `GET /api/cards`, `DELETE /api/cards/{id}`.
+```
+playerAmount(net) = roundUp( ceil(net * 10000 / (10000 - card_fee_bps)), payment_rounding_step )
 
-**Payment rows**
+200 000 so'm:  20 000 000 * 10000 / 9850 = 20 304 568.5 → 20 304 569 → 20 310 000 tiyin = 203 100 so'm
+```
 
-- `provider_txn_id` is UNIQUE — handles duplicate webhook calls (idempotent)
-- Payment types: `booking`, `remainder`, `team_game`, `game_share`, `service_fee`, `refund`
-  (`team_game` is one team's fee + advance; `remainder` is either a booking's or a
-  team's outstanding balance; `game_share` is the legacy casual flow)
-- `game_team_id` ties a team game's payments to the (game, team) that made them,
-  so they survive the booking being cancelled and recreated when an opponent changes
-- Amounts and the owner/platform split never change after a row is created
-- Status only moves forward (`held` → `captured` or `released`)
-- Refunds create a NEW payment row with negative amount and refund_reason; the
-  original may be marked refunded but is never otherwise rewritten
+Each card payment is split (`CardFeeSplit`):
+
+- `owner_gross = ceil(owner_net * 10000 / (10000 - bps))` — after ATMOS takes its
+  fee, the owner gets exactly `owner_net`;
+- `platform_gross = player_amount - owner_gross` — the platform's own net share grossed
+  up, plus the rounding remainder. `player_amount = owner_gross + platform_gross`, always.
+
+Where it applies — **card payments only, never cash**:
+
+| Payment | Charged by card |
+|---|---|
+| Booking, paid in full | the **sum** of each hour's `playerAmount`, so the slot prices the player saw add up exactly; stored as `bookings.card_price` |
+| Booking, deposit | `playerAmount(min_booking_amount)` |
+| Booking remainder, in the app | `playerAmount(net remainder)` |
+| Booking remainder, cash to the owner | the net remainder — no fee |
+| Team game, per team | `playerAmount(owner advance + platform fee)`; the owner nets the advance, the platform its 25 000 so'm |
+| Team remainder, in the app / cash | `playerAmount(remainder)` / the net remainder |
+| Friends game, per player | `playerAmount(pitch share + service fee)` |
+
+The booking commission (`booking_commission_percent`, 0 today) comes off the owner's
+net before grossing up. `bookings.price` stays the owner's **net** price, and
+`paid_amount` counts the **net** each payment covers (`amount - card_fee_expected`), so
+`payment_status` works as before.
+
+**API.** Player-facing prices show what the player pays by card; the owner always sees
+and edits net prices.
+
+- Public stadium list/detail, availability slots and public pricing rules:
+  `pricePerHour` (and a slot's `originalPrice`) is the card price; a stadium's
+  `minBookingAmount` is the deposit by card; `price` and `cardFee` are added.
+- Owner stadium and pricing-rule responses: `pricePerHour` and `minBookingAmount` stay
+  net, with `price` (card), `netPrice` and `cardFee` alongside.
+- Bookings: `price` is the card price, `cardFee = price - netPrice`, `netPrice` only in
+  owner/admin views; `paidAmount` and `remainingAmount` stay net; `remainderByCard`
+  and `remainderInCash` offer the rest both ways. `refundIfCancelledNow` is the full
+  gross paid by card — the fee comes back too.
+- Games: the challenge board's `amountToPayNow` is the card amount (with `cardFee`);
+  each team carries `price`, `cardFee`, `remainderByCard`, `remainderInCash`, and
+  `paidInApp` is the gross on the card; a friends game's detail carries the share's
+  `price` and `cardFee`. `totalPrice` stays the pitch's net price.
+- The public search's `maxPrice` is a card price, converted to the largest fitting net.
+
+#### The provider
+
+Every flow goes through `PaymentProvider` (`provider/`), shaped around the ATMOS
+operations. Amounts are tiyin; **there is no partial refund anywhere**.
+
+| Operation | ATMOS |
+|---|---|
+| `bindCardInit(cardNumber, expiry)` → bindingId, maskedPhone | `POST /partner/bind-card/init` |
+| `bindCardConfirm(bindingId, otp)` → cardToken, cardId, maskedPan, expiry | `POST /partner/bind-card/confirm` |
+| `removeCard(cardId, cardToken)` | `POST /partner/remove-card` |
+| `charge(splits, token \| number+expiry, account)` → transaction ids, needs OTP without a token | `POST /merchant/bulk/pay/create` + `pre-apply` |
+| `confirmCharge(transactionIds, otp)` → successTransIds, commission, ofdUrl | `POST /merchant/bulk/pay/apply` |
+| `getCharge(transactionId)` — after a lost answer | `POST /merchant/pay/get` |
+| `reverse(successTransId, reason)` — the whole transaction | `POST /merchant/pay/reverse` |
+| `hold(splits, cardToken, account, durationMinutes)` → holdId | `POST /hold/multiple/create` |
+| `confirmHold(holdId, otp)` | `PUT /hold/multiple/apply/{id}` |
+| `captureHold(holdId)` — always the full amount | `POST /hold/{id}` |
+| `releaseHold(holdId)` | `DELETE /hold/{id}` (`send_cancel_sms=true`) |
+| `getHold(holdId)` | `GET /hold/{id}` |
+
+- A split names the stadium owner's ATMOS recipient (`owner_legal_details.atmos_recipient_id`,
+  the only place it is stored — see "Owner legal details") or the platform, whose
+  recipient the provider takes from `ATMOS_PLATFORM_RECIPIENT_ID`.
+- `account` is our payment row id: the row is written first (`processing`), so a retry
+  never charges twice.
+- A declined card is a `FAILED` outcome. `STPIMS-ERR-092` (transaction closed),
+  `-145` (hold cancelled) and `-144` (hold expired) are `TransactionClosedException`,
+  `HoldCancelledException`, `HoldExpiredException`; any other code is a
+  `PaymentProviderException` carrying it — logged, never shown raw to a player. No
+  answer is a `ProviderTimeoutException`: the payment stays `processing`, never assumed
+  failed, never sent again.
+- **`AtmosPaymentProvider`** is active only under the `atmos` profile and refuses to
+  start unless `ATMOS_BASE_URL`, `ATMOS_CONSUMER_KEY`, `ATMOS_CONSUMER_SECRET`,
+  `ATMOS_STORE_ID` and `ATMOS_PLATFORM_RECIPIENT_ID` are set. Token from `POST /token`
+  (Basic auth, `client_credentials`), cached until `expires_in` − 5 min; a 401 refreshes
+  it once. `ofd_items` are sent only when `ATMOS_OFD_CODE_RENTAL` and
+  `ATMOS_OFD_CODE_SERVICE` are both set; `ofd_url` is saved on the payment. It never
+  logs a request or response body — only operation names, ids and result codes.
+- **`FakePaymentProvider`** is the default in dev and tests (`app.payments.provider=fake`,
+  not `atmos`) and refuses the `prod` profile: SMS code `111111`, a card ending in `0002`
+  is declined, 1.5% commission per split, a hold lapses after its duration (capture then
+  fails with `HOLD_EXPIRED`), the same account never charges twice.
+- `LegacyCheckoutProvider` (Payme/Click hosted checkout) is **legacy**, kept only as the
+  no-`cardId` branch of the friends-game pay endpoint. Never use it in a new flow.
+
+#### Payment rows
+
+- `amount` is the gross charged (or the cash taken); `owner_amount + platform_amount =
+  amount`; `card_fee_expected` is what the fee and rounding added (0 for cash);
+  `provider_commission` is what ATMOS reports. **Amounts never change after insert**;
+  only statuses move forward.
+- Statuses: `processing` (provider called, answer not in) → `paid` / `held` / `failed`;
+  `held` → `captured` or `released`; a give-back goes through `return_pending` →
+  `refunded` / `released`; a capture through `capture_pending` → `captured`. A give-back
+  ATMOS declines leaves the original `refund_failed` and its refund row `failed` (with
+  `failure_reason`) until an admin retries it or marks it refunded by hand
+  (`refunded_manually`, `manual_refund_reason`, `manual_refund_by`); both rows then end
+  `refunded`.
+- `provider_txn_id`: the charge's transaction ids (comma-separated, one per split) or the
+  hold id. `provider_success_txn_ids`: what a reverse needs. `hold_expires_at`: when an
+  unsettled hold lapses.
+- A refund is a NEW row with the negative gross (fee included) and `refund_reason`.
+- Payment types: `booking`, `remainder`, `team_game`, `game_share`, `service_fee`,
+  `refund`; `game_team_id` ties a team game's payments to its (game, team).
+
+#### Team game money → ATMOS operations
+
+| Rule | The creating team (hold) | The other team (charged) |
+|---|---|---|
+| Creating a game | **hold** for (minutes to the 3-hour point) + 120, capped at `app.payments.hold-max-minutes` (43 200); longer → the game cannot be created | — |
+| Waiting, slot taken by a booking | **release** | — |
+| Waiting, 3-hour point (`GameTimeoutJob`) | **release** (already released counts as done) | — |
+| Waiting, leader cancels before the deadline | **release** | — |
+| Waiting, leader cancels after the deadline | **capture** (money kept) | — |
+| Waiting, leader cancels past the 3-hour point | **release** | — |
+| Opponent joins | **capture**, last | **charge** |
+| Confirmed, a leader cancels before the deadline | the leaver's money: **reverse** | the team that stays: nothing |
+| Confirmed, a leader cancels after the deadline | the leaver's money: kept | the team that stays: nothing |
+| Confirmed, a leader cancels past the 3-hour point | the leaver's money: kept | the team that stays: **reverse** |
+| Owner cancels the booking / admin blocks the stadium | **reverse** | **reverse** |
+| A team's remainder in the app | **charge**; reversed with the rest of that team's money when it is given back | |
+
+Each row is tested in `TeamGameOperationMappingTest`. Joining goes in this order: (1)
+book the slot (EXCLUDE constraint), (2) charge the joiner, (3) capture the waiting
+team's hold. If (2) is declined the booking is removed and the game keeps waiting; if
+(2) goes unanswered the same, but the `processing` row is committed for reconciliation.
+If (3) fails (expired, cancelled or unanswered) the joiner's charge is reversed, the
+hold given back, the booking deleted, the game cancelled, an error logged and both
+teams notified — and that is committed (`PaymentStepFailedException`, a 400 with
+`noRollbackFor`), never rolled back over money that already moved. A join waits while
+the creating team's hold is still `processing`.
+
+Ordinary bookings and friends games use **charge / reverse**: a refund (player before
+the deadline, owner at any time, admin block) reverses every split's transaction in
+full. Friends games never held money — each player pays as they go and the slot is
+booked once everyone has — so they pay by card (`POST /api/games/{id}/pay?cardId=`)
+and are reversed if the game is called off. Cash is never touched.
+
+#### Reconciliation
+
+`PaymentReconcileJob` runs every five minutes and settles every payment stuck for over
+five minutes in `processing`, `return_pending` or `capture_pending`, each in its own
+transaction:
+
+- `processing` charge → `getCharge`: paid → the booking is confirmed (through
+  `applySuccessfulBookingPayment`), the friends game told, the team's remainder settled
+  — or the money given straight back if what it paid for has gone (an abandoned join);
+  unconfirmed after 30 minutes → failed, no money moved.
+- `processing` hold → `getHold`: held, or failed (the waiting game it was for ends).
+- `return_pending` → reversed if the money was taken, released if it is held. A reverse
+  ATMOS declines becomes a failed refund (`refund_failed` + a `failed` refund row), so
+  the job stops trying; a release that fails stays `return_pending` for the next run.
+- `capture_pending` → captured if still held; released with an error if it lapsed.
+
+Idempotent: settled rows are not picked up, and a reverse or release of something
+already gone counts as done. The job never touches `failed` or `refund_failed` rows —
+from then on only an admin retries them, so the two never race.
+
+#### Saved cards
+
+`saved_cards` keeps the provider token **encrypted at rest** (AES-256-GCM,
+`CARD_TOKEN_KEY`; required under the `prod` and `atmos` profiles), the provider's card
+id, a masked number (`8600 •••• 1234`), the expiry ATMOS reports and an active flag. The
+card number and the expiry the player typed go straight to ATMOS and are **never stored
+or logged**; the token never appears in any API response. The player sees only the
+masked number and expiry; deleting a card removes it at ATMOS (`removeCard`) and sets
+`is_active = false`. Endpoints: `POST /api/cards`, `POST /api/cards/confirm`,
+`GET /api/cards`, `DELETE /api/cards/{id}`.
+
+**Never logged or returned**: card numbers, expiry dates, SMS codes, card tokens, ATMOS
+credentials or access tokens. The request DTOs and provider records override
+`toString` to mask them, and a test checks it.
+
+#### Open ATMOS questions
+
+- [ ] `store_id` vs `terminal_id`: which identifies a split's recipient (the bulk and
+      hold requests use `store_id`, the responses `terminal_id`).
+- [ ] Bulk `pay/create`: `store_id` per `params` item (the table) or one at the top (the
+      example)? We send both. Are `ofd_items` accepted per item?
+- [ ] `amount`: a number (bulk example) or a string (hold examples)? We follow each example.
+- [ ] The OTP to send when applying a token payment or hold — the docs show `111111`.
+- [ ] Do hold capture/cancel/get take the multi-hold `parent_id` or each item's `hold_id`?
+      We use `parent_id`.
+- [ ] How is a captured hold reversed — which transaction id? We send the hold id.
+- [ ] `pay/get` and `hold/{id}` status values are not listed; `confirmed: true` is read as
+      success / held.
+- [ ] `hold_till`'s format; and whether `DELETE /hold/{id}` answering `STPIMS-ERR-145`
+      means "released" (its example) or an error.
+- [ ] The token lifetime: the text says 3600 s, the example 2525.
+- [ ] `/token`: `grant_type` in the form body (the docs) or the query string?
 
 ### Availability Calculation
 
@@ -573,6 +789,216 @@ To show free slots for a stadium on a given date:
 5. For each remaining slot, calculate price from `pricing_rules` (match day_of_week + time range)
 6. Mark slots that have a WAITING **team_vs_team** game (show "a team is looking for an opponent" in UI). Casual games are private to whoever was invited and are never marked
 7. Apply any active promotion discount
+
+## Audit log
+
+The admin panel shows **who did what and exactly what changed**. Every action that
+changes data writes one entry, from admins, owners, players and the system alike.
+The code lives in `audit/` (`AuditEntry`, `AuditAction`, `AuditChange`,
+`AuditLabels`, `AuditEntityType`) and `service/AuditService.java`.
+
+### What an entry records
+
+| Field | Column | Notes |
+|---|---|---|
+| actor | `user_id`, `actor_name` | the user, and their name **as it was then**; none for SYSTEM |
+| actor type | `actor_type` | `ADMIN`, `OWNER`, `PLAYER` or `SYSTEM` — the role the action was done in, not the user's flags (an owner booking someone else's pitch is a PLAYER there) |
+| action | `action` | a stable code from `AuditAction` |
+| entity | `entity_type`, `entity_id`, `entity_label` | the label is saved at the time (stadium name, user's name, "Arena, 2026-11-02 20:00 (1h)"), so the entry stays readable after a rename or delete |
+| changes | `changes` | JSON array of `{ field, oldValue, newValue }` |
+| reason | `reason` | the free text an action carries: reject, block, cancel, review note |
+| ip | `ip_address` | ADMIN entries (taken from the request automatically) and admin logins |
+| time | `created_at` | UTC |
+
+Why columns plus one JSON column: everything the admin panel filters on is a real,
+indexed column; `changes` is a JSON array in a TEXT column because nothing filters
+inside it, and TEXT avoids Hibernate's JSON type mapping (which would need Jackson 2
+next to Boot 4's Jackson 3). Values are normalised when written (`AuditChange`):
+numbers stay numbers — **money is always tiyin** — booleans and strings stay as they
+are, times/dates/UUIDs/enums become strings (instants in UTC ISO-8601, enums by their
+lowercase `getValue()`), lists stay lists.
+
+Rows written before changeset 029 keep their free-form `details` and have no actor
+type, label, changes or reason; the API shows them with whatever they have.
+
+### Writing an entry
+
+```java
+auditService.record(AuditEntry.admin(adminId, AuditAction.STADIUM_BLOCKED)
+        .entity(AuditEntityType.STADIUM, stadium.getId(), AuditLabels.stadium(stadium))
+        .change("status", oldStatus, stadium.getStatus())
+        .reason(reason));
+```
+
+- Pick the factory by role: `admin(...)`, `owner(...)`, `player(...)`, `system(...)`.
+  **Automatic consequences are SYSTEM, with no user**: scheduled jobs, a game
+  cancelled because someone else took the slot, a game confirmed because the last
+  payment landed, every refund and released hold. The player's or owner's own act
+  is its own entry next to them.
+- `change(field, old, new)` keeps only a real change, so pass every field you might
+  have touched. A creation uses `created(field, value)` (old is null); a deletion
+  records each removed value as `old → null`. For an edit, snapshot before and after
+  and use `diff(before, after)` — `StadiumService.auditSnapshot` is the example — so
+  **only the fields that changed** are recorded, and an edit that changes nothing
+  writes no entry.
+- Capture the old values **before** you mutate the entity.
+- Labels come from `AuditLabels`, so the same kind of entity reads the same everywhere.
+- One entry per action. Don't add a second, unstructured one for the same event.
+- `record` never throws, so auditing can never break the flow it records.
+- Tests: `audit/Audited` (test sources) reads back what a mocked `AuditService`
+  recorded — `Audited.one(auditService, AuditAction.X)`.
+
+### What is never logged
+
+**Passwords, password hashes, card numbers, card tokens (`providerToken`), JWTs, the
+bot token or any other secret** — not as a field, not in a label, not in a reason.
+`AuditEntry.change` drops any field whose name looks like one (password, hash, token,
+card number, cvv, secret, jwt) and logs an error, but that is a safety net, not
+permission: never pass such a value in the first place. A walk-in client's phone
+number is not logged either; their name is part of the booking label.
+
+### Logged actions
+
+| Area | Actions |
+|---|---|
+| Admin | `ADMIN_LOGIN_SUCCEEDED`, `ADMIN_LOGIN_FAILED`, `APPLICATION_APPROVED`, `APPLICATION_REJECTED`, `STADIUM_APPROVED`, `STADIUM_REJECTED` (pending → rejected; before changeset 038, pending → blocked), `STADIUM_BLOCKED`, `STADIUM_UNBLOCKED` (blocked → approved), `STADIUM_STATUS_CHANGED` (back to pending) — each with `status` and `statusReason` changes, `STADIUM_NOTE_ADDED` (the note's id, never its text), `USER_BLOCKED`, `USER_UNBLOCKED`, `USER_ROLE_CHANGED`, `OWNER_LEGAL_DETAILS_CHANGED`, `REFUND_RETRIED`, `REFUND_MARKED_MANUAL`, `SETTINGS_CHANGED` |
+| Owner | `STADIUM_CREATED`, `STADIUM_UPDATED` (incl. `pricePerHour`, `minBookingAmount`, `cancellationHours`, photos, amenities), `PRICING_RULE_CREATED` / `_UPDATED` / `_DELETED`, `CLOSURE_CREATED` / `_DELETED`, `PROMOTION_CREATED` / `_DEACTIVATED`, `MANUAL_BOOKING_CREATED`, `CASH_RECEIVED` (a booking, or one team's game remainder), `BOOKING_CANCELLED_BY_OWNER` |
+| Player | `BOOKING_CREATED`, `BOOKING_CANCELLED_BY_USER`, `BOOKING_REMAINDER_PAID`, `BOOKING_SERIES_CREATED` / `_CANCELLED`, `GAME_CREATED`, `GAME_JOINED`, `GAME_LEFT`, `GAME_CANCELLED`, `GAME_OPPONENT_LEFT`, `GAME_REMAINDER_PAID` |
+| System | `BOOKING_CONFIRMED` (a payment confirmed it), `BOOKING_EXPIRED`, `BOOKING_COMPLETED`, `BOOKING_CANCELLED_BY_OWNER` (by a stadium block), `GAME_CONFIRMED`, `GAME_AUTO_CANCELLED`, `PAYMENT_COMPLETED`, `PAYMENT_RELEASED`, `REFUND_CREATED`, `REFUND_FAILED` (ATMOS declined; the reason is its error), `PROMOTION_EXPIRED` |
+
+Codes are **stable**: they are stored and filtered on, so never rename one — add a
+new constant. Legacy rows may carry older codes (e.g. `PLATFORM_SETTINGS_UPDATED`,
+`GAME_CANCELLED` written by the system); the action filter still accepts them.
+
+### Reading it: admin endpoints
+
+- `GET /api/admin/audit-log` — newest first, paged (`page`, `size`). Filters, all
+  optional and combined with AND:
+  - `actor` — matches the actor's current name, username or phone, or the name
+    saved on the entry (case-insensitive, literal — `%` and `_` are not wildcards)
+  - `actorType` — `ADMIN` / `OWNER` / `PLAYER` / `SYSTEM` (anything else → 400)
+  - `action` — one or several: `?action=A&action=B` or `?action=A,B`
+  - `entityType`, `entityId`
+  - `from`, `to` — **Tashkent** calendar days, both inclusive (`to` before `from` → 400)
+
+  Each item:
+
+  ```json
+  {
+    "id": "…", "time": "2026-10-28T11:52:42.439Z",
+    "actor": { "id": "…", "name": "Dilnur Aliqulov", "type": "ADMIN" },
+    "action": "SETTINGS_CHANGED",
+    "entity": { "type": "platform_settings", "id": "…", "label": "Platform settings" },
+    "changes": [ { "field": "teamGamePlatformFee", "oldValue": 2500000, "newValue": 3000000 } ],
+    "reason": null, "ip": "203.0.113.7"
+  }
+  ```
+
+  `changes` is always an array; `actor` has only `type` for SYSTEM; absent fields are
+  omitted. Old rows add `details` and may have no `actor` at all.
+- `GET /api/admin/audit-log/actions` — every code in `AuditAction`, for a dropdown.
+- **Entries can never be edited or deleted.** There is no such endpoint (PUT/DELETE
+  answer 405/404), `AuditLog` is Hibernate `@Immutable`, and `AuditLogRepository`
+  extends the bare Spring Data `Repository` with only `save` and reads — no update
+  or delete method exists for any caller. Don't add one.
+
+## Admin panel API
+
+Everything under `/api/admin/**` needs `isAdmin` (no token → 401, anyone else → 403).
+Conventions every list follows:
+
+- **Filters are JPA specifications** (`repository/*Specifications`), combined with AND;
+  every filter is optional. Don't write a JPQL query with `:x IS NULL OR …` for a list.
+- **`from` / `to` are Tashkent calendar days, both inclusive**: `[from 00:00, (to + 1 day)
+  00:00)` in `Asia/Tashkent`, as UTC instants — always through `util/TashkentDays`
+  (`to` before `from` → 400 "to must be on or after from").
+- **Search**: names case-insensitively, phones ignoring spaces and `+` on both sides
+  (`repository/SearchPredicates`); `%` and `_` are literal.
+- **No N+1 on a list**: a page fetches its to-one associations in the row query
+  (`FetchJoins`; a stadium's `amenities` is an inverse one-to-one Hibernate always loads,
+  so fetch it too) and loads everything else for the whole page in one grouped query
+  each. Read `platform_settings` once per list (`CardPricing.snapshot()`), not per row.
+  Each list has a test asserting its query count with 20+ rows.
+- Every admin write is audited with old → new values; unknown filter values are 400.
+
+### Endpoints
+
+| Endpoint | What |
+|---|---|
+| `GET /api/admin/bookings` · `/{id}` | every booking, newest `startsAt` first. Filters `search` (booking user or walk-in client), `stadiumId`, `status`, `from`/`to` (on `startsAt`), `userId`. `AdminBookingResponse` = the owner's `BookingResponse` (card `price`, `netPrice`, `cardFee`, …) + `userName`, `userPhone`, `paidInApp` (card money kept, gross), `cashReceived`, `cashReceivedAt` |
+| `GET /api/admin/games` · `/{id}` | every game, newest `startsAt` first. Filters `search` (creator or any team's name), `stadiumId`, `status`, `from`/`to`, `userId` (created, played in, or led a team in). Detail: team games get `teams` (the `GameTeamResponse` money + `players`), casual games `participants` and `serviceFeePerPerson`. `cancelledAt` / `cancellationReason` come from the audit entry that cancelled the game |
+| `GET /api/admin/payments` · `/{id}` | every payment and refund, newest first (`type=refund`: failed refunds first). Filters `search` (payer name/phone, `providerTxnId`), `type`, `status`, `method`, `stadiumId` (booking's or game's), `from`/`to` (on `createdAt`). Each has its split, `cardFee` (`card_fee_expected`), `providerCommission`, `failureReason`, `refundedManually`, `manualRefundReason`; the detail adds `linkedPayments` (a refund's original, or an original's refunds) |
+| `GET /api/admin/payments/summary?from=&to=` | both required. `appRevenue`, `cardFees`, `ownerPayouts`, `platformRevenue`, `refunded`, `held` — see "Revenue" |
+| `POST /api/admin/payments/{id}/retry-refund` | a `failed` refund, tried again (see "Failed refunds") |
+| `POST /api/admin/payments/{id}/mark-refunded` | `{ reason }` 10–500 chars: a `failed` refund returned outside the platform |
+| `GET /api/admin/stadiums` | every status. Filters `status` (incl. `rejected`), `search`, `district`, `format`, `ownerId`. Rows add `photoUrl`, `district`, `pricePerHour` (net), `price` (card), `ownerContractStatus`, `statusReason` |
+| `GET /api/admin/stadiums/{id}` | the public detail mapping for **any** status, in the owner's prices (`pricePerHour`/`netPrice` net, `price` card) + `pricingRules` (net and card) + the list's figures |
+| `PUT /api/admin/stadiums/{id}/status` | `approved` (needs the owner's signed ATMOS contract), `rejected` (only from pending, reason required), `blocked` (reason required), `pending` |
+| `GET` / `POST /api/admin/stadiums/{id}/notes` | admins' internal notes, newest first; `{ text }` 1–1000 chars. Never shown to owners or players |
+| `GET /api/admin/users` | filters `search`, `role` (`player` = neither owner nor admin, `owner`, `admin`), `status` (`active`, `blocked`) |
+| `GET` / `PUT /api/admin/users/{id}/legal-details` | see "Owner legal details"; GET answers `data: null` before anything is entered |
+| `GET /api/admin/users/{id}/teams` | the teams a user leads or belongs to: `id`, `name`, `leaderName`, `memberCount`, `role` |
+| `GET /api/admin/stats` | overview figures (see "Revenue"), plus `failedRefunds` / `oldestFailedRefundAt`, `newUsersLast7Days`, `rejectedStadiums`, and the previous-period values `todayBookingsLastWeek`, `previousMonthRevenueToDate`, `newUsersPrevious7Days`, `approvedStadiumsWeekAgo` (the panel works out the %) |
+| `GET /api/admin/stats/revenue` | `appRevenue` per Tashkent day, last 30 days, every day present; `bookingCount` = the booking series below |
+| `GET /api/admin/stats/bookings-daily` | bookings starting each of the last 30 Tashkent days (confirmed or completed, like `todayBookings`), every day present |
+
+### Revenue
+
+`RevenueService` is the **only** revenue calculation: the payments summary, the overview's
+`totalRevenue` / `todayRevenue` / `weekRevenue` / `monthRevenue` /
+`previousMonthRevenueToDate`, the 30-day chart and a stadium's `totalRevenue` all read
+it, so they always agree. Don't add another sum over payments for these figures. Cash
+is excluded from all of them ("ilova orqali").
+
+- **appRevenue** — card money kept: the gross of every card payment whose money arrived
+  (`paid`, `captured`, `completed`, or since `refunded` / `refund_failed`), counted when
+  it was taken, less every card refund that completed in the period (counted when its
+  row became `refunded`).
+- **cardFees** — what ATMOS took of that money: its reported `provider_commission`;
+  estimated at the current `card_fee_bps` when none was reported; 0 on legacy
+  Payme/Click rows. A reversal is taken to give the fee back too; a refund made by hand
+  did not touch the card transaction, so ATMOS keeps its fee.
+- **ownerPayouts** / **platformRevenue** — what each actually receives: its split less
+  its part of ATMOS's fee (ATMOS charges the same rate on every split, so the owner bears
+  `fee × ownerAmount / amount`, the platform the rest).
+- `ownerPayouts + platformRevenue + cardFees = appRevenue` holds for every payment, so
+  for any sum of them (`RevenueTest`).
+- `refunded` — card refunds completed in the period, positive; `held` — everything on
+  hold on players' cards right now, whatever the period.
+
+The owner dashboard's revenue is still its own definition (see "Deferred until the
+payment model is final").
+
+### Failed refunds
+
+A refund ATMOS declines is saved `failed` (its original `refund_failed`) instead of
+rolling back the cancellation — see "Cancellation Policy". Two ways out, both on the
+`failed` refund row, which they lock:
+
+- **retry-refund** reverses the same transactions again on the same row; one already
+  reversed answers "closed" and counts as done, so however often it is retried the money
+  goes back once. A decline is a normal 200 (still `failed`, new `failureReason`);
+  ATMOS unreachable is 502 "Payment provider unavailable" and nothing changes. Success:
+  both rows `refunded`, audit `REFUND_RETRIED`.
+- **mark-refunded** records money returned outside the platform: both rows `refunded`,
+  `refundedManually`, `manualRefundReason`, `manual_refund_by`; audit
+  `REFUND_MARKED_MANUAL`.
+
+Only a `failed` refund qualifies (400 "Only a failed refund can be retried" / "… marked
+as refunded"). `GET /api/admin/stats` counts them for the sidebar badge.
+
+### Owner legal details
+
+`owner_legal_details` (1:1 with users, `OwnerLegalDetailsService`): `legalType`
+(`yatt`, `mchj`, `self_employed`), `tin` (9 digits; the 14-digit PINFL for
+`self_employed` — "tin must be 9 digits (or 14 for self-employed)"),
+`atmosContractStatus` (`none`, `pending`, `signed`) and `atmosRecipientId` (1–50 chars,
+required when signed, ignored otherwise). **This is the only place an owner's ATMOS
+recipient id is stored**; the payment split reads it from here. A stadium cannot be
+approved until its owner's contract is signed. Changes are audited
+(`OWNER_LEGAL_DETAILS_CHANGED`) with who made them (`updatedByName`). Rows moved from the
+old `users.atmos_recipient_id` by changeset 037 are `signed` with no legal type or tin
+until an admin fills them in.
 
 ## Auth
 
@@ -590,6 +1016,87 @@ To show free slots for a stadium on a given date:
 - Same flow, different payload format
 - Same JWT returned, same user record
 
+### Admin accounts
+
+Platform admins sign in to the admin web panel with a **username and password**,
+not Telegram. They are a handful of people the platform owner creates directly in
+the database. Players and stadium owners keep signing in through Telegram; nothing
+changes for them. All of this lives in `service/AdminAuthService.java`.
+
+**Passwords are managed only in the database.** There is deliberately no API to
+set or change one — not even an admin's own: the platform owner creates, resets
+and unlocks accounts with the SQL below. Don't add such an endpoint.
+
+- `POST /api/auth/admin/login` with `{ "username", "password" }` (public) returns
+  the same `{ token, user }` as the Telegram sign-in. Only a user with
+  `is_admin = true` **and** a `password_hash` can sign in this way. Usernames
+  match case-insensitively (unique index `uq_users_username_lower`).
+- Wrong username or wrong password → **401 `INVALID_CREDENTIALS`**
+  "Login yoki parol noto'g'ri" — identical in both cases, and an unknown username
+  still runs a BCrypt check against a dummy hash so the response time matches.
+- **5** wrong passwords in a row lock the account for **15 minutes** →
+  **423 `ACCOUNT_LOCKED`** with `data.minutesRemaining`. While locked even the
+  right password is refused. When the lock lifts the counter starts again at 0.
+- One IP may make **20** attempts per **15 minutes**, right or wrong →
+  **429 `TOO_MANY_ATTEMPTS`**. Kept in memory (`LoginRateLimiter`), which is
+  enough for one server. The IP is `request.getRemoteAddr()`: behind a reverse
+  proxy set `server.forward-headers-strategy`, or every admin shares the proxy's IP.
+- A blocked admin → **403 `ACCOUNT_BLOCKED`**, but only once the password is
+  right, so the block tells a guesser nothing.
+- Success resets `failed_login_attempts`, clears `locked_until` and stores
+  `last_login_at`. Successes and failures write `ADMIN_LOGIN_SUCCEEDED` /
+  `ADMIN_LOGIN_FAILED` audit entries with the username and IP.
+- **A password reset in the database signs out every session.** The reset SQL
+  stamps `users.password_changed_at`, and `JwtAuthFilter` (which already loads the
+  user for the blocked check) refuses any token issued before that with
+  **401 `TOKEN_REVOKED`**; the admin signs in again with the new password. Tokens
+  carry an `iatMs` claim (issue time in milliseconds) because the standard `iat` is
+  whole seconds and could not tell apart a token issued in the same second as the
+  reset; a token without `iatMs` falls back to `iat`. Telegram-issued tokens of the
+  same user are refused as well. Users with no `password_changed_at` are never
+  checked. `now()` is the database clock, so keep the app and database hosts in
+  time sync (NTP).
+- Limits are `app.admin-login.*` (`max-failed-attempts`, `lock-minutes`,
+  `max-attempts-per-ip`, `ip-window-minutes`), defaults 5 / 15 / 20 / 15.
+- Error responses here carry an extra `code` key in the envelope. It appears only
+  when set, so every other response keeps its three keys.
+
+**Passwords are never stored or logged in plain text.** Only the BCrypt hash goes
+into `users.password_hash`; audit entries and log lines carry the username and IP,
+never a password; `AdminLoginRequest` overrides `toString` to mask it. The SQL
+below necessarily contains the plain password in the statement itself: don't save
+it in a script file or in `psql` history (`\set HISTFILE /dev/null` before running
+it, or clear the history afterwards), and hand the password to the admin over a
+private channel. A new password needs at least 10 characters and at most 72 bytes
+(BCrypt ignores the rest).
+
+**Create an admin** (pgcrypto is enabled by changeset 027; `id`, `language` and
+the other flags take their defaults; `telegram_id` and `phone` stay null):
+
+```sql
+INSERT INTO users (username, name, password_hash, is_admin)
+VALUES ('dilnur', 'Dilnur Aliqulov', crypt('a-long-unique-password', gen_salt('bf', 12)), true);
+```
+
+**Reset a password** (also clears any lockout; `password_changed_at = now()` signs out
+every existing session — keep it, or a leaked token survives the reset):
+
+```sql
+UPDATE users
+SET password_hash         = crypt('a-new-long-password', gen_salt('bf', 12)),
+    password_changed_at   = now(),
+    failed_login_attempts = 0,
+    locked_until          = NULL
+WHERE LOWER(username) = LOWER('dilnur');
+```
+
+**Unlock a locked account** without changing the password:
+
+```sql
+UPDATE users SET locked_until = NULL, failed_login_attempts = 0
+WHERE LOWER(username) = LOWER('dilnur');
+```
+
 ### JWT
 - Sent as `Authorization: Bearer <token>`
 - Contains: userId, phone, isOwner, isAdmin
@@ -597,7 +1104,7 @@ To show free slots for a stadium on a given date:
 - `JwtAuthFilter` validates on every request, sets SecurityContext
 
 ### Endpoint Security
-- `/api/auth/**` → public
+- `/api/auth/**` → public (Telegram sign-in and `POST /api/auth/admin/login`)
 - `/api/stadiums/**` GET → public (listing, detail, availability)
 - `/api/bookings/**` → authenticated
 - `/api/owner/**` → authenticated + isOwner check
@@ -659,21 +1166,160 @@ For paginated lists:
 - Use `@ConfigurationProperties` for custom config (app.jwt.*, app.booking.*, etc.)
   - `app.game.opponent-deadline-hours` (default 3) is the team-game joining
     cutoff. Money rules live in `platform_settings`, not here — only timing does.
+  - `app.admin-login.*` holds the admin password sign-in limits (see "Admin accounts").
 - Use constructor injection (Lombok `@RequiredArgsConstructor`), never `@Autowired` on fields
 - Log important actions: booking created, payment received, game confirmed, errors
 - Write unit tests for service layer, integration tests for controllers
 
 ## Environment Variables
 
-Stored in `.env` (never committed to Git), loaded by spring-dotenv:
+Stored in `.env` in the project root (never committed to Git; copy `.env.example`):
 
 ```
 DB_URL=jdbc:postgresql://localhost:5432/minipolya
 DB_USERNAME=postgres
 DB_PASSWORD=...
-JWT_SECRET=...
+JWT_SECRET=...        # at least 32 bytes — HS256 refuses a shorter key at startup
 BOT_TOKEN=...
+CARD_TOKEN_KEY=...    # 32 bytes, base64; encrypts saved card tokens (required under prod/atmos)
+CORS_ALLOWED_ORIGINS= # optional: browser origins allowed cross-origin, comma-separated; empty = no CORS
+
+# ATMOS — used only with SPRING_PROFILES_ACTIVE=atmos
+ATMOS_BASE_URL=https://apigw.atmos.uz
+ATMOS_CONSUMER_KEY=...
+ATMOS_CONSUMER_SECRET=...
+ATMOS_STORE_ID=...
+ATMOS_PLATFORM_RECIPIENT_ID=...
+ATMOS_OFD_CODE_RENTAL=      # optional: fiscal receipts are sent only when both are set
+ATMOS_OFD_CODE_SERVICE=
 ```
+
+- Spring reads it itself: `application.yaml` has
+  `spring.config.import: optional:file:.env[.properties]`, so `.env` is loaded
+  however the app is started — IntelliJ, `./mvnw spring-boot:run`, `java -jar` —
+  as long as the working directory is the project root. No library is involved;
+  spring-dotenv was removed because it does not hook into Spring Boot 4 and left
+  `${JWT_SECRET}` unresolved.
+- The file is parsed as a `.properties` file: `KEY=value`, one per line, `#` for
+  comments. Don't wrap values in quotes (they would become part of the value) and
+  don't use `export KEY=...`.
+- **Real environment variables always win** over `.env`, so production sets them
+  in the environment and needs no `.env` file at all (`optional:` means a missing
+  file is fine).
+
+## Deployment checklist
+
+Go through this before the first production deploy and again whenever the
+infrastructure changes. The app is built to run as **one instance behind Nginx**.
+
+### Reverse proxy and client IPs
+
+The admin sign-in limits (per-IP attempts, audit IPs) use `request.getRemoteAddr()`.
+Behind a proxy that is the proxy's address unless Spring is told to read the
+forwarded headers — and then every admin shares one 20-attempt budget.
+
+- Set `server.forward-headers-strategy: native` (env `SERVER_FORWARD_HEADERS_STRATEGY=native`).
+  Tomcat's `RemoteIpValve` then takes the client IP from `X-Forwarded-For` and the
+  scheme from `X-Forwarded-Proto`.
+- It only trusts those headers from **internal proxies** (by default loopback and the
+  private ranges: 10/8, 172.16/12, 192.168/16, 127/8, ::1, …). If Nginx reaches the app from any other
+  address, list it in `server.tomcat.remoteip.internal-proxies`, or the headers are
+  ignored.
+- Bind the app so nothing but Nginx can reach it (`server.address: 127.0.0.1`, or a
+  private network / firewall). Anyone who can talk to the app directly can forge
+  `X-Forwarded-For`.
+- Nginx, as the edge, **replaces** the header instead of appending what the client
+  sent:
+
+  ```nginx
+  location / {
+      proxy_pass         http://127.0.0.1:8080;
+      proxy_set_header   Host              $host;
+      proxy_set_header   X-Forwarded-For   $remote_addr;
+      proxy_set_header   X-Forwarded-Proto $scheme;
+  }
+  ```
+
+  (Behind another proxy or a CDN, use `$proxy_add_x_forwarded_for` and add that
+  hop to `internal-proxies` / Nginx `set_real_ip_from` instead.)
+
+### HTTPS only
+
+- Nginx terminates TLS (TLS 1.2+); the app itself speaks plain HTTP on localhost.
+- Port 80 only redirects: `return 301 https://$host$request_uri;`.
+- Send HSTS: `add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;`.
+- Telegram requires HTTPS anyway, for the Mini App URL and for the bot webhook.
+- JWTs and admin passwords travel in every request, so there is no "internal HTTP"
+  exception, admin panel included.
+
+### Secrets and configuration
+
+- Real environment variables in production, no `.env` file (if one is used, it is
+  `chmod 600` and owned by the service user). Real env vars beat `.env` anyway.
+- `JWT_SECRET`: random, at least 32 bytes (`openssl rand -base64 48`), different
+  from every other environment. Rotating it signs everyone out.
+- `BOT_TOKEN`, `DB_PASSWORD`: never in Git, Postman, logs or tickets.
+- `SPRING_PROFILES_ACTIVE=prod,atmos`. `FakePaymentProvider` refuses to start under
+  `prod`, and the `atmos` profile wires `AtmosPaymentProvider`, which refuses to start
+  without every `ATMOS_*` variable. Set `CARD_TOKEN_KEY` (`openssl rand -base64 32`)
+  and keep it: losing it makes every saved card unusable. Each stadium owner's signed
+  contract and ATMOS recipient id are entered by an admin
+  (`PUT /api/admin/users/{id}/legal-details`) — a stadium cannot be approved before
+  that. Settle the "Open ATMOS
+  questions" (see "Payments") against the real API first.
+- The Payme/Click webhooks are still mocks that trust the body without checking a
+  signature (see "Deferred until the payment model is final"). Don't expose
+  `/webhooks/payme` and `/webhooks/click` until they verify it — block them in
+  Nginx otherwise.
+
+### Build and run
+
+- Run the packaged jar (`./mvnw clean package`, then `java -jar target/*.jar`),
+  not `spring-boot:run`. The repackaged jar leaves out `spring-boot-devtools`,
+  whose automatic restarts and dev defaults must not run in production.
+- Run as an unprivileged service user under systemd (or a container) with
+  `Restart=on-failure`.
+- **Exactly one instance.** The `@Scheduled` jobs (booking expiry, game timeouts,
+  reminders, series, promotions, completion) run on every instance, and
+  `LoginRateLimiter` keeps its counts in memory. A second instance needs ShedLock
+  (or similar) and a shared rate limiter first.
+
+### Database
+
+- The app connects as a dedicated role that owns the `minipolya` database — not
+  the `postgres` superuser. `btree_gist` and `pgcrypto` are trusted extensions, so
+  the owner can create them during the Liquibase run.
+- Liquibase applies pending changesets on startup; take a backup before deploying
+  a release that contains new ones.
+- Automated daily backups (`pg_dump` or PITR) and a restore you have actually tried.
+- PostgreSQL listens only on localhost / the private network, with TLS if it is on
+  another host.
+
+### Application settings worth checking
+
+- CORS is off by default (`CORS_ALLOWED_ORIGINS` empty): no CORS header is sent, so
+  browsers only allow same-origin calls. Either serve the admin panel and the Mini App
+  from the API's origin (via Nginx), or set `CORS_ALLOWED_ORIGINS` to exactly those
+  origins, comma-separated (e.g. `https://admin.minipolya.uz,https://app.minipolya.uz`)
+  — never `*`. It then covers `/api/**` (methods GET, POST, PUT, PATCH, DELETE,
+  OPTIONS; headers Authorization, Content-Type; no credentials; preflights cached
+  3600 s). Preflights pass without a JWT; other origins get 403; `/webhooks/**` never
+  has CORS.
+- Logging at `INFO`, `spring.jpa.show-sql: false` (already). Check that no log line
+  carries tokens, card numbers or passwords before raising any level to DEBUG.
+- `server.error.include-stacktrace` stays at its default (`never`);
+  `GlobalExceptionHandler` already answers 500 with a generic message.
+- Rate-limit `/api/auth/**` in Nginx too (`limit_req`) — a cheap outer layer in
+  front of the in-app limits.
+
+### After the first deploy
+
+- Create the first admin with the SQL in "Admin accounts" and sign in. Passwords
+  are changed only with the reset SQL there, never through the panel.
+- Point the Telegram bot webhook at `https://<domain>/webhooks/telegram` and the
+  Mini App URL at the HTTPS origin.
+- Smoke-test: sign in via Telegram, list stadiums, admin sign-in, and check that
+  the audit log shows the real client IP and not Nginx's.
 
 ## Commands
 
@@ -690,6 +1336,13 @@ BOT_TOKEN=...
 # Run specific test class
 ./mvnw test -Dtest=BookingServiceTest
 
+# Database-backed tests (@DatabaseTest: full context, Liquibase schema, MockMvc, each test
+# rolled back) run against a separate database, TEST_DB_URL (default
+# jdbc:postgresql://localhost:5432/minipolya_test) with DB_USERNAME/DB_PASSWORD; it is
+# created on first use, and the tests are skipped when it cannot be reached. Never point
+# TEST_DB_URL at the dev database. Note: a dev server running with devtools restarts on
+# every compile and applies new changesets to the dev database straight away.
+
 # Create database (Liquibase creates the tables, you just need the empty DB)
 psql -U postgres -c "CREATE DATABASE minipolya;"
 
@@ -703,7 +1356,6 @@ psql -U postgres -c "CREATE DATABASE minipolya;"
 ## Dependencies (pom.xml)
 
 Required beyond Spring Initializr defaults:
-- `me.paulschwarz:spring-dotenv:4.0.0` — loads .env file
 - `org.liquibase:liquibase-core` — managed by Spring Boot (no version needed)
 - `org.mapstruct:mapstruct:1.6.3` — MapStruct annotations
 - `org.mapstruct:mapstruct-processor:1.6.3` — annotation processor (in `maven-compiler-plugin` `<annotationProcessorPaths>`)

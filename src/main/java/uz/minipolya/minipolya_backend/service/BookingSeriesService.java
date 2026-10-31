@@ -6,6 +6,10 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.config.AppProperties;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.request.CreateBookingSeriesRequest;
 import uz.minipolya.minipolya_backend.dto.response.BookingSeriesResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
@@ -105,7 +109,11 @@ public class BookingSeriesService {
             tryGenerateBooking(series, date);
         }
 
-        auditService.log(userId, "BOOKING_SERIES_CREATED", "booking_series", series.getId());
+        auditService.record(AuditEntry.player(userId, AuditAction.BOOKING_SERIES_CREATED)
+                .entity(AuditEntityType.BOOKING_SERIES, series.getId(), AuditLabels.bookingSeries(series))
+                .created("dayOfWeek", series.getDayOfWeek())
+                .created("startTime", series.getStartTime())
+                .created("durationHours", series.getDurationHours()));
         log.info("Booking series created: id={} userId={} stadiumId={} day={} {}",
                 series.getId(), userId, stadium.getId(), series.getDayOfWeek(), startTime);
         return toResponse(series, occurrences.isEmpty() ? null : occurrences.get(0));
@@ -135,7 +143,9 @@ public class BookingSeriesService {
                 bookingService.cancelByUser(userId, booking.getId(), "Recurring series cancelled");
             }
         }
-        auditService.log(userId, "BOOKING_SERIES_CANCELLED", "booking_series", seriesId);
+        auditService.record(AuditEntry.player(userId, AuditAction.BOOKING_SERIES_CANCELLED)
+                .entity(AuditEntityType.BOOKING_SERIES, seriesId, AuditLabels.bookingSeries(series))
+                .change("isActive", true, false));
         log.info("Booking series cancelled: id={} userId={}", seriesId, userId);
     }
 

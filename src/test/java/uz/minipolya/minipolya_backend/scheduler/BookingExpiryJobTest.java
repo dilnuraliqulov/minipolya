@@ -5,8 +5,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditActorType;
+import uz.minipolya.minipolya_backend.audit.AuditChange;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
+import uz.minipolya.minipolya_backend.service.AuditService;
 import uz.minipolya.minipolya_backend.service.NotificationService;
 
 import java.time.OffsetDateTime;
@@ -27,6 +33,8 @@ class BookingExpiryJobTest {
     private BookingRepository bookingRepository;
     @Mock
     private NotificationService notificationService;
+    @Mock
+    private AuditService auditService;
 
     @InjectMocks
     private BookingExpiryJob job;
@@ -43,6 +51,18 @@ class BookingExpiryJobTest {
         assertThat(a.getStatus()).isEqualTo("expired");
         assertThat(b.getStatus()).isEqualTo("expired");
         verify(bookingRepository).saveAll(List.of(a, b));
+
+        // One SYSTEM entry per booking: no user, the status change and why.
+        assertThat(Audited.entries(auditService, AuditAction.BOOKING_EXPIRED))
+                .hasSize(2)
+                .allSatisfy(entry -> {
+                    assertThat(entry.getActorType()).isEqualTo(AuditActorType.SYSTEM);
+                    assertThat(entry.getActorId()).isNull();
+                    assertThat(entry.getChanges()).containsExactly(AuditChange.of("status", "pending", "expired"));
+                    assertThat(entry.getReason()).isEqualTo("Not paid within the hold time");
+                })
+                .extracting(AuditEntry::getEntityId)
+                .containsExactly(a.getId(), b.getId());
     }
 
     @Test
