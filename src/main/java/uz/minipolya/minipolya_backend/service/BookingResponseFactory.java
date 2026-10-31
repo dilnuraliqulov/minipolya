@@ -21,11 +21,17 @@ import java.util.function.LongSupplier;
  *   <li><b>Player</b> ({@link #of}): one price. {@code price} is the player price D,
  *       {@code paidAmount} what was paid of it, {@code remainingAmount} what is left — the
  *       same amount in the app or in cash. No owner price, fee or other breakdown.</li>
- *   <li><b>Owner</b> ({@link #forOwner}): the same {@code price} (what the player pays),
- *       plus {@code ownerPrice}, {@code paidInApp}, {@code remainingAmount} (the remainder
- *       to collect in cash) and {@code ownerReceives}.</li>
+ *   <li><b>Owner</b> ({@link #forOwner}): the same {@code price}, {@code paidAmount} and
+ *       {@code remainingAmount} as the player sees (the remainder to collect in cash is the
+ *       remainder the player would pay in the app), plus {@code ownerPrice},
+ *       {@code paidInApp} and {@code ownerReceives}.</li>
  *   <li><b>Admin</b> ({@link #forAdmin}): the owner's view plus {@code atmosFee}.</li>
  * </ul>
+ *
+ * <p>In every view {@code paidAmount + remainingAmount = price}, for every booking: one made
+ * before the player price (and every game booking) keeps its stored owner's-terms amounts,
+ * and they are converted here exactly as for the player ({@link CardPricing#playerPrice},
+ * {@link CardPricing#remainingForPlayer}).
  *
  * <p>Every view also carries the cancellation deadline and what a cancellation right now
  * would refund, from the same {@link CancellationPolicy} and refundable payments that
@@ -53,13 +59,18 @@ public class BookingResponseFactory {
         BookingResponse response = build(booking, now,
                 () -> paymentService.refundableCardTotal(booking.getId()));
         if (booking.getPrice() != null) {
-            long price = cardPricing.playerPrice(booking);
-            long remaining = Math.min(price, cardPricing.remainingForPlayer(booking));
-            response.setPrice(price);
-            response.setRemainingAmount(remaining);
-            response.setPaidAmount(price - remaining);
+            setPlayerAmounts(response, booking, cardPricing);
         }
         return response;
+    }
+
+    /** price, paidAmount and remainingAmount in the player's terms, adding up for every booking. */
+    private static void setPlayerAmounts(BookingResponse response, Booking booking, CardPricing pricing) {
+        long price = pricing.playerPrice(booking);
+        long remaining = Math.min(price, pricing.remainingForPlayer(booking));
+        response.setPrice(price);
+        response.setRemainingAmount(remaining);
+        response.setPaidAmount(price - remaining);
     }
 
     public List<BookingResponse> of(List<Booking> bookings) {
@@ -88,11 +99,9 @@ public class BookingResponseFactory {
                 .mapToLong(Payment::getAmount)
                 .sum());
         if (booking.getPrice() != null) {
-            response.setPrice(pricing.playerPrice(booking));
-            response.setOwnerPrice(booking.getPrice());
             // The remainder to collect in cash: the same amount the player would pay in the app.
-            response.setPaidAmount(booking.getPaidAmount() == null ? 0L : booking.getPaidAmount());
-            response.setRemainingAmount(booking.getRemainingAmount());
+            setPlayerAmounts(response, booking, pricing);
+            response.setOwnerPrice(booking.getPrice());
         }
         List<Payment> kept = payments.stream()
                 .filter(p -> KEPT.contains(p.getStatus()))

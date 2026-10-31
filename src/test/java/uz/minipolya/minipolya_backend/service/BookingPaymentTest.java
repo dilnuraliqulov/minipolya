@@ -275,5 +275,32 @@ class BookingPaymentTest {
         assertThat(owner.getRemainingAmount()).isEqualTo(14_810_000L);
         assertThat(owner.getOwnerReceives()).isEqualTo(5_417_500L); // 55 000 less 1.5%
         assertThat(owner.getAtmosFee()).isNull();
+        assertThat(owner.getPaidAmount() + owner.getRemainingAmount()).isEqualTo(owner.getPrice());
+    }
+
+    @Test
+    void aBookingInTheOwnersTermsAddsUpInEveryView() {
+        // A game booking (or one made before the player price): owner's price 200 000 so'm,
+        // 100 000 of it covered by the teams' advances, all stored in the owner's terms.
+        when(bookingMapper.toResponse(any(Booking.class))).thenAnswer(inv -> new BookingResponse());
+        Booking booking = Booking.builder().id(UUID.randomUUID()).stadium(stadium).source("game")
+                .pricingModel(Booking.PricingModel.NET).price(20_000_000L).paidAmount(10_000_000L)
+                .startsAt(startAt(18, 2)).build();
+        when(paymentService.paymentsOf(booking.getId())).thenReturn(java.util.List.of());
+        BookingResponseFactory factory = new BookingResponseFactory(bookingMapper, new CancellationPolicy(),
+                paymentService, CardPricing.withDefaults());
+
+        BookingResponse player = factory.of(booking);
+        BookingResponse owner = factory.forOwner(booking);
+        BookingResponse admin = factory.forAdmin(booking, java.time.OffsetDateTime.now(), java.util.List.of(),
+                CardPricing.withDefaults());
+
+        for (BookingResponse view : java.util.List.of(player, owner, admin)) {
+            assertThat(view.getPrice()).isEqualTo(TestPrices.card(20_000_000L));
+            assertThat(view.getRemainingAmount()).isEqualTo(TestPrices.card(10_000_000L));
+            assertThat(view.getPaidAmount() + view.getRemainingAmount()).isEqualTo(view.getPrice());
+        }
+        // The owner still sees their own price alongside.
+        assertThat(owner.getOwnerPrice()).isEqualTo(20_000_000L);
     }
 }
