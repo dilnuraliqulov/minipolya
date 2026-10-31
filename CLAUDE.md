@@ -114,10 +114,18 @@ src/main/java/uz/minipolya/minipolya_backend/
 │   ├── ReminderJob.java             # Send reminders 2h before game
 │   ├── BookingSeriesJob.java        # Generate next week's recurring bookings
 │   ├── PromotionExpiryJob.java      # Mark expired promotions
-│   └── PaymentReconcileJob.java     # Every 5 min: settle payments stuck mid-step (see "Payments")
-├── telegram/                # Bot webhook
-│   ├── TelegramWebhookController.java
-│   └── TelegramBotService.java
+│   ├── PaymentReconcileJob.java     # Every 5 min: settle payments stuck mid-step (see "Payments")
+│   └── TelegramUpdateCleanupJob.java # Daily: forget handled Telegram update ids older than a week
+├── telegram/                # The bot (see "Telegram bot"); the sender itself is service/TelegramBotService
+│   ├── TelegramWebhookController.java  # POST /webhooks/telegram, secret-checked
+│   ├── TelegramPolling.java        # getUpdates loop, dev profile only
+│   ├── TelegramUpdateHandler.java  # One entry point for both: dedupe by update_id, dispatch
+│   ├── TelegramBotFlow.java        # /start, the contact, /help, /language
+│   ├── TelegramBotSetup.java       # Description, commands, menu button on startup (only what differs)
+│   ├── TelegramApi.java            # The raw Bot API client (mocked in tests)
+│   ├── TelegramBanner.java         # The /start photo, file_id cached
+│   ├── BotTexts.java               # Every bot text: resources/telegram/bot_{uz,ru,en}.properties
+│   └── ...                         # StartPayloads, TelegramKeyboards, TelegramHtml, TelegramBotModeGuard
 ├── mapper/                  # MapStruct mappers — Entity ↔ DTO (interfaces, auto-generated impls)
 │   ├── UserMapper.java
 │   ├── StadiumMapper.java
@@ -192,7 +200,8 @@ db/changelog/
     ├── 038-stadium-rejected.sql      # rejected stadium status + status_reason; old rejections converted
     ├── 039-stadium-notes.sql         # stadium_notes (admins' internal notes)
     ├── 040-player-price.sql          # drops platform_settings.booking_commission_percent; bookings.pricing_model
-    └── 041-user-profile-names.sql    # users.first_name, users.last_name (set only by the user)
+    ├── 041-user-profile-names.sql    # users.first_name, users.last_name (set only by the user)
+    └── 042-telegram-bot.sql          # telegram_processed_updates (dedupe), telegram_bot_values (banner file_id)
 ```
 
 ### Adding New Migrations
@@ -924,7 +933,7 @@ number is not logged either; their name is part of the booking label.
 |---|---|
 | Admin | `ADMIN_LOGIN_SUCCEEDED`, `ADMIN_LOGIN_FAILED`, `APPLICATION_APPROVED`, `APPLICATION_REJECTED`, `STADIUM_APPROVED`, `STADIUM_REJECTED` (pending → rejected; before changeset 038, pending → blocked), `STADIUM_BLOCKED`, `STADIUM_UNBLOCKED` (blocked → approved), `STADIUM_STATUS_CHANGED` (back to pending) — each with `status` and `statusReason` changes, `STADIUM_NOTE_ADDED` (the note's id, never its text), `USER_BLOCKED`, `USER_UNBLOCKED`, `USER_ROLE_CHANGED`, `OWNER_LEGAL_DETAILS_CHANGED`, `REFUND_RETRIED`, `REFUND_MARKED_MANUAL`, `SETTINGS_CHANGED` |
 | Owner | `STADIUM_CREATED`, `STADIUM_UPDATED` (incl. `pricePerHour`, `minBookingAmount`, `cancellationHours`, photos, amenities), `PRICING_RULE_CREATED` / `_UPDATED` / `_DELETED`, `CLOSURE_CREATED` / `_DELETED`, `PROMOTION_CREATED` / `_DEACTIVATED`, `MANUAL_BOOKING_CREATED`, `CASH_RECEIVED` (a booking, or one team's game remainder), `BOOKING_CANCELLED_BY_OWNER` |
-| Player | `BOOKING_CREATED`, `BOOKING_CANCELLED_BY_USER`, `BOOKING_REMAINDER_PAID`, `BOOKING_SERIES_CREATED` / `_CANCELLED`, `GAME_CREATED`, `GAME_JOINED`, `GAME_LEFT`, `GAME_CANCELLED`, `GAME_OPPONENT_LEFT`, `GAME_REMAINDER_PAID`, `PROFILE_UPDATED` |
+| Player | `BOOKING_CREATED`, `BOOKING_CANCELLED_BY_USER`, `BOOKING_REMAINDER_PAID`, `BOOKING_SERIES_CREATED` / `_CANCELLED`, `GAME_CREATED`, `GAME_JOINED`, `GAME_LEFT`, `GAME_CANCELLED`, `GAME_OPPONENT_LEFT`, `GAME_REMAINDER_PAID`, `PROFILE_UPDATED` (also a language picked in the bot), `PHONE_SHARED_VIA_BOT` (`phoneChanged`, never the number) |
 | System | `BOOKING_CONFIRMED` (a payment confirmed it), `BOOKING_EXPIRED`, `BOOKING_COMPLETED`, `BOOKING_CANCELLED_BY_OWNER` (by a stadium block), `GAME_CONFIRMED`, `GAME_AUTO_CANCELLED`, `PAYMENT_COMPLETED`, `PAYMENT_RELEASED`, `REFUND_CREATED`, `REFUND_FAILED` (ATMOS declined; the reason is its error), `PROMOTION_EXPIRED` |
 
 Codes are **stable**: they are stored and filtered on, so never rename one — add a
@@ -1188,7 +1197,91 @@ WHERE LOWER(username) = LOWER('dilnur');
 - `/api/admin/**` → authenticated + isAdmin check
 - `/api/games/**` → authenticated
 - `/api/teams/**` → authenticated
-- `/webhooks/**` → verify provider signature, no JWT
+- `/webhooks/**` → verify provider signature, no JWT (`/webhooks/telegram`: the
+  `X-Telegram-Bot-Api-Secret-Token` header, see "Telegram bot")
+
+## Telegram bot
+
+What a user sees in the chat before and after Start, and the buttons that open the Mini
+App. Code in `telegram/`; messages go out through `service/TelegramBotService` (also used
+by `NotificationService`), which calls the Bot API through `telegram/TelegramApi`.
+
+### Receiving updates
+
+- **webhook** (production, `TELEGRAM_BOT_MODE=webhook`, the default): Telegram calls
+  `POST /webhooks/telegram` (public, no JWT). `X-Telegram-Bot-Api-Secret-Token` must equal
+  `TELEGRAM_WEBHOOK_SECRET` (constant-time); otherwise **403**, and with no secret set every
+  call is 403. Register it with `setWebhook … secret_token=` (see "After the first deploy").
+- **polling** (`TELEGRAM_BOT_MODE=polling`, **`dev` profile only**): `TelegramPolling` calls
+  `deleteWebhook`, then loops on `getUpdates`. `TelegramBotModeGuard` refuses to start with
+  polling outside `dev` — so never in prod — or with any other mode value. Use a separate
+  test bot: polling deletes that bot's webhook.
+- Both hand each update to **`TelegramUpdateHandler`**, the one handler. It first claims the
+  `update_id` in `telegram_processed_updates` (`INSERT … ON CONFLICT DO NOTHING`, its own
+  transaction): a redelivered update never runs twice. A failure while handling is logged
+  and not retried (the webhook still answers 200, or Telegram resends forever).
+  `TelegramUpdateCleanupJob` forgets ids older than a week. Only private chats are answered.
+- **Logging**: only `update_id`, the update type and the Telegram user id — never message
+  text, a contact or a phone number; a phone that must be mentioned is masked
+  (`PhoneMask`: `+998 90 *** ** 58`). Of an unexpected exception only the class is logged.
+  The bot token is part of every API URL, so `TelegramApi` never lets a URL reach a log.
+- `app.bot.enabled=false` (or no `BOT_TOKEN`) switches every Bot API call off. `@DatabaseTest`
+  sets it, so tests never message real chats with the token from `.env`.
+
+### Bot profile, set on startup
+
+`TelegramBotSetup` runs in the background after startup (`app.bot.setup-on-startup`,
+default true): `setMyDescription` (the text before Start), `setMyShortDescription` and
+`setMyCommands` (`/start`, `/help`, `/language`) for **uz with no `language_code`** (the
+default for everyone) and for `ru` and `en`, plus the default `setChatMenuButton`
+(`web_app`, text "MiniPolya", `MINIAPP_URL`). Each value is **read first** (`getMy…`,
+`getChatMenuButton`) and set only when it differs, so a restart changes nothing at
+Telegram. A failure is logged and never stops the application.
+
+### The conversation (`TelegramBotFlow`)
+
+Every user is found or created by **`AuthService.findOrCreateFromTelegram`** — the one
+place a Telegram user is created, shared with the Mini App sign-in (a new user: name from
+Telegram, language uz). Every message is in the user's saved `user.language`.
+
+- **Blocked** user: only "Hisobingiz bloklangan." plus the support contact, for any message
+  or button.
+- **`/start`**, no phone yet: the banner photo with the greeting and a one-button reply
+  keyboard, "📱 Telefon raqamni yuborish" (`request_contact`, resized, one-time, placeholder).
+  With a phone: the banner with the welcome and an inline `web_app` button "⚽ MiniPolya'ni
+  ochish". The first name is HTML-escaped.
+- **Deep links**: `/start <payload>` (e.g. `game_<id>` from an invite,
+  `t.me/{bot}?start=game_{id}`) — if it is a valid start parameter (`[A-Za-z0-9_-]{1,64}`),
+  the open button goes to `MINIAPP_URL?startapp=<payload>`. A `web_app` button gives the Mini
+  App no `start_param`, so **the Mini App reads `startapp` from its own URL**. When the phone
+  is still to come, the payload is kept in memory for an hour (`StartPayloads`) and carried
+  by the button sent after the phone.
+- **The contact**: accepted only if `contact.user_id == from.id` (otherwise "Iltimos,
+  oʻzingizning raqamingizni yuboring…" with the keyboard again); normalised to
+  `+998XXXXXXXXX`, any other country refused; a phone another account has is **never
+  overwritten or merged** ("Bu raqam boshqa hisobga biriktirilgan." + support, a masked
+  warning in the log). Saved by `UserService.savePhoneFromBot` (the profile's uniqueness rule,
+  audit `PHONE_SHARED_VIA_BOT`), then two messages: the masked number with the keyboard
+  removed, and "Endi maydonni tanlang va band qiling 👇" with the open button.
+- Any other text: before the phone, the request again with the button; after it, the open button.
+- **`/help`**: the three steps, the cancellation rule in one line, the support contact
+  (when `SUPPORT_USERNAME` is set) and the open button.
+- **`/language`**: inline buttons "🇺🇿 Oʻzbekcha", "🇷🇺 Русский", "🇬🇧 English"
+  (`lang:uz|ru|en`). The choice is saved through `UserService.updateProfile` — the same
+  `user.language` the Mini App uses, audited `PROFILE_UPDATED` — and the message is edited
+  to confirm it.
+- Without `MINIAPP_URL` the open buttons are left out (and a warning logged).
+
+### Texts and the banner
+
+- **All bot texts** live in `src/main/resources/telegram/bot_uz.properties` (the default and
+  the fallback), `bot_ru` and `bot_en`, read as UTF-8 by `BotTexts`. `{name}` placeholders
+  are replaced literally (no MessageFormat, so apostrophes stay). `BotTextsTest` checks the
+  three have the same keys and fit Telegram's limits. Don't put a bot text in Java.
+- The banner is `src/main/resources/telegram/banner.png` (1280×640; the current one is a
+  placeholder). It is uploaded on first use; Telegram's file_id is kept in
+  `telegram_bot_values` (`banner_file_id`) tied to the image's hash, so replacing the PNG
+  uploads the new one once. If Telegram refuses the photo, the caption goes out as text.
 
 ## API Response Format
 
@@ -1258,6 +1351,10 @@ DB_USERNAME=postgres
 DB_PASSWORD=...
 JWT_SECRET=...        # at least 32 bytes — HS256 refuses a shorter key at startup
 BOT_TOKEN=...
+TELEGRAM_BOT_MODE=webhook   # webhook (production) or polling (dev profile only, local testing)
+TELEGRAM_WEBHOOK_SECRET=... # 32+ chars of A-Z a-z 0-9 _ -; required under prod (openssl rand -hex 32)
+MINIAPP_URL=https://...     # the Mini App; opened by the bot's buttons and menu button (https under prod)
+SUPPORT_USERNAME=           # optional, without @: the support contact the bot shows
 CARD_TOKEN_KEY=...    # 32 bytes, base64; encrypts saved card tokens (required under prod/atmos)
 CORS_ALLOWED_ORIGINS= # optional: browser origins allowed cross-origin, comma-separated; empty = no CORS
 
@@ -1335,7 +1432,10 @@ forwarded headers — and then every admin shares one 20-attempt budget.
   `chmod 600` and owned by the service user). Real env vars beat `.env` anyway.
 - `JWT_SECRET`: random, at least 32 bytes (`openssl rand -base64 48`), different
   from every other environment. Rotating it signs everyone out.
-- `BOT_TOKEN`, `DB_PASSWORD`: never in Git, Postman, logs or tickets.
+- `BOT_TOKEN`, `DB_PASSWORD`, `TELEGRAM_WEBHOOK_SECRET`: never in Git, Postman, logs or
+  tickets. Under `prod` the app refuses to start without a valid webhook secret
+  (32–256 of `A-Z a-z 0-9 _ -`, e.g. `openssl rand -hex 32`) and an https `MINIAPP_URL`.
+  `TELEGRAM_BOT_MODE` stays `webhook` (polling refuses to start outside `dev`).
 - `SPRING_PROFILES_ACTIVE=prod,atmos`. `FakePaymentProvider` refuses to start under
   `prod`, and the `atmos` profile wires `AtmosPaymentProvider`, which refuses to start
   without every `ATMOS_*` variable. Set `CARD_TOKEN_KEY` (`openssl rand -base64 32`)
@@ -1359,7 +1459,8 @@ forwarded headers — and then every admin shares one 20-attempt budget.
 - **Exactly one instance.** The `@Scheduled` jobs (booking expiry, game timeouts,
   reminders, series, promotions, completion) run on every instance, and
   `LoginRateLimiter` keeps its counts in memory. A second instance needs ShedLock
-  (or similar) and a shared rate limiter first.
+  (or similar) and a shared rate limiter first. (The bot's pending deep links,
+  `StartPayloads`, are in memory too; its update dedupe is in the database and safe.)
 
 ### Database
 
@@ -1393,8 +1494,20 @@ forwarded headers — and then every admin shares one 20-attempt budget.
 
 - Create the first admin with the SQL in "Admin accounts" and sign in. Passwords
   are changed only with the reset SQL there, never through the panel.
-- Point the Telegram bot webhook at `https://<domain>/webhooks/telegram` and the
-  Mini App URL at the HTTPS origin.
+- Point the Telegram bot webhook at `https://<domain>/webhooks/telegram` **with the
+  secret** (without it every update is refused with 403), and the Mini App URL at the
+  HTTPS origin:
+
+  ```bash
+  curl -s "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
+    -d "url=https://<domain>/webhooks/telegram" \
+    -d "secret_token=$TELEGRAM_WEBHOOK_SECRET" \
+    -d 'allowed_updates=["message","callback_query"]'
+  ```
+
+  Run it from the server's shell (not a script in Git) so the token stays out of
+  history; check with `getWebhookInfo`. The description, commands and menu button set
+  themselves on startup.
 - Smoke-test: sign in via Telegram, list stadiums, admin sign-in, and check that
   the audit log shows the real client IP and not Nginx's.
 
@@ -1412,6 +1525,11 @@ forwarded headers — and then every admin shares one 20-attempt budget.
 
 # Run specific test class
 ./mvnw test -Dtest=BookingServiceTest
+
+# Run the Telegram bot locally, no public URL needed (polling; dev profile only). In .env:
+# BOT_TOKEN of a TEST bot (never production's: polling deletes its webhook),
+# TELEGRAM_BOT_MODE=polling, MINIAPP_URL=<an https URL, e.g. an ngrok tunnel to the Mini App>
+SPRING_PROFILES_ACTIVE=dev ./mvnw spring-boot:run
 
 # Database-backed tests (@DatabaseTest: full context, Liquibase schema, MockMvc, each test
 # rolled back) run against a separate database, TEST_DB_URL (default
