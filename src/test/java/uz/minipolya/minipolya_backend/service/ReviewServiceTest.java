@@ -69,7 +69,7 @@ class ReviewServiceTest {
         reviewService = new ReviewService(reviewRepository, stadiumRepository, bookingRepository,
                 userRepository, reviewMapper, notificationService);
         favoriteService = new FavoriteService(favoriteRepository, stadiumRepository, userRepository,
-                reviewRepository, stadiumMapper);
+                mock(StadiumService.class));
 
         player = User.builder().id(PLAYER_ID).name("Player").build();
         owner = User.builder().id(OWNER_ID).name("Owner").build();

@@ -71,6 +71,11 @@ public class StadiumDetailResponse {
     @JsonProperty("isFavorited")
     private Boolean favorited;
 
+    /** Computed from reviews, as on the list; absent when the stadium has no reviews yet. */
+    private Double averageRating;
+    /** How many reviews the stadium has (0 when none). */
+    private Integer reviewCount;
+
     private CancellationPolicyResponse cancellationPolicy;
     private List<PhotoResponse> photos;
     private AmenitiesResponse amenities;

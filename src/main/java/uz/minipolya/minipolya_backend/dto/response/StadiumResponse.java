@@ -11,8 +11,9 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 /**
- * Lean summary used in listings. Deliberately omits photos and amenities to
- * avoid lazy-loading per row — clients fetch those via the detail endpoint.
+ * Lean summary used in listings: one cover photo instead of the whole gallery, no
+ * amenities. Everything per row (rating, cover photo, favorite flag) is loaded for the
+ * whole page at once.
  */
 @Data
 @Builder
@@ -30,6 +31,8 @@ public class StadiumResponse {
     private BigDecimal longitude;
     private String format;
     private String surfaceType;
+    /** The stadium's first photo (lowest position); absent when it has none. */
+    private String coverPhotoUrl;
     /**
      * Tiyin, one hour at the stadium's default price. Player responses: the one price the
      * player pays. Owner and admin responses: the owner's own price, as they set it.
@@ -53,4 +56,8 @@ public class StadiumResponse {
     /** Computed from reviews — null when the stadium has no reviews yet. */
     private Double averageRating;
     private Integer reviewCount;
+
+    /** Player lists, for a signed-in caller only: whether they have favorited this stadium. */
+    @JsonProperty("isFavorited")
+    private Boolean favorited;
 }

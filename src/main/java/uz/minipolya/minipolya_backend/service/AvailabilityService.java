@@ -85,8 +85,8 @@ public class AvailabilityService {
                 .filter(g -> !g.getStartsAt().isBefore(dayStart) && g.getStartsAt().isBefore(dayEnd))
                 .toList();
 
-        // On today's date an hour that has already started can no longer be booked,
-        // so it is left out entirely rather than offered as free.
+        // On today's date an hour that has already started can no longer be booked:
+        // it is listed as past, so the day still shows every opening hour.
         boolean isToday = queryDate.equals(today);
         LocalTime localNow = nowLocal.toLocalTime();
 
@@ -97,9 +97,11 @@ public class AvailabilityService {
             if (slotEnd.isAfter(stadium.getCloseTime())) {
                 break; // no room for a full hour before closing
             }
-            if (!(isToday && !slotStart.isAfter(localNow))) {
-                slots.add(buildSlot(stadium, queryDate, slotStart, slotEnd, bookings, rules, waitingGames));
-            }
+            boolean past = isToday && !slotStart.isAfter(localNow);
+            slots.add(past
+                    ? TimeSlot.builder().startTime(slotStart).endTime(slotEnd)
+                        .available(false).status(TimeSlot.PAST).build()
+                    : buildSlot(stadium, queryDate, slotStart, slotEnd, bookings, rules, waitingGames));
             slotStart = slotEnd;
         }
 
@@ -120,11 +122,13 @@ public class AvailabilityService {
                 .anyMatch(b -> b.getStartsAt().isBefore(slotEndUtc) && slotStartUtc.isBefore(b.getEndsAt()));
         boolean closed = closureService.isClosedAt(stadium.getId(), date, slotStart);
         boolean available = !booked && !closed;
+        String status = booked ? TimeSlot.BOOKED : closed ? TimeSlot.CLOSED : TimeSlot.FREE;
 
         TimeSlot.TimeSlotBuilder slot = TimeSlot.builder()
                 .startTime(slotStart)
                 .endTime(slotEnd)
-                .available(available);
+                .available(available)
+                .status(status);
 
         if (available) {
             long base = priceCalculator.calculateTotalPrice(rules, date, slotStart, 1, stadium.getPricePerHour());

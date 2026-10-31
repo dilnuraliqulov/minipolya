@@ -37,14 +37,18 @@ public interface StadiumMapper {
     @Mapping(target = "updatedAt", ignore = true)
     Stadium toEntity(CreateStadiumRequest request);
 
-    // averageRating / reviewCount are computed by the service after mapping.
+    // averageRating / reviewCount / coverPhotoUrl / favorited are filled by the service for a whole page.
     @Mapping(target = "averageRating", ignore = true)
     @Mapping(target = "reviewCount", ignore = true)
+    @Mapping(target = "coverPhotoUrl", ignore = true)
+    @Mapping(target = "favorited", ignore = true)
     @Mapping(source = "owner.name", target = "ownerName")
     StadiumResponse toResponse(Stadium stadium);
 
-    // favorited is set by the service for an authenticated viewer.
+    // favorited is set by the service for an authenticated viewer; the rating by the public detail.
     @Mapping(target = "favorited", ignore = true)
+    @Mapping(target = "averageRating", ignore = true)
+    @Mapping(target = "reviewCount", ignore = true)
     @Mapping(source = "owner.id", target = "ownerId")
     @Mapping(source = "owner.name", target = "ownerName")
     @Mapping(source = "owner.phone", target = "ownerPhone")

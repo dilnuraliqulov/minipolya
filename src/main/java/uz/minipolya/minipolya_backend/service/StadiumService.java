@@ -3,6 +3,7 @@ package uz.minipolya.minipolya_backend.service;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -27,14 +28,19 @@ import uz.minipolya.minipolya_backend.mapper.StadiumMapper;
 import uz.minipolya.minipolya_backend.repository.FavoriteRepository;
 import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
+import uz.minipolya.minipolya_backend.repository.StadiumSpecifications;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.Districts;
 import uz.minipolya.minipolya_backend.util.Pagination;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -126,22 +132,60 @@ public class StadiumService {
 
     @Transactional(readOnly = true)
     public List<StadiumResponse> listOwnerStadiums(UUID ownerId) {
-        return stadiumRepository.findByOwnerId(ownerId).stream()
-                .map(this::toResponseWithRatings)
-                .map(this::ownerPrices)
-                .toList();
+        CardPricing pricing = cardPricing.snapshot();
+        List<StadiumResponse> rows = toListResponses(stadiumRepository.findByOwnerId(ownerId), null);
+        rows.forEach(r -> {
+            if (r.getPricePerHour() != null) {
+                r.setPlayerPrice(pricing.playerAmount(r.getPricePerHour()));
+            }
+        });
+        return rows;
     }
 
     // ---- Public operations ----
 
+    /**
+     * The players' stadium search. Every filter is optional; {@code district} must be one of
+     * the twelve ({@link Districts}) and {@code maxPrice} is a player price. A page costs a
+     * fixed handful of queries: the stadiums with owner and amenities, the count, then
+     * ratings, cover photos and the caller's favorites for the whole page at once.
+     *
+     * @param viewerId the caller, or null when anonymous (no favorite flag)
+     */
     @Transactional(readOnly = true)
-    public PageResponse<StadiumResponse> searchPublic(String q, String format, Long maxPrice, int page, int size) {
-        Pageable pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "createdAt"));
-        return PageResponse.from(
-                // Players filter by the card price they see; the table holds net prices.
-                stadiumRepository.search(blankToNull(q), blankToNull(format),
-                        maxPrice == null ? null : cardPricing.maxNetFor(maxPrice), pageable),
-                stadium -> publicPrices(toResponseWithRatings(stadium)));
+    public PageResponse<StadiumResponse> searchPublic(String q, String format, Long maxPrice, String district,
+                                                      UUID viewerId, int page, int size) {
+        String validDistrict = Districts.require(district);
+        Pageable pageable = Pagination.of(page, size,
+                Sort.by(Sort.Direction.ASC, "createdAt").and(Sort.by(Sort.Direction.ASC, "id")));
+        CardPricing pricing = cardPricing.snapshot();
+        // Players filter by the price they see; the table holds the owner's prices.
+        Page<Stadium> stadiums = stadiumRepository.findAll(StadiumSpecifications.publicFilter(
+                blankToNull(q), blankToNull(format),
+                maxPrice == null ? null : pricing.maxNetFor(maxPrice), validDistrict), pageable);
+        Map<UUID, StadiumResponse> byId = toPublicResponses(stadiums.getContent(), viewerId, pricing).stream()
+                .collect(Collectors.toMap(StadiumResponse::getId, r -> r));
+        return PageResponse.from(stadiums, stadium -> byId.get(stadium.getId()));
+    }
+
+    /**
+     * Stadiums as the player lists show them (the search and the favorites), in the given
+     * order, with player prices, rating, cover photo and, for a signed-in viewer, the
+     * favorite flag, loaded in one grouped query each.
+     */
+    @Transactional(readOnly = true)
+    public List<StadiumResponse> toPublicResponses(List<Stadium> stadiums, UUID viewerId) {
+        return toPublicResponses(stadiums, viewerId, cardPricing.snapshot());
+    }
+
+    private List<StadiumResponse> toPublicResponses(List<Stadium> stadiums, UUID viewerId, CardPricing pricing) {
+        List<StadiumResponse> rows = toListResponses(stadiums, viewerId);
+        rows.forEach(r -> {
+            if (r.getPricePerHour() != null) {
+                r.setPricePerHour(pricing.playerAmount(r.getPricePerHour()));
+            }
+        });
+        return rows;
     }
 
     /** @param userId the viewer, or null for an anonymous request (no favorite flag). */
@@ -151,6 +195,8 @@ public class StadiumService {
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
         StadiumDetailResponse response = publicPrices(stadiumMapper.toDetailResponse(stadium));
+        response.setAverageRating(reviewRepository.averageRatingByStadiumId(id));
+        response.setReviewCount(reviewRepository.countByStadiumId(id));
         if (userId != null) {
             response.setFavorited(favoriteRepository.existsByUserIdAndStadiumId(userId, id));
         }
@@ -188,13 +234,6 @@ public class StadiumService {
         return r;
     }
 
-    private StadiumResponse publicPrices(StadiumResponse r) {
-        if (r != null && r.getPricePerHour() != null) {
-            r.setPricePerHour(cardPricing.playerAmount(r.getPricePerHour()));
-        }
-        return r;
-    }
-
     /** The owner keeps seeing and editing their own price; the player price is alongside. */
     private StadiumDetailResponse ownerPrices(StadiumDetailResponse r) {
         if (r != null && r.getPricePerHour() != null) {
@@ -202,13 +241,6 @@ public class StadiumService {
         }
         if (r != null && r.getMinBookingAmount() != null) {
             r.setPlayerMinBookingAmount(cardPricing.playerAmount(r.getMinBookingAmount()));
-        }
-        return r;
-    }
-
-    private StadiumResponse ownerPrices(StadiumResponse r) {
-        if (r != null && r.getPricePerHour() != null) {
-            r.setPlayerPrice(cardPricing.playerAmount(r.getPricePerHour()));
         }
         return r;
     }
@@ -249,12 +281,34 @@ public class StadiumService {
         return fields;
     }
 
-    /** Maps a stadium and attaches its computed average rating and review count. */
-    private StadiumResponse toResponseWithRatings(Stadium stadium) {
-        StadiumResponse response = stadiumMapper.toResponse(stadium);
-        response.setAverageRating(reviewRepository.averageRatingByStadiumId(stadium.getId()));
-        response.setReviewCount(reviewRepository.countByStadiumId(stadium.getId()));
-        return response;
+    /**
+     * Maps stadiums for a list, in order, with their rating, cover photo and (for a viewer)
+     * favorite flag: one grouped query each for the whole list, never one per row. Prices
+     * are left as the owner's; the caller converts them for its audience.
+     */
+    private List<StadiumResponse> toListResponses(List<Stadium> stadiums, UUID viewerId) {
+        if (stadiums.isEmpty()) {
+            return new ArrayList<>();
+        }
+        List<UUID> ids = stadiums.stream().map(Stadium::getId).toList();
+        Map<UUID, Object[]> ratings = reviewRepository.ratingsByStadiumIds(ids).stream()
+                .collect(Collectors.toMap(row -> (UUID) row[0], row -> row));
+        Map<UUID, String> coverPhotos = stadiumRepository.findPhotosByStadiumIds(ids).stream()
+                .collect(Collectors.toMap(p -> p.getStadium().getId(), StadiumPhoto::getUrl, (first, later) -> first));
+        Set<UUID> favorited = viewerId == null ? Set.of()
+                : new HashSet<>(favoriteRepository.findFavoritedStadiumIds(viewerId, ids));
+
+        return stadiums.stream().map(stadium -> {
+            StadiumResponse response = stadiumMapper.toResponse(stadium);
+            Object[] rating = ratings.get(stadium.getId());
+            response.setAverageRating(rating == null || rating[1] == null ? null : ((Number) rating[1]).doubleValue());
+            response.setReviewCount(rating == null ? 0 : ((Number) rating[2]).intValue());
+            response.setCoverPhotoUrl(coverPhotos.get(stadium.getId()));
+            if (viewerId != null) {
+                response.setFavorited(favorited.contains(stadium.getId()));
+            }
+            return response;
+        }).collect(Collectors.toCollection(ArrayList::new));
     }
 
     /**

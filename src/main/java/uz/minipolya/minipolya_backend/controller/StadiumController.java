@@ -34,14 +34,17 @@ public class StadiumController {
 
     // ---- Public (players) ----
 
+    /** Public; a signed-in caller also gets {@code isFavorited} on each stadium. */
     @GetMapping("/api/stadiums")
     public ApiResponse<PageResponse<StadiumResponse>> list(
+            @AuthenticationPrincipal UUID userId,
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String format,
             @RequestParam(required = false) Long maxPrice,
+            @RequestParam(required = false) String district,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(stadiumService.searchPublic(q, format, maxPrice, page, size));
+        return ApiResponse.ok(stadiumService.searchPublic(q, format, maxPrice, district, userId, page, size));
     }
 
     @GetMapping("/api/stadiums/{id}")
