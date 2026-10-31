@@ -60,6 +60,7 @@ public class BookingService {
     /** Pricing rules are keyed by local weekday/time; bookings are stored in UTC. */
     private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
     private static final String STATUS_APPROVED = "approved";
+    private static final String SLOT_TAKEN = "Slot is already booked";
 
     private final BookingRepository bookingRepository;
     private final StadiumRepository stadiumRepository;
@@ -84,11 +85,11 @@ public class BookingService {
 
         requireNotOwnStadium(stadium, userId);
 
-        int duration = request.getDurationHours();
+        BookingWindowValidator.requireOneHour(request.getDurationHours());
         OffsetDateTime startsAt = request.getStartsAt();
-        OffsetDateTime endsAt = startsAt.plusHours(duration);
+        OffsetDateTime endsAt = startsAt.plusHours(Booking.HOURS);
 
-        validateBookingWindow(stadium, startsAt, duration);
+        bookingWindowValidator.validate(stadium, startsAt);
 
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         OffsetDateTime latest = now.plusWeeks(appProperties.getBooking().getMaxWeeksAhead());
@@ -97,11 +98,10 @@ public class BookingService {
                     "Cannot book more than " + appProperties.getBooking().getMaxWeeksAhead() + " weeks ahead");
         }
 
-        // The owner's price N, and the one price the player sees, D: each hour's player
-        // price summed, so the slot prices on screen add up exactly.
-        List<Long> slotPrices = bookingPriceCalculator.slotPrices(stadium, startsAt, duration);
-        long price = slotPrices.stream().mapToLong(Long::longValue).sum();
-        long cardPrice = slotPrices.stream().mapToLong(cardPricing::playerAmount).sum();
+        // The owner's price N, and the one price the player sees, D: the slot's player
+        // price, exactly what availability shows for it.
+        long price = bookingPriceCalculator.hourPrice(stadium, startsAt);
+        long cardPrice = cardPricing.playerAmount(price);
         CardFeeSplit charge = cardPricing.toOwner(amountDueNow(stadium, cardPrice, request.getPaymentOption()));
 
         // Resolved before the booking row exists, so an unusable card costs nothing.
@@ -119,7 +119,7 @@ public class BookingService {
                 .paidAmount(0L)
                 .startsAt(startsAt)
                 .endsAt(endsAt)
-                .durationHours(duration)
+                .durationHours(Booking.HOURS)
                 .price(price)
                 .cardPrice(cardPrice)
                 .expiresAt(now.plusMinutes(appProperties.getBooking().getHoldExpiryMinutes()))
@@ -132,7 +132,7 @@ public class BookingService {
         } catch (DataIntegrityViolationException ex) {
             log.info("Booking rejected by overlap constraint: stadiumId={} {}-{}",
                     stadium.getId(), startsAt, endsAt);
-            throw new SlotAlreadyBookedException(overlapMessage(duration));
+            throw new SlotAlreadyBookedException(SLOT_TAKEN);
         }
 
         gameService.cancelGamesOnSlot(stadium.getId(), startsAt, endsAt);
@@ -234,15 +234,14 @@ public class BookingService {
             throw new ForbiddenException("You do not own this stadium");
         }
 
-        int duration = request.getDuration();
+        BookingWindowValidator.requireOneHour(request.getDuration());
         OffsetDateTime startsAt = request.getStartsAt();
-        OffsetDateTime endsAt = startsAt.plusHours(duration);
+        OffsetDateTime endsAt = startsAt.plusHours(Booking.HOURS);
 
-        validateBookingWindow(stadium, startsAt, duration);
+        bookingWindowValidator.validate(stadium, startsAt);
 
         // The owner prices a walk-in in net terms; cash carries no card fee.
-        long price = bookingPriceCalculator.slotPrices(stadium, startsAt, duration).stream()
-                .mapToLong(Long::longValue).sum();
+        long price = bookingPriceCalculator.hourPrice(stadium, startsAt);
 
         Booking booking = Booking.builder()
                 .stadium(stadium)
@@ -254,7 +253,7 @@ public class BookingService {
                 .clientPhone(request.getClientPhone())
                 .startsAt(startsAt)
                 .endsAt(endsAt)
-                .durationHours(duration)
+                .durationHours(Booking.HOURS)
                 .price(price)
                 .build();
 
@@ -264,7 +263,7 @@ public class BookingService {
         } catch (DataIntegrityViolationException ex) {
             log.info("Manual booking rejected by overlap constraint: stadiumId={} {}-{}",
                     stadium.getId(), startsAt, endsAt);
-            throw new SlotAlreadyBookedException(overlapMessage(duration));
+            throw new SlotAlreadyBookedException(SLOT_TAKEN);
         }
 
         gameService.cancelGamesOnSlot(stadium.getId(), startsAt, endsAt);
@@ -416,14 +415,6 @@ public class BookingService {
     // ---- Helpers ----
 
     /**
-     * Shared gate for app and manual bookings, delegated to
-     * {@link BookingWindowValidator} so games apply the identical rule.
-     */
-    private void validateBookingWindow(Stadium stadium, OffsetDateTime startsAt, int duration) {
-        bookingWindowValidator.validate(stadium, startsAt, duration);
-    }
-
-    /**
      * An owner must not take their own pitch through the player flow — they add a
      * manual booking instead, which is confirmed immediately and needs no hold.
      */
@@ -432,12 +423,6 @@ public class BookingService {
             throw new ForbiddenException(
                     "You cannot book your own stadium; add a manual booking instead");
         }
-    }
-
-    private String overlapMessage(int duration) {
-        return duration > 1
-                ? "One or more of the selected hours is already booked"
-                : "Slot is already booked";
     }
 
     /** A booking created by a game: its money belongs to the game, not to it. */

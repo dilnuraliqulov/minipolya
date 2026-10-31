@@ -131,7 +131,7 @@ public class AvailabilityService {
                 .status(status);
 
         if (available) {
-            long base = priceCalculator.calculateTotalPrice(rules, date, slotStart, 1, stadium.getPricePerHour());
+            long base = priceCalculator.hourPrice(rules, date, slotStart, stadium.getPricePerHour());
             Optional<Promotion> promo = promotionService.getBestPromotion(stadium.getId(), slotStartUtc);
             // The same owner price per hour a booking is priced from, shown as the player
             // price, so the slots a player picks add up to exactly what the booking charges.

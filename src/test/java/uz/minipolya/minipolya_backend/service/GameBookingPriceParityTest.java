@@ -63,7 +63,6 @@ class GameBookingPriceParityTest {
     private static final long RULE_PER_HOUR = 155_000L;
     private static final int DISCOUNT_PERCENT = 10;
     private static final UUID CARD_ID = UUID.randomUUID();
-    private static final int DURATION_HOURS = 2;
 
     private Stadium stadium;
     private User player;
@@ -149,14 +148,14 @@ class GameBookingPriceParityTest {
         OffsetDateTime start = slotStart();
 
         bookingService.createBooking(PLAYER_ID, CreateBookingRequest.builder()
-                .stadiumId(STADIUM_ID).startsAt(start).durationHours(DURATION_HOURS).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build());
+                .stadiumId(STADIUM_ID).startsAt(start).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build());
         ArgumentCaptor<Booking> bookingCaptor = ArgumentCaptor.forClass(Booking.class);
         verify(bookingRepository).saveAndFlush(bookingCaptor.capture());
         long bookingPrice = bookingCaptor.getValue().getPrice();
 
         gameService.createGame(CreateGameRequest.builder()
                 .stadiumId(STADIUM_ID).type("casual").maxPlayers(10)
-                .startsAt(start).duration(DURATION_HOURS).build(), PLAYER_ID);
+                .startsAt(start).build(), PLAYER_ID);
         ArgumentCaptor<Game> gameCaptor = ArgumentCaptor.forClass(Game.class);
         verify(gameRepository).save(gameCaptor.capture());
         long gamePrice = gameCaptor.getValue().getTotalPrice();
@@ -167,20 +166,20 @@ class GameBookingPriceParityTest {
     @Test
     void thatSharedTotalHasThePromotionApplied() {
         OffsetDateTime start = slotStart();
-        long undiscounted = RULE_PER_HOUR * DURATION_HOURS;
-        long expected = (RULE_PER_HOUR - RULE_PER_HOUR * DISCOUNT_PERCENT / 100) * DURATION_HOURS;
+        long undiscounted = RULE_PER_HOUR;
+        long expected = RULE_PER_HOUR - RULE_PER_HOUR * DISCOUNT_PERCENT / 100;
 
         gameService.createGame(CreateGameRequest.builder()
                 .stadiumId(STADIUM_ID).type("casual").maxPlayers(10)
-                .startsAt(start).duration(DURATION_HOURS).build(), PLAYER_ID);
+                .startsAt(start).build(), PLAYER_ID);
 
         ArgumentCaptor<Game> gameCaptor = ArgumentCaptor.forClass(Game.class);
         verify(gameRepository).save(gameCaptor.capture());
         long gamePrice = gameCaptor.getValue().getTotalPrice();
 
-        // 2 x 139 500, not 2 x 155 000: the game is no longer charged the pre-promotion rate.
+        // 139 500, not 155 000: the game is not charged the pre-promotion rate.
         assertThat(gamePrice).isEqualTo(expected);
         assertThat(gamePrice).isLessThan(undiscounted);
-        assertThat(priceCalculator.totalPrice(stadium, start, DURATION_HOURS)).isEqualTo(gamePrice);
+        assertThat(priceCalculator.hourPrice(stadium, start)).isEqualTo(gamePrice);
     }
 }

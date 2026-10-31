@@ -40,6 +40,12 @@ import java.util.Locale;
 @AllArgsConstructor
 public class Booking {
 
+    /**
+     * Every booking is exactly one hour: one availability slot. App, manual, recurring and
+     * game bookings alike. Rows from before this rule may be longer and keep their length.
+     */
+    public static final int HOURS = 1;
+
     @Id
     @UuidGenerator(style = UuidGenerator.Style.VERSION_7)
     private UUID id;
@@ -80,6 +86,7 @@ public class Booking {
     @Column(name = "ends_at", nullable = false)
     private OffsetDateTime endsAt;
 
+    /** Always {@link #HOURS} for a new booking; an older row may be longer. */
     @Column(name = "duration_hours", nullable = false)
     private Integer durationHours;
 

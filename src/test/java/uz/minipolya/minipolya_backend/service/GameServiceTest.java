@@ -45,7 +45,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -130,7 +129,7 @@ class GameServiceTest {
     private void stubCreate() {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(CREATOR_ID)).thenReturn(Optional.of(creator));
-        when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt())).thenReturn(100_000L);
+        when(bookingPriceCalculator.hourPrice(any(Stadium.class), any(OffsetDateTime.class))).thenReturn(100_000L);
         when(gameRepository.save(any(Game.class))).thenAnswer(inv -> {
             Game g = inv.getArgument(0);
             if (g.getId() == null) {
@@ -211,15 +210,30 @@ class GameServiceTest {
 
     @Test
     void createGameRejectsEndingAfterClosingTime() {
+        stadium.setCloseTime(LocalTime.of(22, 30));
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(CREATOR_ID)).thenReturn(Optional.of(creator));
 
         CreateGameRequest req = CreateGameRequest.builder()
-                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(22, 1)).duration(2).build();
+                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(22, 1)).build();
 
         assertThatThrownBy(() -> service.createGame(req, CREATOR_ID))
                 .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("must end by 23:00");
+                .hasMessageContaining("must end by 22:30");
+        verify(gameRepository, never()).save(any());
+    }
+
+    @Test
+    void createGameRejectsAnyLengthButOneHour() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(userRepository.findById(CREATOR_ID)).thenReturn(Optional.of(creator));
+
+        CreateGameRequest req = CreateGameRequest.builder()
+                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(18, 1)).duration(2).build();
+
+        assertThatThrownBy(() -> service.createGame(req, CREATOR_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("A booking is exactly one hour");
         verify(gameRepository, never()).save(any());
     }
 

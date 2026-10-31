@@ -1,7 +1,6 @@
 package uz.minipolya.minipolya_backend.dto.request;
 
 import jakarta.validation.constraints.Future;
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
@@ -38,8 +37,7 @@ public class CreateGameRequest {
     @Future
     private OffsetDateTime startsAt;
 
-    @NotNull
-    @Min(value = 1, message = "duration must be at least 1 hour")
+    /** Optional: a game is exactly one hour. Absent or 1; anything else is 400. */
     private Integer duration;
 
     /** Only used for team_vs_team: the creating team. */

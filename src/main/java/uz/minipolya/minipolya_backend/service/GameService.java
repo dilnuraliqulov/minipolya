@@ -95,13 +95,14 @@ public class GameService {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         String type = request.getType();
-        int duration = request.getDuration();
+        // A game is one slot, like every booking.
+        BookingWindowValidator.requireOneHour(request.getDuration());
         OffsetDateTime startsAt = request.getStartsAt();
-        OffsetDateTime endsAt = startsAt.plusHours(duration);
+        OffsetDateTime endsAt = startsAt.plusHours(Booking.HOURS);
 
         // A confirmed game becomes a source=game booking, so the slot must already
         // satisfy the booking window rules (on the hour, inside open-close, no closure).
-        bookingWindowValidator.validate(stadium, startsAt, duration);
+        bookingWindowValidator.validate(stadium, startsAt);
 
         if (bookingRepository.existsActiveOverlap(stadium.getId(), startsAt, endsAt)) {
             throw new SlotNotAvailableException("That time slot is already booked");
@@ -118,7 +119,7 @@ public class GameService {
                 .endsAt(endsAt)
                 // Same calculation as a direct booking, promotions included, so a game
                 // costs exactly what booking the same slot costs.
-                .totalPrice(bookingPriceCalculator.totalPrice(stadium, startsAt, duration))
+                .totalPrice(bookingPriceCalculator.hourPrice(stadium, startsAt))
                 // Fees are platform settings, not static config: a team game is charged the
                 // per-team platform fee, any other game the per-player service fee.
                 .serviceFeePerPerson(serviceFeeFor(type))

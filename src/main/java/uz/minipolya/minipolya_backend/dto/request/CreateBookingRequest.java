@@ -1,7 +1,6 @@
 package uz.minipolya.minipolya_backend.dto.request;
 
 import jakarta.validation.constraints.Future;
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -24,8 +23,7 @@ public class CreateBookingRequest {
     @Future
     private OffsetDateTime startsAt;
 
-    @NotNull
-    @Min(value = 1, message = "durationHours must be at least 1")
+    /** Optional: a booking is exactly one hour. Absent or 1; anything else is 400. */
     private Integer durationHours;
 
     /** The saved card to charge. Must belong to the booking player and be active. */

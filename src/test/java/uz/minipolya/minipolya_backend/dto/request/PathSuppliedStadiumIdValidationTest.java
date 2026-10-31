@@ -82,7 +82,7 @@ class PathSuppliedStadiumIdValidationTest {
         assertThat(violatedFields(CreateStadiumClosureRequest.builder().build()))
                 .containsExactlyInAnyOrder("startDate", "endDate");
         assertThat(violatedFields(CreateManualBookingRequest.builder().build()))
-                .containsExactlyInAnyOrder("clientName", "clientPhone", "startsAt", "duration");
+                .containsExactlyInAnyOrder("clientName", "clientPhone", "startsAt");
         assertThat(violatedFields(CreatePromotionRequest.builder().build()))
                 .containsExactlyInAnyOrder("name", "discountPercent", "startsAt", "endsAt");
     }

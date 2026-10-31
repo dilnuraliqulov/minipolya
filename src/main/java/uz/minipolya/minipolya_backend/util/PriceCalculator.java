@@ -4,47 +4,27 @@ import org.springframework.stereotype.Component;
 import uz.minipolya.minipolya_backend.entity.PricingRule;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 
 /**
- * Pure, stateless price calculation. Prices are computed hour by hour, so a
- * booking that spans two different price slots sums each hour's rate. When no
- * active rule matches a given hour, that hour falls back to the stadium's
- * default {@code pricePerHour}. All money is tiyin (1 so'm = 100 tiyin).
- *
- * <p>Each hour is priced against its own local weekday, so a span that crosses
- * midnight correctly switches to the next day's rules.
+ * Pure, stateless price calculation. A booking is one hour, priced by the active rule
+ * covering it on its local weekday; when none does, by the stadium's default
+ * {@code pricePerHour}. All money is tiyin (1 so'm = 100 tiyin).
  */
 @Component
 public class PriceCalculator {
 
     /**
-     * @param activeRules        active pricing rules for the stadium (any day)
-     * @param date               the booking date (its weekday selects the rules)
-     * @param startTime          booking start time
-     * @param durationHours      whole hours, at least 1
-     * @param defaultPricePerHour stadium fallback price for unmatched hours
-     * @return total price in tiyin
+     * @param activeRules         active pricing rules for the stadium (any day)
+     * @param date                the hour's local date (its weekday selects the rules)
+     * @param startTime           the hour's local start
+     * @param defaultPricePerHour stadium fallback price when no rule covers the hour
+     * @return the hour's price in tiyin
      */
-    public long calculateTotalPrice(List<PricingRule> activeRules,
-                                    LocalDate date,
-                                    LocalTime startTime,
-                                    int durationHours,
-                                    long defaultPricePerHour) {
-        if (durationHours < 1) {
-            throw new IllegalArgumentException("durationHours must be at least 1");
-        }
-        LocalDateTime cursor = LocalDateTime.of(date, startTime);
-
-        long total = 0;
-        for (int hour = 0; hour < durationHours; hour++) {
-            LocalDateTime slot = cursor.plusHours(hour);
-            int dayOfWeek = toDayOfWeek(slot.toLocalDate());
-            total += priceForHour(activeRules, dayOfWeek, slot.toLocalTime(), defaultPricePerHour);
-        }
-        return total;
+    public long hourPrice(List<PricingRule> activeRules, LocalDate date, LocalTime startTime,
+                          long defaultPricePerHour) {
+        return priceForHour(activeRules, toDayOfWeek(date), startTime, defaultPricePerHour);
     }
 
     private long priceForHour(List<PricingRule> activeRules, int dayOfWeek, LocalTime slotStart, long defaultPrice) {

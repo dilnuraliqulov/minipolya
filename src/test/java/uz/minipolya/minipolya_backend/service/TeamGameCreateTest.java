@@ -108,7 +108,7 @@ class TeamGameCreateTest {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(LEADER_A_ID)).thenReturn(Optional.of(leaderA));
         when(teamRepository.findById(TEAM_A_ID)).thenReturn(Optional.of(teamA));
-        when(priceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt())).thenReturn(PRICE);
+        when(priceCalculator.hourPrice(any(Stadium.class), any(OffsetDateTime.class))).thenReturn(PRICE);
         when(platformSettingsService.current()).thenReturn(
                 PlatformSettings.builder().teamGamePlatformFee(FEE).casualGameServiceFee(0L).build());
         when(bookingRepository.existsActiveOverlap(any(), any(), any())).thenReturn(false);

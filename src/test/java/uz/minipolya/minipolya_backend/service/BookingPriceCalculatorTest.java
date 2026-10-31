@@ -54,65 +54,43 @@ class BookingPriceCalculatorTest {
     }
 
     @Test
-    void threeHourBookingCrossingPricingBoundarySumsPerHour() {
+    void anHourCoveredByARuleTakesTheRulesPrice() {
         PricingRule evening = PricingRule.builder().dayOfWeek(dow(MONDAY))
                 .startTime(LocalTime.of(19, 0)).endTime(LocalTime.of(23, 0))
                 .pricePerHour(80_000L).isActive(true).build();
         when(pricingRuleRepository.findByStadiumIdAndIsActiveTrue(STADIUM_ID)).thenReturn(List.of(evening));
 
-        // 18:00-21:00 -> 18:00 default 50k + 19:00 rule 80k + 20:00 rule 80k
-        long total = calculator.totalPrice(stadium, at(MONDAY, 18), 3);
-
-        assertThat(total).isEqualTo(210_000);
+        assertThat(calculator.hourPrice(stadium, at(MONDAY, 19))).isEqualTo(80_000);
+        // 18:00 is outside the rule: the stadium's default.
+        assertThat(calculator.hourPrice(stadium, at(MONDAY, 18))).isEqualTo(50_000);
     }
 
     @Test
-    void promotionIsAppliedPerHourNotToTheWholeBooking() {
+    void aPromotionOnTheHourIsApplied() {
         when(pricingRuleRepository.findByStadiumIdAndIsActiveTrue(STADIUM_ID)).thenReturn(List.of());
-        // 20% off only on the 19:00 hour.
         when(promotionService.getBestPromotion(eq(STADIUM_ID), eq(at(MONDAY, 19))))
                 .thenReturn(Optional.of(Promotion.builder().discountPercent(20).name("Happy Hour").build()));
 
-        // 18:00 (50k) + 19:00 (50k - 20% = 40k) + 20:00 (50k) = 140k
-        long total = calculator.totalPrice(stadium, at(MONDAY, 18), 3);
-
-        assertThat(total).isEqualTo(140_000);
+        assertThat(calculator.hourPrice(stadium, at(MONDAY, 19))).isEqualTo(40_000); // 50k - 20%
+        assertThat(calculator.hourPrice(stadium, at(MONDAY, 18))).isEqualTo(50_000);
     }
 
     @Test
-    void pricingAcrossMidnightUsesEachHoursWeekday() {
+    void anHourIsPricedOnItsOwnLocalWeekday() {
         PricingRule sundayLate = PricingRule.builder().dayOfWeek(dow(SUNDAY))
                 .startTime(LocalTime.of(23, 0)).endTime(LocalTime.of(23, 59))
                 .pricePerHour(200_000L).isActive(true).build();
-        PricingRule mondayEarly = PricingRule.builder().dayOfWeek(dow(MONDAY))
-                .startTime(LocalTime.of(0, 0)).endTime(LocalTime.of(6, 0))
-                .pricePerHour(90_000L).isActive(true).build();
-        when(pricingRuleRepository.findByStadiumIdAndIsActiveTrue(STADIUM_ID))
-                .thenReturn(List.of(sundayLate, mondayEarly));
+        when(pricingRuleRepository.findByStadiumIdAndIsActiveTrue(STADIUM_ID)).thenReturn(List.of(sundayLate));
 
-        // 23:00 Sunday for 2h -> 23:00 Sunday (200k) + 00:00 Monday (90k)
-        long total = calculator.totalPrice(stadium, at(SUNDAY, 23), 2);
-
-        assertThat(total).isEqualTo(290_000);
+        assertThat(calculator.hourPrice(stadium, at(SUNDAY, 23))).isEqualTo(200_000);
+        assertThat(calculator.hourPrice(stadium, at(MONDAY, 23))).isEqualTo(50_000);
     }
 
     @Test
-    void fallsBackToStadiumDefaultWhenNoRules() {
+    void aPriceAboveIntRangeIsExact() {
         when(pricingRuleRepository.findByStadiumIdAndIsActiveTrue(STADIUM_ID)).thenReturn(List.of());
+        Stadium expensive = Stadium.builder().id(STADIUM_ID).pricePerHour(3_000_000_000L).build();
 
-        long total = calculator.totalPrice(stadium, at(MONDAY, 10), 4);
-
-        assertThat(total).isEqualTo(200_000); // 4 x 50k
-    }
-
-    @Test
-    void totalPriceAboveIntRangeIsExact() {
-        when(pricingRuleRepository.findByStadiumIdAndIsActiveTrue(STADIUM_ID)).thenReturn(List.of());
-        Stadium expensive = Stadium.builder().id(STADIUM_ID).pricePerHour(100_000_000L).build();
-
-        // 24 h at 100 000 000 tiyin an hour = 2 400 000 000 tiyin, past the int range.
-        long total = calculator.totalPrice(expensive, at(MONDAY, 0), 24);
-
-        assertThat(total).isEqualTo(2_400_000_000L);
+        assertThat(calculator.hourPrice(expensive, at(MONDAY, 10))).isEqualTo(3_000_000_000L);
     }
 }

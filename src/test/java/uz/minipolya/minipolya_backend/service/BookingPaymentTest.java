@@ -31,7 +31,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -100,8 +99,8 @@ class BookingPaymentTest {
 
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(player));
-        when(bookingPriceCalculator.slotPrices(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
-                .thenReturn(java.util.List.of(PRICE));
+        when(bookingPriceCalculator.hourPrice(any(Stadium.class), any(OffsetDateTime.class)))
+                .thenReturn(PRICE);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
         when(savedCardService.requireOwnedCard(USER_ID, CARD_ID)).thenReturn(card);
@@ -116,7 +115,6 @@ class BookingPaymentTest {
         return CreateBookingRequest.builder()
                 .stadiumId(STADIUM_ID)
                 .startsAt(startAt(18, 2))
-                .durationHours(2)
                 .cardId(CARD_ID)
                 .paymentOption(option)
                 .build();
@@ -216,14 +214,14 @@ class BookingPaymentTest {
     // ---- The card fee ----
 
     @Test
-    void fullPaymentChargesTheSumOfEachSlotsCardPrice() {
-        // Two hours at 150 000 and 180 000 so'm: the player pays the two prices they were shown.
-        when(bookingPriceCalculator.slotPrices(any(Stadium.class), any(OffsetDateTime.class), anyInt()))
-                .thenReturn(java.util.List.of(15_000_000L, 18_000_000L));
+    void fullPaymentChargesTheSlotsPlayerPrice() {
+        // The hour at 180 000 so'm: the player pays the price the slot showed.
+        when(bookingPriceCalculator.hourPrice(any(Stadium.class), any(OffsetDateTime.class)))
+                .thenReturn(18_000_000L);
 
         service.createBooking(USER_ID, request(PaymentOption.FULL));
 
-        long expected = TestPrices.card(15_000_000L) + TestPrices.card(18_000_000L);
+        long expected = TestPrices.card(18_000_000L);
         org.mockito.ArgumentCaptor<uz.minipolya.minipolya_backend.util.CardFeeSplit> split =
                 org.mockito.ArgumentCaptor.forClass(uz.minipolya.minipolya_backend.util.CardFeeSplit.class);
         verify(paymentService).chargeForBooking(any(Booking.class), eq(card), split.capture());
@@ -233,7 +231,8 @@ class BookingPaymentTest {
 
         org.mockito.ArgumentCaptor<Booking> booking = org.mockito.ArgumentCaptor.forClass(Booking.class);
         verify(bookingRepository).saveAndFlush(booking.capture());
-        assertThat(booking.getValue().getPrice()).isEqualTo(33_000_000L);
+        assertThat(booking.getValue().getPrice()).isEqualTo(18_000_000L);
+        assertThat(booking.getValue().getDurationHours()).isEqualTo(1);
         assertThat(booking.getValue().getCardPrice()).isEqualTo(expected);
     }
 
