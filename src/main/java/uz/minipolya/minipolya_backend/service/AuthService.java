@@ -13,7 +13,6 @@ import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.TelegramAuthValidator;
 import uz.minipolya.minipolya_backend.util.TelegramUserData;
 
-import java.util.Set;
 
 /**
  * Authentication flows. Currently: Telegram Mini App {@code initData} →
@@ -24,7 +23,8 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class AuthService {
 
-    private static final Set<String> SUPPORTED_LANGUAGES = Set.of("uz", "ru", "en");
+    /** Every new user starts in Uzbek, whatever Telegram's language is; they change it themselves. */
+    static final String DEFAULT_LANGUAGE = "uz";
 
     private final TelegramAuthValidator telegramAuthValidator;
     private final UserRepository userRepository;
@@ -55,17 +55,10 @@ public class AuthService {
         User user = User.builder()
                 .telegramId(data.telegramId())
                 .name(data.displayName())
-                .language(resolveLanguage(data.languageCode()))
+                .language(DEFAULT_LANGUAGE)
                 .build();
         User saved = userRepository.save(user);
         log.info("Created new user from Telegram: userId={} telegramId={}", saved.getId(), saved.getTelegramId());
         return saved;
-    }
-
-    private String resolveLanguage(String languageCode) {
-        if (languageCode != null && SUPPORTED_LANGUAGES.contains(languageCode.toLowerCase())) {
-            return languageCode.toLowerCase();
-        }
-        return "uz";
     }
 }

@@ -59,7 +59,28 @@ class AuthServiceTest {
 
         assertThat(result.getToken()).isEqualTo("jwt-token");
         assertThat(result.getUser()).isEqualTo(mapped);
-        verify(userRepository).save(any(User.class));
+        // Telegram says "ru"; a new user still starts in Uzbek.
+        org.mockito.ArgumentCaptor<User> created = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(created.capture());
+        assertThat(created.getValue().getLanguage()).isEqualTo("uz");
+        assertThat(created.getValue().getName()).isEqualTo("Ali Valiyev");
+    }
+
+    @Test
+    void aNewUserStartsInUzbekWhateverTheirTelegramLanguage() {
+        for (String telegramLanguage : new String[] {"ru", "en", "uz", "de", null}) {
+            org.mockito.Mockito.reset(userRepository);
+            when(telegramAuthValidator.validate("init"))
+                    .thenReturn(new TelegramUserData(778L, "Vali", null, "vali", telegramLanguage));
+            when(userRepository.findByTelegramId(778L)).thenReturn(Optional.empty());
+            when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            authService.authenticateTelegram("init");
+
+            org.mockito.ArgumentCaptor<User> created = org.mockito.ArgumentCaptor.forClass(User.class);
+            verify(userRepository).save(created.capture());
+            assertThat(created.getValue().getLanguage()).as("Telegram %s", telegramLanguage).isEqualTo("uz");
+        }
     }
 
     @Test
