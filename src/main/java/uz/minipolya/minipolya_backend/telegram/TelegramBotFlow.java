@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import uz.minipolya.minipolya_backend.config.AppProperties;
+import uz.minipolya.minipolya_backend.dto.request.UpdateUserRequest;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.PhoneTakenException;
 import uz.minipolya.minipolya_backend.service.AuthService;
@@ -27,6 +28,9 @@ import java.util.Optional;
 @Component
 @RequiredArgsConstructor
 public class TelegramBotFlow {
+
+    /** callback_data of the /language buttons: "lang:uz", "lang:ru", "lang:en". */
+    static final String LANGUAGE_CALLBACK = "lang:";
 
     private final AuthService authService;
     private final UserService userService;
@@ -59,6 +63,10 @@ public class TelegramBotFlow {
         String command = command(text);
         if ("start".equals(command)) {
             start(chatId, user, from, language, argument(text));
+        } else if ("help".equals(command)) {
+            bot.send(chatId, texts.get(language, "help") + supportLine(language), openButton(language, null));
+        } else if ("language".equals(command)) {
+            bot.send(chatId, texts.get(language, "language.choose"), languageButtons());
         } else if (user.getPhone() == null) {
             // Anything else before the phone: ask for it again, with the button.
             bot.send(chatId, texts.get(language, "contact.ask"), askPhoneKeyboard(language));
@@ -67,8 +75,45 @@ public class TelegramBotFlow {
         }
     }
 
+    /**
+     * An inline-button press. Only the /language buttons ({@code lang:uz|ru|en}) exist: the
+     * choice is saved as {@code user.language} through the same profile update as the Mini
+     * App, and the message is edited to confirm it in the new language.
+     */
     public void onCallbackQuery(JsonNode callbackQuery) {
-        // Filled in by the /language step.
+        String callbackId = callbackQuery.path("id").asString("");
+        JsonNode from = callbackQuery.path("from");
+        JsonNode message = callbackQuery.path("message");
+        String data = callbackQuery.path("data").asString("");
+        if (!from.path("id").canConvertToLong() || !data.startsWith(LANGUAGE_CALLBACK)
+                || !message.path("message_id").canConvertToLong()) {
+            bot.answerCallbackQuery(callbackId);
+            return;
+        }
+        long chatId = message.path("chat").path("id").asLong();
+        long messageId = message.path("message_id").asLong();
+        User user = authService.findOrCreateFromTelegram(userData(from));
+        if (user.isBlocked()) {
+            bot.answerCallbackQuery(callbackId);
+            bot.editMessageText(chatId, messageId, blocked(BotTexts.language(user.getLanguage())), null);
+            return;
+        }
+        String chosen = data.substring(LANGUAGE_CALLBACK.length());
+        if (!BotTexts.LANGUAGES.contains(chosen)) {
+            bot.answerCallbackQuery(callbackId);
+            return;
+        }
+        userService.updateProfile(user.getId(), UpdateUserRequest.builder().language(chosen).build());
+        bot.answerCallbackQuery(callbackId);
+        bot.editMessageText(chatId, messageId, texts.get(chosen, "language.saved"), null);
+    }
+
+    /** Each language in its own name, so anyone can find theirs whatever the current one is. */
+    static Map<String, Object> languageButtons() {
+        return TelegramKeyboards.inline(List.of(
+                TelegramKeyboards.callbackButton("🇺🇿 Oʻzbekcha", LANGUAGE_CALLBACK + "uz"),
+                TelegramKeyboards.callbackButton("🇷🇺 Русский", LANGUAGE_CALLBACK + "ru"),
+                TelegramKeyboards.callbackButton("🇬🇧 English", LANGUAGE_CALLBACK + "en")));
     }
 
     // ---- /start ----
