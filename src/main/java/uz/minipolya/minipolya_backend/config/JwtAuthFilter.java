@@ -19,6 +19,7 @@ import tools.jackson.databind.ObjectMapper;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
+import uz.minipolya.minipolya_backend.service.AccountBlockService;
 
 import java.io.IOException;
 import java.time.Instant;
@@ -37,7 +38,8 @@ import java.util.UUID;
  *
  * <p>The user is loaded on every authenticated request so that blocking takes
  * effect at once rather than when the token expires: a blocked user's token is
- * rejected here with 403, whatever the endpoint.
+ * rejected here with 403 {@code ACCOUNT_BLOCKED}, whatever the endpoint, with the
+ * latest block's reason and time as {@code data}.
  *
  * <p>The same lookup revokes tokens when a password is reset in the database: a token
  * issued before {@code users.password_changed_at} is refused with 401 {@code TOKEN_REVOKED}.
@@ -53,6 +55,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private final JwtProvider jwtProvider;
     private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
+    private final AccountBlockService accountBlockService;
 
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request,
@@ -71,7 +74,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 return;
             }
             if (user.get().isBlocked()) {
-                writeBlocked(response);
+                writeBlocked(response, userId);
                 return;
             }
             if (issuedBeforePasswordChange(token, user.get())) {
@@ -97,11 +100,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    /** Same {@link ApiResponse} envelope the security handlers use, with 403. */
-    private void writeBlocked(HttpServletResponse response) throws IOException {
+    /** The same 403 the Telegram sign-in answers: code, message, and why and when as data. */
+    private void writeBlocked(HttpServletResponse response, UUID userId) throws IOException {
         response.setStatus(HttpStatus.FORBIDDEN.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        objectMapper.writeValue(response.getWriter(), ApiResponse.error("Account is blocked"));
+        objectMapper.writeValue(response.getWriter(),
+                ApiResponse.error("ACCOUNT_BLOCKED", "Account is blocked", accountBlockService.details(userId)));
     }
 
     private boolean issuedBeforePasswordChange(String token, User user) {

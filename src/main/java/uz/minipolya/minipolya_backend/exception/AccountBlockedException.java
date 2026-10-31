@@ -6,6 +6,11 @@ import org.springframework.http.HttpStatus;
 public class AccountBlockedException extends CodedApiException {
 
     public AccountBlockedException() {
-        super(HttpStatus.FORBIDDEN, "ACCOUNT_BLOCKED", "Account is blocked", null);
+        this(null);
+    }
+
+    /** @param details why and when (a {@code BlockedAccountResponse}), sent as {@code data}; null for none. */
+    public AccountBlockedException(Object details) {
+        super(HttpStatus.FORBIDDEN, "ACCOUNT_BLOCKED", "Account is blocked", details);
     }
 }

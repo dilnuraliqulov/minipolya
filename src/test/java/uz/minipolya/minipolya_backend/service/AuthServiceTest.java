@@ -7,9 +7,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import uz.minipolya.minipolya_backend.config.JwtProvider;
 import uz.minipolya.minipolya_backend.dto.response.AuthResponse;
+import uz.minipolya.minipolya_backend.dto.response.BlockedAccountResponse;
 import uz.minipolya.minipolya_backend.dto.response.UserResponse;
 import uz.minipolya.minipolya_backend.entity.User;
-import uz.minipolya.minipolya_backend.exception.ForbiddenException;
+import uz.minipolya.minipolya_backend.exception.AccountBlockedException;
 import uz.minipolya.minipolya_backend.mapper.UserMapper;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.TelegramAuthValidator;
@@ -39,6 +40,9 @@ class AuthServiceTest {
     private UserMapper userMapper;
     @Mock
     private JwtProvider jwtProvider;
+
+    @Mock
+    private AccountBlockService accountBlockService;
 
     @InjectMocks
     private AuthService authService;
@@ -104,10 +108,16 @@ class AuthServiceTest {
         when(telegramAuthValidator.validate("init")).thenReturn(data);
         User blocked = User.builder().id(USER_ID_5).telegramId(777L).name("Ali").isBlocked(true).build();
         when(userRepository.findByTelegramId(777L)).thenReturn(Optional.of(blocked));
+        BlockedAccountResponse why = BlockedAccountResponse.builder().reason("Spam").build();
+        when(accountBlockService.details(USER_ID_5)).thenReturn(why);
 
         assertThatThrownBy(() -> authService.authenticateTelegram("init"))
-                .isInstanceOf(ForbiddenException.class)
-                .hasMessage("Account is blocked");
+                .isInstanceOf(AccountBlockedException.class)
+                .hasMessage("Account is blocked")
+                .satisfies(ex -> {
+                    assertThat(((AccountBlockedException) ex).getCode()).isEqualTo("ACCOUNT_BLOCKED");
+                    assertThat(((AccountBlockedException) ex).getData()).isSameAs(why);
+                });
 
         verify(jwtProvider, never()).generateToken(any(User.class));
     }
