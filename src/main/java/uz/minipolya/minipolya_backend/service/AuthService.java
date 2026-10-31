@@ -39,15 +39,22 @@ public class AuthService {
         User user = userRepository.findByTelegramId(data.telegramId())
                 .orElseGet(() -> createFromTelegram(data));
 
+        AuthResponse response = signIn(user);
+        log.info("Telegram auth succeeded for userId={} telegramId={}", user.getId(), user.getTelegramId());
+        return response;
+    }
+
+    /**
+     * The token and user for a sign-in — the Telegram one and the dev-only one alike. A
+     * blocked user is refused with 403 ACCOUNT_BLOCKED and why and when.
+     */
+    public AuthResponse signIn(User user) {
         if (user.isBlocked()) {
             log.warn("Blocked user attempted to sign in: userId={} telegramId={}", user.getId(), user.getTelegramId());
             throw new AccountBlockedException(accountBlockService.details(user.getId()));
         }
-
-        String token = jwtProvider.generateToken(user);
-        log.info("Telegram auth succeeded for userId={} telegramId={}", user.getId(), user.getTelegramId());
         return AuthResponse.builder()
-                .token(token)
+                .token(jwtProvider.generateToken(user))
                 .user(userMapper.toResponse(user))
                 .build();
     }
