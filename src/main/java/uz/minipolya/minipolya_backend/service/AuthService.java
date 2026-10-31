@@ -36,8 +36,7 @@ public class AuthService {
     public AuthResponse authenticateTelegram(String initData) {
         TelegramUserData data = telegramAuthValidator.validate(initData);
 
-        User user = userRepository.findByTelegramId(data.telegramId())
-                .orElseGet(() -> createFromTelegram(data));
+        User user = findOrCreateFromTelegram(data);
 
         AuthResponse response = signIn(user);
         log.info("Telegram auth succeeded for userId={} telegramId={}", user.getId(), user.getTelegramId());
@@ -57,6 +56,17 @@ public class AuthService {
                 .token(jwtProvider.generateToken(user))
                 .user(userMapper.toResponse(user))
                 .build();
+    }
+
+    /**
+     * The user with this Telegram id, created on first sight (name from Telegram, language
+     * uz). The only place a Telegram user is created: the Mini App sign-in and the bot's
+     * /start both come here.
+     */
+    @Transactional
+    public User findOrCreateFromTelegram(TelegramUserData data) {
+        return userRepository.findByTelegramId(data.telegramId())
+                .orElseGet(() -> createFromTelegram(data));
     }
 
     private User createFromTelegram(TelegramUserData data) {
