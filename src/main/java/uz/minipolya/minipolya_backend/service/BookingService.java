@@ -97,11 +97,12 @@ public class BookingService {
                     "Cannot book more than " + appProperties.getBooking().getMaxWeeksAhead() + " weeks ahead");
         }
 
-        // The owner's net price, and what the player sees by card: each hour's card price, summed.
+        // The owner's price N, and the one price the player sees, D: each hour's player
+        // price summed, so the slot prices on screen add up exactly.
         List<Long> slotPrices = bookingPriceCalculator.slotPrices(stadium, startsAt, duration);
         long price = slotPrices.stream().mapToLong(Long::longValue).sum();
         long cardPrice = slotPrices.stream().mapToLong(cardPricing::playerAmount).sum();
-        CardFeeSplit charge = chargeFor(stadium, price, cardPrice, request.getPaymentOption());
+        CardFeeSplit charge = cardPricing.toOwner(amountDueNow(stadium, cardPrice, request.getPaymentOption()));
 
         // Resolved before the booking row exists, so an unusable card costs nothing.
         SavedCard card = savedCardService.requireOwnedCard(userId, request.getCardId());
@@ -153,36 +154,21 @@ public class BookingService {
     }
 
     /**
-     * What the card is charged now. FULL is the booking's card price — the sum of its
-     * slots' card prices; MINIMUM is {@code playerAmount(min_booking_amount)}.
+     * What the card is charged now, in player terms: FULL is the player price D (the sum of
+     * the slots' player prices); MINIMUM is the deposit
+     * {@code d = min(playerAmount(min_booking_amount), D)} — nothing else. The rest,
+     * {@code D - d}, is the same whether paid later in the app or in cash.
      */
-    private CardFeeSplit chargeFor(Stadium stadium, long price, long cardPrice, PaymentOption option) {
+    private long amountDueNow(Stadium stadium, long playerPrice, PaymentOption option) {
         if (option == PaymentOption.FULL) {
-            return cardPricing.bookingSplit(cardPrice, price);
-        }
-        return cardPricing.bookingSplit(netFor(stadium, price, option));
-    }
-
-    /**
-     * The net the player pays up front: either the stadium's minimum or the full
-     * price — nothing else. MINIMUM needs a stadium minimum that is actually below
-     * this booking's price, otherwise there is no remainder and the choice is
-     * meaningless.
-     */
-    private long netFor(Stadium stadium, long price, PaymentOption option) {
-        if (option == PaymentOption.FULL) {
-            return price;
+            return playerPrice;
         }
         Long minimum = stadium.getMinBookingAmount();
         if (minimum == null) {
             throw new BadRequestException(
                     "This stadium requires full payment; it has no minimum booking amount");
         }
-        if (minimum >= price) {
-            throw new BadRequestException(
-                    "The stadium minimum is not below this booking's price, so full payment is required");
-        }
-        return minimum;
+        return cardPricing.deposit(minimum, playerPrice);
     }
 
     /**
@@ -207,12 +193,11 @@ public class BookingService {
             throw new BadRequestException("Only a live booking can be paid off");
         }
 
-        long remainder = booking.getRemainingAmount();
+        long remainder = cardPricing.remainingForPlayer(booking);
         SavedCard card = savedCardService.requireOwnedCard(userId, cardId);
         long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
         Booking.PaymentStatus statusBefore = booking.getPaymentStatus();
-        // By card the remainder is grossed up; the owner's cash takes the net remainder.
-        paymentService.chargeForBooking(booking, card, cardPricing.bookingSplit(remainder),
+        paymentService.chargeForBooking(booking, card, remainderCharge(booking, remainder),
                 Payment.PaymentType.REMAINDER);
 
         // A declined card changes nothing, and then there is nothing to record.
@@ -225,6 +210,19 @@ public class BookingService {
         log.info("Booking remainder charged: id={} userId={} amount={} status={}",
                 bookingId, userId, remainder, booking.getPaymentStatus().getValue());
         return bookingResponseFactory.of(booking);
+    }
+
+    /**
+     * The remainder charge, all the owner's. On a booking priced under the player price it
+     * is simply {@code D - paid}, the same amount the owner would take in cash. A booking
+     * made before that rule keeps its owner's terms: its card payment records what it
+     * covers of the owner's price, as such payments always did.
+     */
+    private CardFeeSplit remainderCharge(Booking booking, long playerAmount) {
+        if (booking.getPricingModel() == Booking.PricingModel.PLAYER_PRICE) {
+            return cardPricing.toOwner(playerAmount);
+        }
+        return new CardFeeSplit(playerAmount, playerAmount, 0L, playerAmount - booking.getRemainingAmount());
     }
 
     /** Owner adds a walk-in/phone booking: confirmed immediately, no hold. */

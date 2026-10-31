@@ -72,14 +72,16 @@ public class PriceCalculator {
     public static final int BPS_SCALE = 10_000;
 
     /**
-     * What a player pays by card for a net amount: grossed up by the card fee so that
-     * after the provider takes {@code cardFeeBps} the recipients still get {@code net},
-     * then rounded up to the next multiple of {@code roundingStep}. Integer math only.
+     * <b>The</b> conversion from an owner's price to the one price players see and pay — the
+     * only place it is calculated ({@code CardPricing} applies it with the settings in force).
+     * Grossed up by the card fee so that after ATMOS takes {@code cardFeeBps} the recipients
+     * still get {@code net}, then rounded up to the next multiple of {@code roundingStep}.
+     * Integer math only.
      *
-     * <pre>playerAmount(net) = roundUp( ceil(net * 10000 / (10000 - bps)), step )</pre>
+     * <pre>D = playerAmount(net) = roundUp( ceil(net * 10000 / (10000 - bps)), step )</pre>
      *
-     * For example 20 000 000 tiyin (200 000 so'm) at 150 bps, step 10 000 →
-     * ceil(20 304 568.5) = 20 304 569 → 20 310 000 (203 100 so'm).
+     * For example 15 000 000 tiyin (150 000 so'm) at 150 bps, step 500 000 → 15 500 000
+     * (155 000 so'm); with step 10 000 → 15 230 000 (152 300 so'm).
      *
      * @param net          tiyin, not negative
      * @param cardFeeBps   0..9999 (150 = 1.5%)
@@ -102,6 +104,18 @@ public class PriceCalculator {
             throw new IllegalArgumentException("cardFeeBps must be 0..9999");
         }
         return Math.ceilDiv(Math.multiplyExact(net, BPS_SCALE), BPS_SCALE - cardFeeBps);
+    }
+
+    /**
+     * What a recipient keeps of a card split of {@code gross} after ATMOS takes
+     * {@code cardFeeBps} of it: {@code floor(gross * (10000 - bps) / 10000)}. The inverse of
+     * {@link #grossUp}: {@code netAfterFee(grossUp(n)) == n} for every n.
+     */
+    public static long netAfterFee(long gross, int cardFeeBps) {
+        if (cardFeeBps < 0 || cardFeeBps >= BPS_SCALE) {
+            throw new IllegalArgumentException("cardFeeBps must be 0..9999");
+        }
+        return Math.floorDiv(Math.multiplyExact(gross, BPS_SCALE - cardFeeBps), BPS_SCALE);
     }
 
     /** The smallest multiple of {@code step} that is at least {@code amount}. */

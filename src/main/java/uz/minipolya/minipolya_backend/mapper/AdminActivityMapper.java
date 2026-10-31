@@ -21,7 +21,6 @@ public interface AdminActivityMapper {
     @Mapping(target = "booking", ignore = true)
     @Mapping(source = "user.name", target = "userName")
     @Mapping(source = "user.phone", target = "userPhone")
-    @Mapping(target = "paidInApp", ignore = true)
     @Mapping(target = "cashReceived", ignore = true)
     @Mapping(target = "cashReceivedAt", ignore = true)
     AdminBookingResponse toAdminBooking(Booking booking);

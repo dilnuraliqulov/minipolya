@@ -302,12 +302,12 @@ public class GameService {
         Page<Game> games = stadiumId == null
                 ? gameRepository.findByIsPublicTrueAndStatus(STATUS_OPEN, pageable)
                 : gameRepository.findByStadiumIdAndIsPublicTrueAndStatus(stadiumId, STATUS_OPEN, pageable);
-        return games.map(gameMapper::toResponse);
+        return games.map(this::toResponse);
     }
 
     @Transactional(readOnly = true)
     public Page<GameResponse> getMyGames(UUID userId, Pageable pageable) {
-        return gameRepository.findMyGames(userId, pageable).map(gameMapper::toResponse);
+        return gameRepository.findMyGames(userId, pageable).map(this::toResponse);
     }
 
     @Transactional
@@ -456,6 +456,8 @@ public class GameService {
                 .endsAt(game.getEndsAt())
                 .durationHours((int) Duration.between(game.getStartsAt(), game.getEndsAt()).toHours())
                 .price(game.getTotalPrice())
+                // A game's money is its players'; the booking keeps the owner's terms.
+                .pricingModel(Booking.PricingModel.NET)
                 .gameId(game.getId())
                 .build();
         try {
@@ -528,7 +530,7 @@ public class GameService {
         }
     }
 
-    /** The card fee with the settings in force now; a quote never asks the payment service. */
+    /** The player price with the settings in force now; a quote never asks the payment service. */
     private CardPricing cardPricing() {
         return new CardPricing(platformSettingsService::current);
     }
@@ -542,12 +544,32 @@ public class GameService {
         if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
             dto.setTeams(teamGameService.teamsOf(game));
         } else if (game.getTotalPrice() != null) {
-            // What one player's share costs by card.
-            uz.minipolya.minipolya_backend.util.CardFeeSplit share = cardPricing().gameShareSplit(game);
-            dto.setPrice(share.playerAmount());
-            dto.setCardFee(share.cardFee());
+            dto.setPrice(cardPricing().gameShareSplit(game).playerAmount());
         }
+        dto.setTotalPrice(playerTotal(game));
         return dto;
+    }
+
+    /** A game in a player's list: its total as the players pay it. */
+    private GameResponse toResponse(Game game) {
+        GameResponse dto = gameMapper.toResponse(game);
+        dto.setTotalPrice(playerTotal(game));
+        return dto;
+    }
+
+    /**
+     * What the players pay for a game altogether: every share of a casual or open game,
+     * both teams' joining prices and remainders of a team game. Null without a price.
+     */
+    private Long playerTotal(Game game) {
+        if (game.getTotalPrice() == null) {
+            return null;
+        }
+        if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
+            return teamGameService.playerTotal(game);
+        }
+        int players = game.getMaxPlayers() == null || game.getMaxPlayers() < 1 ? 1 : game.getMaxPlayers();
+        return cardPricing().gameShareSplit(game).playerAmount() * players;
     }
 
     /**

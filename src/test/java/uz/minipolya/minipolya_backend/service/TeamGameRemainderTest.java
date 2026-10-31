@@ -242,22 +242,34 @@ class TeamGameRemainderTest {
 
         assertThat(teams).hasSize(2);
         GameTeamResponse a = teams.stream().filter(t -> t.getSide() == Side.A).findFirst().orElseThrow();
-        assertThat(a.getFeeAmount()).isEqualTo(FEE);
-        assertThat(a.getAdvanceAmount()).isEqualTo(ADVANCE);
-        assertThat(a.getRemainderAmount()).isEqualTo(REMAINDER);
+        // One price for joining and one for the remainder, as players pay them.
+        assertThat(a.getPrice()).isEqualTo(TestPrices.card(FEE + ADVANCE));
+        assertThat(a.getRemainderAmount()).isEqualTo(TestPrices.card(REMAINDER));
         assertThat(a.getRemainderStatus()).isEqualTo("paid");
         assertThat(a.getTeamName()).isEqualTo("Team A");
-
-        // Joining cost fee + advance by card, grossed up; settled, nothing is left to pay.
-        assertThat(a.getPrice()).isEqualTo(TestPrices.card(FEE + ADVANCE));
-        assertThat(a.getCardFee()).isEqualTo(TestPrices.card(FEE + ADVANCE) - FEE - ADVANCE);
-        assertThat(a.getRemainderByCard()).isZero();
-        assertThat(a.getRemainderInCash()).isZero();
+        // No breakdown for players.
+        assertThat(a.getPlatformFee()).isNull();
+        assertThat(a.getOwnerAdvance()).isNull();
+        assertThat(a.getOwnerRemainder()).isNull();
+        assertThat(a.getOwnerReceives()).isNull();
+        assertThat(a.getAtmosFee()).isNull();
 
         GameTeamResponse b = teams.stream().filter(t -> t.getSide() == Side.B).findFirst().orElseThrow();
         assertThat(b.getRemainderStatus()).isEqualTo("unpaid");
-        // Still owed: as it is in cash, grossed up by card.
-        assertThat(b.getRemainderInCash()).isEqualTo(b.getRemainderAmount());
-        assertThat(b.getRemainderByCard()).isEqualTo(TestPrices.card(b.getRemainderAmount()));
+    }
+
+    @Test
+    void theAdminSeesEachTeamsBreakdown() {
+        when(paymentService.teamPayments(any())).thenReturn(List.of());
+
+        GameTeamResponse a = service.teamsForAdmin(game).stream()
+                .filter(t -> t.getSide() == Side.A).findFirst().orElseThrow();
+
+        assertThat(a.getPrice()).isEqualTo(TestPrices.card(FEE + ADVANCE));
+        assertThat(a.getPlatformFee()).isEqualTo(FEE);
+        assertThat(a.getOwnerAdvance()).isEqualTo(ADVANCE);
+        assertThat(a.getOwnerRemainder()).isEqualTo(REMAINDER);
+        assertThat(a.getOwnerReceives()).isZero();
+        assertThat(a.getAtmosFee()).isZero();
     }
 }

@@ -40,16 +40,17 @@ public class GameDetailResponse {
     private OffsetDateTime startsAt;
     private OffsetDateTime endsAt;
 
+    /**
+     * What the players pay for this game altogether: every share of a casual or open game,
+     * both teams' joining prices and remainders of a team game.
+     */
     private Long totalPrice;
-    private Long serviceFeePerPerson;
 
     /**
-     * A casual or open game: what one player's share costs by card (pitch share plus
-     * service fee, grossed up). Absent on a team game, whose teams[] carry their own.
+     * A casual or open game: what one player pays for their share. Absent on a team game,
+     * whose teams[] carry their own.
      */
     private Long price;
-    /** price − the share's net. */
-    private Long cardFee;
 
     private UUID teamAId;
     private String teamAName;

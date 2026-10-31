@@ -154,7 +154,10 @@ public class AdminStadiumService {
             response.setOwnerContractStatus(contracts.getOrDefault(
                     stadium.getOwner().getId(), OwnerLegalDetails.ContractStatus.NONE));
             if (stadium.getPricePerHour() != null) {
-                response.setPrice(pricing.playerAmount(stadium.getPricePerHour()));
+                long playerPrice = pricing.playerAmount(stadium.getPricePerHour());
+                response.setPlayerPrice(playerPrice);
+                response.setOwnerReceives(pricing.ownerReceives(playerPrice));
+                response.setAtmosFee(playerPrice - response.getOwnerReceives());
             }
             return response;
         }).toList();

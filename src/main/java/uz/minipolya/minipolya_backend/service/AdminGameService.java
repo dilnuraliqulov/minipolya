@@ -94,7 +94,7 @@ public class AdminGameService {
 
         AdminGameDetailResponse detail = AdminGameDetailResponse.builder().game(summary).build();
         if (TEAM_VS_TEAM.equals(game.getType())) {
-            detail.setTeams(teamGameService.teamsOf(game).stream()
+            detail.setTeams(teamGameService.teamsForAdmin(game).stream()
                     .map(team -> AdminGameTeamResponse.builder()
                             .team(team)
                             // A team that left took its players with it (marked cancelled).

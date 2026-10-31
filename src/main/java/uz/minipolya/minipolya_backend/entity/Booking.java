@@ -83,18 +83,28 @@ public class Booking {
     @Column(name = "duration_hours", nullable = false)
     private Integer durationHours;
 
-    /** The owner's net price in tiyin — what the owner set, never grossed up. */
+    /** The owner's own price in tiyin — what the owner set, never converted. */
     @Column(nullable = false)
     private Long price;
 
     /**
-     * What the player is quoted to pay by card for the whole booking, in tiyin: the sum
-     * of each hour's card price when it was booked. Null for manual and older bookings.
+     * The player price D for the whole booking, in tiyin: the sum of each hour's player
+     * price when it was booked. Null for manual bookings (the walk-in pays the owner's own
+     * price) and for older bookings.
      */
     @Column(name = "card_price")
     private Long cardPrice;
 
-    /** Running total of this booking's successful payments, in tiyin. */
+    /** How {@link #paidAmount} and the remainder are counted; see {@link PricingModel}. */
+    @Builder.Default
+    @Convert(converter = PricingModelConverter.class)
+    @Column(name = "pricing_model", nullable = false, length = 20)
+    private PricingModel pricingModel = PricingModel.PLAYER_PRICE;
+
+    /**
+     * Running total of this booking's successful payments, in tiyin: what the player paid
+     * (card and cash) under {@code player_price}, the owner's net under {@code net}.
+     */
     @Builder.Default
     @Column(name = "paid_amount", nullable = false)
     private Long paidAmount = 0L;
@@ -151,8 +161,54 @@ public class Booking {
      */
     public long getRemainingAmount() {
         long paid = paidAmount == null ? 0L : paidAmount;
-        long total = price == null ? 0L : price;
-        return Math.max(0L, total - paid);
+        return Math.max(0L, totalDue() - paid);
+    }
+
+    /**
+     * What the booking costs in the terms {@link #paidAmount} is counted in: the player
+     * price D (the owner's own price on a manual booking) under {@code player_price}, the
+     * owner's price under {@code net}.
+     */
+    public long totalDue() {
+        if (pricingModel == PricingModel.PLAYER_PRICE && cardPrice != null) {
+            return cardPrice;
+        }
+        return price == null ? 0L : price;
+    }
+
+    /** What a successful payment counts towards {@link #totalDue()}. */
+    public long creditOf(Payment payment) {
+        return pricingModel == PricingModel.PLAYER_PRICE
+                ? (payment.getAmount() == null ? 0L : payment.getAmount())
+                : payment.netAmount();
+    }
+
+    /**
+     * How a booking counts its money. {@code PLAYER_PRICE}: every booking made under the
+     * one-player-price rule — the remainder is {@code D - paid}, the same in the app and in
+     * cash. {@code NET}: bookings made before it, and game bookings (whose teams' debts live
+     * on {@code game_teams}) — the owner's terms, as they always were.
+     */
+    public enum PricingModel {
+        NET, PLAYER_PRICE;
+
+        @JsonValue
+        public String getValue() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+    }
+
+    @Converter
+    public static class PricingModelConverter implements AttributeConverter<PricingModel, String> {
+        @Override
+        public String convertToDatabaseColumn(PricingModel attribute) {
+            return attribute == null ? null : attribute.getValue();
+        }
+
+        @Override
+        public PricingModel convertToEntityAttribute(String dbData) {
+            return dbData == null ? null : PricingModel.valueOf(dbData.trim().toUpperCase(Locale.ROOT));
+        }
     }
 
     /** How much of the price has been paid. */

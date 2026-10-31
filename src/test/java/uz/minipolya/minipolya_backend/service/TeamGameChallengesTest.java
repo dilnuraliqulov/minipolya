@@ -126,20 +126,17 @@ class TeamGameChallengesTest {
         assertThat(card.getFormat()).isEqualTo("5x5");
         assertThat(card.getStartsAt()).isEqualTo(game.getStartsAt());
         assertThat(card.getDurationHours()).isEqualTo(1);
-        assertThat(card.getTotalPrice()).isEqualTo(PRICE);
+        // What both teams pay altogether, as players see it.
+        assertThat(card.getTotalPrice()).isEqualTo(2 * (TestPrices.card(FEE + ADVANCE) + TestPrices.card(REMAINDER)));
     }
 
     @Test
     void aChallengeShowsWhatTheJoiningTeamPaysNow() {
         GameChallengeResponse card = challenges(null, null, null).getContent().getFirst();
 
-        // 25 000 fee + 25 000 advance = 50 000 so'm, with 75 000 to come later.
-        assertThat(card.getFeeAmount()).isEqualTo(FEE);
-        assertThat(card.getAdvanceAmount()).isEqualTo(ADVANCE);
-        // ... paid by card, so grossed up by the card fee.
+        // 25 000 fee + 25 000 advance, as one player price; 75 000 to come later, likewise.
         assertThat(card.getAmountToPayNow()).isEqualTo(TestPrices.card(FEE + ADVANCE));
-        assertThat(card.getCardFee()).isEqualTo(TestPrices.card(FEE + ADVANCE) - FEE - ADVANCE);
-        assertThat(card.getRemainderAmount()).isEqualTo(REMAINDER);
+        assertThat(card.getRemainderAmount()).isEqualTo(TestPrices.card(REMAINDER));
     }
 
     /** Every argument findChallenges was called with, in order. */

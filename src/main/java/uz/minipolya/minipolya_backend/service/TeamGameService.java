@@ -45,6 +45,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -451,15 +452,24 @@ public class TeamGameService {
                 .map(this::toChallenge);
     }
 
-    /** The card fee with the settings in force now; a quote never asks the payment service. */
+    /** The player price with the settings in force now; a quote never asks the payment service. */
     private CardPricing cardPricing() {
         return new CardPricing(platformSettingsService::current);
     }
 
-    /** Each team's money, for the game response. */
+    /** Money that arrived and was not given back. */
+    private static final Set<Payment.Status> KEPT = Set.of(
+            Payment.Status.PAID, Payment.Status.CAPTURED, Payment.Status.COMPLETED);
+
+    /**
+     * Each team's money as players see it: what the team pays on joining ({@code price}),
+     * its remainder (the same in the app and in cash), what it paid in the app and what a
+     * cancellation now would give back. No fee, advance or other breakdown.
+     */
     @Transactional(readOnly = true)
     public List<GameTeamResponse> teamsOf(Game game) {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        CardPricing pricing = cardPricing().snapshot();
         return gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE).stream()
                 .map(team -> GameTeamResponse.builder()
                         .side(team.getSide())
@@ -467,22 +477,66 @@ public class TeamGameService {
                         .teamName(team.getTeam().getName())
                         .leaderId(team.getLeader().getId())
                         .leaderName(team.getLeader().getName())
-                        .feeAmount(team.getFeeAmount())
-                        .advanceAmount(team.getAdvanceAmount())
-                        .remainderAmount(team.getRemainderAmount())
+                        .price(pricing.teamJoinPrice(team.getAdvanceAmount(), team.getFeeAmount()))
+                        .remainderAmount(pricing.teamRemainderPrice(team.getRemainderAmount()))
                         .remainderStatus(team.getRemainderStatus().getValue())
-                        // What is on the card now, gross: holds and settled charges not given back.
+                        // What is on the card now: holds and settled charges not given back.
                         .paidInApp(paymentService.refundableTeamTotal(team.getId()))
-                        .price(cardPricing().joinSplit(team).playerAmount())
-                        .cardFee(cardPricing().joinSplit(team).cardFee())
-                        .remainderByCard(team.owesRemainder()
-                                ? cardPricing().playerAmount(team.getRemainderAmount()) : 0L)
-                        .remainderInCash(team.owesRemainder() ? team.getRemainderAmount() : 0L)
                         .cancellationDeadline(cancellationPolicy.deadline(
                                 game.getStartsAt(), game.getStadium().getCancellationHours()))
                         .refundIfCancelledNow(refundIfCancelledNow(game, team, now))
                         .build())
                 .toList();
+    }
+
+    /**
+     * Each team's money for the admin panel: the players' view plus the platform fee, the
+     * owner's advance and remainder in the owner's terms, what the owner receives of the
+     * team's payments and what ATMOS takes of them.
+     */
+    @Transactional(readOnly = true)
+    public List<GameTeamResponse> teamsForAdmin(Game game) {
+        CardPricing pricing = cardPricing().snapshot();
+        Map<Side, GameTeam> bySide = gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)
+                .stream().collect(java.util.stream.Collectors.toMap(GameTeam::getSide, t -> t, (a, b) -> a));
+        return teamsOf(game).stream().peek(response -> {
+            GameTeam team = bySide.get(response.getSide());
+            if (team == null) {
+                return;
+            }
+            List<Payment> kept = paymentService.teamPayments(team.getId()).stream()
+                    .filter(p -> KEPT.contains(p.getStatus()))
+                    .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                    .toList();
+            response.setPlatformFee(team.getFeeAmount());
+            response.setOwnerAdvance(team.getAdvanceAmount());
+            response.setOwnerRemainder(team.getRemainderAmount());
+            response.setOwnerReceives(kept.stream()
+                    .mapToLong(p -> p.getMethod() == Payment.Method.CASH
+                            ? p.getAmount()
+                            : pricing.ownerReceives(p.getOwnerAmount() == null ? 0L : p.getOwnerAmount()))
+                    .sum());
+            response.setAtmosFee(kept.stream()
+                    .filter(p -> p.getMethod() != Payment.Method.CASH)
+                    .mapToLong(pricing::atmosFee)
+                    .sum());
+        }).toList();
+    }
+
+    /**
+     * What both teams of this game pay for it altogether, as players see it: each side's
+     * joining price and remainder.
+     */
+    @Transactional(readOnly = true)
+    public long playerTotal(Game game) {
+        TeamGameSplit split = splitFor(game);
+        CardPricing pricing = cardPricing().snapshot();
+        long total = 0;
+        for (Side side : Side.values()) {
+            total += pricing.teamJoinPrice(split.advanceFor(side), split.fee())
+                    + pricing.teamRemainderPrice(split.remainderFor(side));
+        }
+        return total;
     }
 
     /** The last moment a new opponent can still arrive in time to play. */
@@ -528,6 +582,8 @@ public class TeamGameService {
                 .endsAt(game.getEndsAt())
                 .durationHours((int) Duration.between(game.getStartsAt(), game.getEndsAt()).toHours())
                 .price(game.getTotalPrice())
+                // The teams' debts live on game_teams; the booking keeps the owner's terms.
+                .pricingModel(Booking.PricingModel.NET)
                 .gameId(game.getId())
                 .build();
         try {
@@ -864,12 +920,9 @@ public class TeamGameService {
                 .startsAt(game.getStartsAt())
                 .endsAt(game.getEndsAt())
                 .durationHours((int) Duration.between(game.getStartsAt(), game.getEndsAt()).toHours())
-                .totalPrice(game.getTotalPrice())
-                .feeAmount(split.fee())
-                .advanceAmount(split.advanceFor(freeSide))
-                .amountToPayNow(cardPricing().playerAmount(split.joinAmountFor(freeSide)))
-                .cardFee(cardPricing().cardFee(split.joinAmountFor(freeSide)))
-                .remainderAmount(split.remainderFor(freeSide))
+                .totalPrice(playerTotal(game))
+                .amountToPayNow(cardPricing().teamJoinPrice(split.advanceFor(freeSide), split.fee()))
+                .remainderAmount(cardPricing().teamRemainderPrice(split.remainderFor(freeSide)))
                 .build();
     }
 

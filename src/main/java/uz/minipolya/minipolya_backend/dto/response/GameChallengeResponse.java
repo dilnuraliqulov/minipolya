@@ -39,21 +39,12 @@ public class GameChallengeResponse {
     private OffsetDateTime endsAt;
     private Integer durationHours;
 
-    /** The whole pitch price for the game. */
+    /** What both teams pay for this game altogether: each side's joining price and remainder. */
     private Long totalPrice;
 
-    /** The platform fee the joining team pays. */
-    private Long feeAmount;
-
-    /** The owner advance the joining team pays. */
-    private Long advanceAmount;
-
-    /** What the joining team's card is charged in the app: fee + advance. */
+    /** What the joining team pays in the app on joining. */
     private Long amountToPayNow;
 
-    /** amountToPayNow − (feeAmount + advanceAmount): what paying by card adds. */
-    private Long cardFee;
-
-    /** What the joining team would still owe afterwards. */
+    /** What the joining team would still owe afterwards — the same in the app or in cash. */
     private Long remainderAmount;
 }

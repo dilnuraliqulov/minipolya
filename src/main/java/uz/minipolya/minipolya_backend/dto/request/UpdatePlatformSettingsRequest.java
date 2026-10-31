@@ -18,9 +18,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class UpdatePlatformSettingsRequest {
 
-    /** Whole percent, 0..50. */
-    private Integer bookingCommissionPercent;
-
     /** Tiyin, not negative. */
     private Long teamGamePlatformFee;
 

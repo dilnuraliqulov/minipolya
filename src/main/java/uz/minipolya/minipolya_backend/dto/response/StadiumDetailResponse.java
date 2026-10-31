@@ -41,20 +41,24 @@ public class StadiumDetailResponse {
     private LocalTime openTime;
     private LocalTime closeTime;
     /**
-     * One hour at the stadium's default price. Public responses: what the player pays by
-     * card. Owner responses: the owner's net price, as they set it.
+     * Tiyin, one hour at the stadium's default price. Player responses: the one price the
+     * player pays. Owner and admin responses: the owner's own price, as they set it.
      */
     private Long pricePerHour;
 
-    /** One hour at the default price by card, in tiyin: the net price grossed up by the card fee and rounded. */
-    private Long price;
-    /** The owner's own net price. Owner and admin responses only. */
-    private Long netPrice;
-    /** price − netPrice. */
-    private Long cardFee;
-
-    /** Tiyin; null means the player must pay the whole price up front. */
+    /** Owner and admin responses only: what players see and pay for that hour. */
+    private Long playerPrice;
+    /** Admin responses only: what the owner receives of one hour paid by card, after ATMOS. */
+    private Long ownerReceives;
+    /** Admin responses only: what ATMOS takes of one hour paid by card. */
+    private Long atmosFee;
+    /**
+     * Tiyin; null means the player must pay the whole price up front. Player responses:
+     * the deposit as players pay it. Owner and admin responses: the owner's own minimum.
+     */
     private Long minBookingAmount;
+    /** Owner and admin responses only: the deposit as players see and pay it. */
+    private Long playerMinBookingAmount;
 
     private String status;
     /** Why the stadium is rejected or blocked — for its owner and admins; absent otherwise. */

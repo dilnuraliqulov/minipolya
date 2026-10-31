@@ -11,8 +11,9 @@ import java.time.OffsetDateTime;
 
 /**
  * A booking as the admin panel sees it: every {@link BookingResponse} field in the
- * owner's view (card {@code price}, {@code netPrice}, {@code cardFee}, ...) at the top
- * level, plus who booked it and how the money came in. Absent fields are omitted.
+ * admin view ({@code price} the player pays, {@code ownerPrice}, {@code paidInApp},
+ * {@code ownerReceives}, {@code atmosFee}, ...) at the top level, plus who booked it and
+ * the cash taken. Absent fields are omitted.
  */
 @Data
 @Builder
@@ -27,12 +28,6 @@ public class AdminBookingResponse {
     /** The booking user; absent on a walk-in, whose name is {@code clientName}. */
     private String userName;
     private String userPhone;
-
-    /**
-     * Tiyin: card money kept on this booking — gross, card fee included — from payments
-     * that arrived ({@code paid}, {@code captured}) and were not given back.
-     */
-    private Long paidInApp;
 
     /** Tiyin of cash the owner marked as received; absent when none. */
     private Long cashReceived;

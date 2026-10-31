@@ -6,7 +6,7 @@ import uz.minipolya.minipolya_backend.dto.response.AdminStadiumResponse;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 
 /**
- * A stadium as the admin list shows it. Ratings, counts, revenue, the card price and the
+ * A stadium as the admin list shows it. Ratings, counts, revenue, the player price and the
  * first photo come from other rows, which the list loads in bulk; {@code AdminStadiumService}
  * fills them in.
  */
@@ -16,7 +16,9 @@ public interface AdminStadiumMapper {
     @Mapping(source = "owner.name", target = "ownerName")
     @Mapping(source = "owner.id", target = "ownerId")
     @Mapping(target = "photoUrl", ignore = true)
-    @Mapping(target = "price", ignore = true)
+    @Mapping(target = "playerPrice", ignore = true)
+    @Mapping(target = "ownerReceives", ignore = true)
+    @Mapping(target = "atmosFee", ignore = true)
     @Mapping(target = "ownerContractStatus", ignore = true)
     @Mapping(target = "averageRating", ignore = true)
     @Mapping(target = "reviewCount", ignore = true)

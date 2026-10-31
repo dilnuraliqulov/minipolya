@@ -84,7 +84,7 @@ class BookingSeriesServiceTest {
 
         service = new BookingSeriesService(seriesRepository, stadiumRepository, userRepository, bookingRepository,
                 bookingPriceCalculator, seriesMapper, bookingService, notificationService,
-                auditService, new AppProperties(), closureService);
+                auditService, new AppProperties(), closureService, CardPricing.withDefaults());
 
         user = User.builder().id(USER_ID).name("Player").build();
         owner = User.builder().id(OWNER_ID).name("Owner").build();
@@ -128,7 +128,7 @@ class BookingSeriesServiceTest {
             s.setId(SERIES_ID);
             return s;
         });
-        when(bookingPriceCalculator.totalPrice(any(), any(), anyInt())).thenReturn(100_000L);
+        when(bookingPriceCalculator.slotPrices(any(), any(), anyInt())).thenReturn(java.util.List.of(100_000L));
         when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(false);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(seriesMapper.toResponse(any())).thenReturn(new BookingSeriesResponse());
@@ -198,7 +198,7 @@ class BookingSeriesServiceTest {
             s.setId(SERIES_ID);
             return s;
         });
-        when(bookingPriceCalculator.totalPrice(any(), any(), anyInt())).thenReturn(100_000L);
+        when(bookingPriceCalculator.slotPrices(any(), any(), anyInt())).thenReturn(java.util.List.of(100_000L));
         when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(true, false); // 1st taken, 2nd free
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(seriesMapper.toResponse(any())).thenReturn(new BookingSeriesResponse());
@@ -213,7 +213,7 @@ class BookingSeriesServiceTest {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(java.util.Optional.of(stadium));
         when(userRepository.findById(USER_ID)).thenReturn(java.util.Optional.of(user));
         when(seriesRepository.save(any(BookingSeries.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(bookingPriceCalculator.totalPrice(any(), any(), anyInt())).thenReturn(123_456L);
+        when(bookingPriceCalculator.slotPrices(any(), any(), anyInt())).thenReturn(java.util.List.of(123_456L));
         when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(false);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(seriesMapper.toResponse(any())).thenReturn(new BookingSeriesResponse());
@@ -258,7 +258,7 @@ class BookingSeriesServiceTest {
     void generateUpcomingCreatesBookingForMissingWeek() {
         when(seriesRepository.findByIsActiveTrue()).thenReturn(List.of(series()));
         when(bookingRepository.findByBookingSeriesId(SERIES_ID)).thenReturn(List.of()); // nothing generated yet
-        when(bookingPriceCalculator.totalPrice(any(), any(), anyInt())).thenReturn(100_000L);
+        when(bookingPriceCalculator.slotPrices(any(), any(), anyInt())).thenReturn(java.util.List.of(100_000L));
         when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(false);
         when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
 

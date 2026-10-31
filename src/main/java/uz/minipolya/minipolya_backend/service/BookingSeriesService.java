@@ -64,6 +64,7 @@ public class BookingSeriesService {
     private final AuditService auditService;
     private final AppProperties appProperties;
     private final StadiumClosureService closureService;
+    private final CardPricing cardPricing;
 
     @Transactional
     public BookingSeriesResponse createSeries(CreateBookingSeriesRequest request, UUID userId) {
@@ -196,6 +197,8 @@ public class BookingSeriesService {
         }
 
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        // CURRENT pricing: the owner's price, and the player price as the sum of the slots'.
+        List<Long> slotPrices = bookingPriceCalculator.slotPrices(stadium, startsAt, duration);
         Booking booking = Booking.builder()
                 .stadium(stadium)
                 .user(series.getUser())
@@ -204,7 +207,8 @@ public class BookingSeriesService {
                 .startsAt(startsAt)
                 .endsAt(endsAt)
                 .durationHours(duration)
-                .price(bookingPriceCalculator.totalPrice(stadium, startsAt, duration)) // CURRENT pricing
+                .price(slotPrices.stream().mapToLong(Long::longValue).sum())
+                .cardPrice(slotPrices.stream().mapToLong(cardPricing::playerAmount).sum())
                 .bookingSeriesId(series.getId())
                 .expiresAt(now.plusMinutes(appProperties.getBooking().getHoldExpiryMinutes()))
                 .build();

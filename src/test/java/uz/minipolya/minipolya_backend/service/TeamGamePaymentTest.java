@@ -109,12 +109,13 @@ class TeamGamePaymentTest {
         ArgumentCaptor<HoldRequest> request = ArgumentCaptor.forClass(HoldRequest.class);
         verify(paymentProvider).hold(request.capture());
         HoldRequest hold = request.getValue();
-        // fee + advance, grossed up: the owner's split nets the advance after the card fee,
-        // the platform's split the fee (plus the rounding remainder).
+        // fee + advance as one player price: the platform's split is its fee grossed up, so it
+        // nets exactly the fee after ATMOS; everything else, rounding included, is the owner's.
         assertThat(hold.total()).isEqualTo(TestPrices.card(FEE + ADVANCE));
         assertThat(hold.splits()).containsExactly(
-                Split.owner("rcp-owner", PriceCalculator.grossUp(ADVANCE, 150)),
-                Split.platform(TestPrices.card(FEE + ADVANCE) - PriceCalculator.grossUp(ADVANCE, 150)));
+                Split.owner("rcp-owner", TestPrices.card(FEE + ADVANCE) - PriceCalculator.grossUp(FEE, 150)),
+                Split.platform(PriceCalculator.grossUp(FEE, 150)));
+        assertThat(PriceCalculator.netAfterFee(PriceCalculator.grossUp(FEE, 150), 150)).isEqualTo(FEE);
         assertThat(hold.cardToken()).isEqualTo("tok-a");
         assertThat(hold.durationMinutes()).isEqualTo(MINUTES);
         // Our payment id is the provider's account, so a retry can never hold twice.
@@ -176,9 +177,10 @@ class TeamGamePaymentTest {
         verify(paymentProvider).charge(request.capture());
         assertThat(request.getValue().total()).isEqualTo(TestPrices.card(FEE + ADVANCE));
         assertThat(request.getValue().splits().getFirst())
-                .isEqualTo(Split.owner("rcp-owner", PriceCalculator.grossUp(ADVANCE, 150)));
+                .isEqualTo(Split.owner("rcp-owner", TestPrices.card(FEE + ADVANCE) - PriceCalculator.grossUp(FEE, 150)));
         assertThat(request.getValue().account()).isEqualTo(payment.getId().toString());
-        assertThat(payment.getCardFeeExpected()).isEqualTo(TestPrices.card(FEE + ADVANCE) - FEE - ADVANCE);
+        assertThat(payment.getCardFeeExpected()).isEqualTo(uz.minipolya.minipolya_backend.util.CardFeeSplit
+                .withPlatformFee(TestPrices.card(FEE + ADVANCE), FEE, 150).atmosFee());
         assertThat(payment.getStatus()).isEqualTo(Payment.Status.PAID);
         assertThat(payment.getProviderSuccessTxnIds()).isEqualTo("succ-txn-" + payment.getId());
     }
@@ -189,12 +191,11 @@ class TeamGamePaymentTest {
 
         ArgumentCaptor<ChargeRequest> request = ArgumentCaptor.forClass(ChargeRequest.class);
         verify(paymentProvider).charge(request.capture());
-        // The remainder grossed up, all of it the owner's: no platform fee again — the
-        // platform's split is only what the rounding step added.
+        // The remainder as players pay it, all of it the owner's: no platform split at all.
         assertThat(request.getValue().total()).isEqualTo(TestPrices.card(7_500_000L));
-        assertThat(request.getValue().splits().getFirst())
-                .isEqualTo(Split.owner("rcp-owner", PriceCalculator.grossUp(7_500_000L, 150)));
-        assertThat(payment.getPlatformAmount()).isLessThan(10_000L);
+        assertThat(request.getValue().splits())
+                .containsExactly(Split.owner("rcp-owner", TestPrices.card(7_500_000L)));
+        assertThat(payment.getPlatformAmount()).isZero();
         assertThat(payment.getPaymentType()).isEqualTo(Payment.PaymentType.REMAINDER);
     }
 

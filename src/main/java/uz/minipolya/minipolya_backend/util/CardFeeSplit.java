@@ -1,59 +1,67 @@
 package uz.minipolya.minipolya_backend.util;
 
 /**
- * How one card payment divides between the stadium owner and the platform once the
- * card fee is included. Every figure is tiyin.
+ * How one card payment divides between the stadium owner and the platform. Every figure
+ * is tiyin.
  *
  * <ul>
- *   <li>{@code ownerGross = ceil(ownerNet * 10000 / (10000 - bps))} — after the provider
- *       takes its fee from the owner's split, the owner gets exactly {@code ownerNet};</li>
- *   <li>{@code platformGross = playerAmount - ownerGross} — the platform's own net share
- *       grossed up, plus whatever the rounding step added.</li>
+ *   <li>An <b>ordinary booking</b> (and a friends game without a service fee): the platform
+ *       takes nothing — the whole payment is the owner's split ({@link #toOwner}). ATMOS
+ *       takes its fee from it; the rounding remainder is the owner's.</li>
+ *   <li>A <b>team game</b> (and a friends game with a service fee): the platform's split is
+ *       its fixed fee grossed up, {@code ceil(fee * 10000 / (10000 - bps))}, so after ATMOS
+ *       the platform nets exactly that fee; everything else, rounding included, is the
+ *       owner's ({@link #withPlatformFee}).</li>
  * </ul>
  *
- * {@code playerAmount == ownerGross + platformGross} always holds, and {@code cardFee}
- * ({@code playerAmount - net}) is what the card fee and the rounding cost the player.
+ * {@code ownerAmount + platformAmount == playerAmount} always, and neither is negative.
  *
- * @param net           what the payment is worth to its recipients: ownerNet + platformNet
- * @param ownerNet      what the owner must end up with
- * @param platformNet   what the platform must end up with (commission, team fee, service fee)
- * @param playerAmount  what the card is charged
- * @param ownerGross    the owner's split of the charge
- * @param platformGross the platform's split of the charge
- * @param cardFee       playerAmount − net: the fee plus the rounding remainder
+ * @param playerAmount   what the card is charged
+ * @param ownerAmount    the owner's split
+ * @param platformAmount the platform's split
+ * @param atmosFee       what ATMOS is expected to take: its rate on each split
  */
-public record CardFeeSplit(long net,
-                           long ownerNet,
-                           long platformNet,
-                           long playerAmount,
-                           long ownerGross,
-                           long platformGross,
-                           long cardFee) {
+public record CardFeeSplit(long playerAmount, long ownerAmount, long platformAmount, long atmosFee) {
 
     public CardFeeSplit {
-        if (ownerGross + platformGross != playerAmount) {
-            throw new IllegalStateException("split does not add up: " + ownerGross + " + " + platformGross
+        if (ownerAmount < 0 || platformAmount < 0) {
+            throw new IllegalStateException("a split is negative: owner " + ownerAmount
+                    + ", platform " + platformAmount);
+        }
+        if (ownerAmount + platformAmount != playerAmount) {
+            throw new IllegalStateException("split does not add up: " + ownerAmount + " + " + platformAmount
                     + " != " + playerAmount);
         }
-        if (platformGross < 0) {
-            throw new IllegalStateException("the owner's grossed-up share exceeds what the player pays");
-        }
+    }
+
+    /** The whole payment to the owner: an ordinary booking, a remainder, a fee-free friends game. */
+    public static CardFeeSplit toOwner(long playerAmount, int cardFeeBps) {
+        return new CardFeeSplit(playerAmount, playerAmount, 0,
+                playerAmount - PriceCalculator.netAfterFee(playerAmount, cardFeeBps));
     }
 
     /**
-     * The split of an already-known player amount — for an ordinary booking paid in full,
-     * that amount is the sum of each slot's {@code playerAmount}, not one rounding of the total.
+     * The platform's fixed fee grossed up to its split, the rest to the owner. A fee of 0
+     * is {@link #toOwner}.
      */
-    public static CardFeeSplit of(long playerAmount, long ownerNet, long platformNet, int cardFeeBps) {
-        long ownerGross = PriceCalculator.grossUp(ownerNet, cardFeeBps);
-        long net = ownerNet + platformNet;
-        return new CardFeeSplit(net, ownerNet, platformNet, playerAmount, ownerGross,
-                playerAmount - ownerGross, playerAmount - net);
+    public static CardFeeSplit withPlatformFee(long playerAmount, long platformFee, int cardFeeBps) {
+        if (platformFee <= 0) {
+            return toOwner(playerAmount, cardFeeBps);
+        }
+        long platform = PriceCalculator.grossUp(platformFee, cardFeeBps);
+        long owner = playerAmount - platform;
+        long fee = playerAmount - PriceCalculator.netAfterFee(owner, cardFeeBps)
+                - PriceCalculator.netAfterFee(platform, cardFeeBps);
+        return new CardFeeSplit(playerAmount, owner, platform, fee);
     }
 
-    /** The split of a single net amount, charged as {@code playerAmount(ownerNet + platformNet)}. */
-    public static CardFeeSplit forNet(long ownerNet, long platformNet, int cardFeeBps, long roundingStep) {
-        long playerAmount = PriceCalculator.playerAmount(ownerNet + platformNet, cardFeeBps, roundingStep);
-        return of(playerAmount, ownerNet, platformNet, cardFeeBps);
+    /** What the owner keeps of this payment once ATMOS has taken its fee. */
+    public long ownerReceives(int cardFeeBps) {
+        return PriceCalculator.netAfterFee(ownerAmount, cardFeeBps);
+    }
+
+    /** What the platform keeps of this payment once ATMOS has taken its fee. */
+    public long platformReceives(int cardFeeBps) {
+        return PriceCalculator.netAfterFee(platformAmount, cardFeeBps);
     }
 }

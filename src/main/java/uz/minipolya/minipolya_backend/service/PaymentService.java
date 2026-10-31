@@ -137,8 +137,8 @@ public class PaymentService {
      * answer leaves the row {@code processing} for the reconcile job — never assumed
      * failed, never charged again.
      *
-     * @param charge what the card is charged and how it splits — the stadium minimum or
-     *               the full price, grossed up by the card fee
+     * @param charge what the card is charged — the deposit, the player price D or the
+     *               remainder — all of it the owner's: the platform takes nothing from a booking
      */
     @Transactional
     public Payment chargeForBooking(Booking booking, SavedCard card, CardFeeSplit charge) {
@@ -148,15 +148,14 @@ public class PaymentService {
     /** As {@link #chargeForBooking(Booking, SavedCard, CardFeeSplit)}, for a chosen payment type. */
     @Transactional
     public Payment chargeForBooking(Booking booking, SavedCard card, CardFeeSplit charge, Payment.PaymentType type) {
-        int commissionPercent = platformSettingsService.current().getBookingCommissionPercent();
         Payment row = Payment.builder()
                 .booking(booking)
                 .user(booking.getUser())
                 .amount(charge.playerAmount())
-                .ownerAmount(charge.ownerGross())
-                .platformAmount(charge.platformGross())
-                .cardFeeExpected(charge.cardFee())
-                .commissionPercent(commissionPercent)
+                .ownerAmount(charge.ownerAmount())
+                .platformAmount(charge.platformAmount())
+                .cardFeeExpected(charge.atmosFee())
+                .commissionPercent(0)
                 .method(Payment.Method.CARD)
                 .paymentType(type)
                 .provider(Payment.Provider.ATMOS)
@@ -218,7 +217,7 @@ public class PaymentService {
     @Transactional
     public Payment chargeForTeamGame(GameTeam gameTeam, SavedCard card, Payment.PaymentType type) {
         CardFeeSplit split = type == Payment.PaymentType.REMAINDER
-                ? cardPricing.split(gameTeam.getRemainderAmount(), 0L)
+                ? cardPricing.teamRemainderSplit(gameTeam)
                 : joinSplit(gameTeam);
 
         Payment payment = chargeCard(teamGameRow(gameTeam, split, type), card, split, ownerOf(gameTeam));
@@ -229,14 +228,14 @@ public class PaymentService {
         return payment;
     }
 
-    /** What the player pays by card for this net amount (no split): a quote. */
+    /** What players pay for this owner price: a quote. */
     public long cardPrice(long net) {
         return cardPricing.playerAmount(net);
     }
 
     /**
-     * What a team's card is charged (or held) on joining: {@code playerAmount(advance + fee)},
-     * split so the owner nets the advance and the platform nets its fee after the card fee.
+     * What a team's card is charged (or held) on joining: {@code playerAmount(advance + fee)};
+     * the platform's split nets exactly the fee after ATMOS, the rest is the owner's.
      */
     public CardFeeSplit joinSplit(GameTeam gameTeam) {
         return cardPricing.joinSplit(gameTeam);
@@ -289,13 +288,14 @@ public class PaymentService {
     }
 
     /**
-     * The owner took one team's remainder in cash. Cash never passes through
-     * the provider, so it carries no commission and is never refunded through
-     * the platform — the owner settles that directly.
+     * The owner took one team's remainder in cash: the same amount the team would pay
+     * in the app, {@code playerAmount(remainder)}, all of it the owner's. Cash never
+     * passes through the provider and is never refunded through the platform — the
+     * owner settles that directly.
      */
     @Transactional
     public Payment recordCashTeamRemainder(GameTeam gameTeam, User owner) {
-        long amount = gameTeam.getRemainderAmount();
+        long amount = cardPricing.teamRemainderPrice(gameTeam.getRemainderAmount());
         Payment payment = paymentRepository.save(Payment.builder()
                 .game(gameTeam.getGame())
                 .gameTeam(gameTeam)
@@ -470,9 +470,9 @@ public class PaymentService {
                 .gameTeam(gameTeam)
                 .user(gameTeam.getLeader())
                 .amount(split.playerAmount())
-                .ownerAmount(split.ownerGross())
-                .platformAmount(split.platformGross())
-                .cardFeeExpected(split.cardFee())
+                .ownerAmount(split.ownerAmount())
+                .platformAmount(split.platformAmount())
+                .cardFeeExpected(split.atmosFee())
                 .commissionPercent(0)
                 .method(Payment.Method.CARD)
                 .paymentType(type)
@@ -587,11 +587,11 @@ public class PaymentService {
      */
     private List<Split> splitsFor(User owner, CardFeeSplit split) {
         List<Split> splits = new ArrayList<>(2);
-        if (split.ownerGross() > 0) {
-            splits.add(Split.owner(recipientIdOf(owner), split.ownerGross()));
+        if (split.ownerAmount() > 0) {
+            splits.add(Split.owner(recipientIdOf(owner), split.ownerAmount()));
         }
-        if (split.platformGross() > 0) {
-            splits.add(Split.platform(split.platformGross()));
+        if (split.platformAmount() > 0) {
+            splits.add(Split.platform(split.platformAmount()));
         }
         return splits;
     }
@@ -629,13 +629,15 @@ public class PaymentService {
             return refundBecauseSlotIsGone(booking, payment);
         }
 
-        // The booking counts what the payment is worth to the owner, not what the card fee added.
+        // Under the player price the booking counts what the player paid, against D; an
+        // older booking counts what the payment is worth to the owner, against their price.
+        long credit = booking.creditOf(payment);
         long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
-        long paid = paidBefore + payment.netAmount();
+        long paid = paidBefore + credit;
         String previousStatus = booking.getStatus();
         Booking.PaymentStatus paymentStatusBefore = booking.getPaymentStatus();
         booking.setPaidAmount(paid);
-        booking.setPaymentStatus(paid >= booking.getPrice()
+        booking.setPaymentStatus(paid >= booking.totalDue()
                 ? Booking.PaymentStatus.PAID
                 : Booking.PaymentStatus.PARTIALLY_PAID);
         // A remainder can arrive after the game was played: paying it must not
@@ -650,7 +652,7 @@ public class PaymentService {
         } catch (DataIntegrityViolationException ex) {
             // Someone took the slot between the check above and this write.
             booking.setStatus(previousStatus);
-            booking.setPaidAmount(paid - payment.netAmount());
+            booking.setPaidAmount(paid - credit);
             booking.setPaymentStatus(booking.getPaidAmount() > 0
                     ? Booking.PaymentStatus.PARTIALLY_PAID
                     : Booking.PaymentStatus.UNPAID);
@@ -857,9 +859,9 @@ public class PaymentService {
                 .game(game)
                 .user(participant.getUser())
                 .amount(share.playerAmount())
-                .ownerAmount(share.ownerGross())
-                .platformAmount(share.platformGross())
-                .cardFeeExpected(share.cardFee())
+                .ownerAmount(share.ownerAmount())
+                .platformAmount(share.platformAmount())
+                .cardFeeExpected(share.atmosFee())
                 .commissionPercent(0)
                 .method(Payment.Method.CARD)
                 .paymentType(Payment.PaymentType.GAME_SHARE)
@@ -896,9 +898,9 @@ public class PaymentService {
                 .game(game)
                 .user(participant.getUser())
                 .amount(share.playerAmount())
-                .ownerAmount(share.ownerGross())
-                .platformAmount(share.platformGross())
-                .cardFeeExpected(share.cardFee())
+                .ownerAmount(share.ownerAmount())
+                .platformAmount(share.platformAmount())
+                .cardFeeExpected(share.atmosFee())
                 .commissionPercent(0)
                 .method(Payment.Method.CARD)
                 .paymentType(Payment.PaymentType.GAME_SHARE)
@@ -963,6 +965,12 @@ public class PaymentService {
                 .created("amount", payment.getAmount())
                 .created("method", payment.getMethod())
                 .created("provider", payment.getProvider()));
+    }
+
+    /** Every payment and refund row of one booking. */
+    @Transactional(readOnly = true)
+    public List<Payment> paymentsOf(UUID bookingId) {
+        return paymentRepository.findByBookingId(bookingId);
     }
 
     @Transactional(readOnly = true)
@@ -1031,7 +1039,8 @@ public class PaymentService {
 
         // Cash never passes through the provider, so it carries no commission:
         // the owner has the money in hand already.
-        long amount = booking.getRemainingAmount() > 0 ? booking.getRemainingAmount() : booking.getPrice();
+        // The same remainder the player would pay in the app: D minus what was paid.
+        long amount = booking.getRemainingAmount() > 0 ? booking.getRemainingAmount() : booking.totalDue();
         Payment payment = Payment.builder()
                 .booking(booking)
                 .user(owner)

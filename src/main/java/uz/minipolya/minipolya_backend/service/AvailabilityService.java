@@ -129,11 +129,10 @@ public class AvailabilityService {
         if (available) {
             long base = priceCalculator.calculateTotalPrice(rules, date, slotStart, 1, stadium.getPricePerHour());
             Optional<Promotion> promo = promotionService.getBestPromotion(stadium.getId(), slotStartUtc);
-            // The same net per hour a booking is priced from, shown at its card price, so the
-            // slots a player picks add up to exactly what the booking charges.
+            // The same owner price per hour a booking is priced from, shown as the player
+            // price, so the slots a player picks add up to exactly what the booking charges.
             long net = promo.map(p -> BookingPriceCalculator.applyDiscount(base, p.getDiscountPercent())).orElse(base);
-            long card = cardPricing.playerAmount(net);
-            slot.pricePerHour(card).price(card).cardFee(card - net);
+            slot.pricePerHour(cardPricing.playerAmount(net));
             if (promo.isPresent()) {
                 slot.originalPrice(cardPricing.playerAmount(base))
                         .discountPercent(promo.get().getDiscountPercent())

@@ -101,7 +101,7 @@ class BookingConfirmationTest {
     private Booking booking(String status) {
         return Booking.builder()
                 .id(BOOKING_ID).stadium(stadium).user(player).status(status)
-                .price(PRICE).paidAmount(0L).paymentStatus(Booking.PaymentStatus.UNPAID)
+                .price(PRICE).cardPrice(PRICE).paidAmount(0L).paymentStatus(Booking.PaymentStatus.UNPAID)
                 .startsAt(OffsetDateTime.now(ZoneOffset.UTC).plusDays(2))
                 .endsAt(OffsetDateTime.now(ZoneOffset.UTC).plusDays(2).plusHours(2))
                 .expiresAt(OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(1))
@@ -119,7 +119,7 @@ class BookingConfirmationTest {
         providerCharges();
         Booking pending = booking("pending");
 
-        service.chargeForBooking(pending, card, TestPrices.net(PRICE));
+        service.chargeForBooking(pending, card, TestPrices.charge(PRICE));
 
         assertThat(pending.getStatus()).isEqualTo("confirmed");
         assertThat(pending.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);
@@ -132,7 +132,7 @@ class BookingConfirmationTest {
         providerCharges();
         Booking pending = booking("pending");
 
-        service.chargeForBooking(pending, card, TestPrices.net(MINIMUM));
+        service.chargeForBooking(pending, card, TestPrices.charge(MINIMUM));
 
         assertThat(pending.getStatus()).isEqualTo("confirmed");
         assertThat(pending.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PARTIALLY_PAID);
@@ -141,31 +141,43 @@ class BookingConfirmationTest {
     }
 
     @Test
-    void theOwnerPlatformSplitComesFromTheCommissionAtPaymentTime() {
+    void aBookingPaymentIsAllTheOwnersAndThePlatformTakesNothing() {
         providerCharges();
-        when(platformSettingsService.current())
-                .thenReturn(PlatformSettings.builder().bookingCommissionPercent(10).build());
 
-        CardFeeSplit charge = new CardPricing(() -> PlatformSettings.builder().bookingCommissionPercent(10).build())
-                .bookingSplit(PRICE);
+        Payment payment = service.chargeForBooking(booking("pending"), card, TestPrices.charge(PRICE));
 
-        Payment payment = service.chargeForBooking(booking("pending"), card, charge);
+        assertThat(payment.getAmount()).isEqualTo(PRICE);
+        assertThat(payment.getOwnerAmount()).isEqualTo(PRICE);
+        assertThat(payment.getPlatformAmount()).isZero();
+        assertThat(payment.getCommissionPercent()).isZero();
+        // What ATMOS is expected to take: 1.5% of the owner's split.
+        assertThat(payment.getCardFeeExpected()).isEqualTo(PRICE - PriceCalculator.netAfterFee(PRICE, 150));
+    }
 
-        // The card is charged the grossed-up price; the owner's split is grossed up so that
-        // after the card fee they net exactly the price less the commission.
-        assertThat(payment.getAmount()).isEqualTo(TestPrices.card(PRICE));
-        assertThat(payment.getOwnerAmount()).isEqualTo(PriceCalculator.grossUp(PRICE - PRICE / 10, 150));
-        assertThat(payment.getPlatformAmount()).isEqualTo(payment.getAmount() - payment.getOwnerAmount());
-        assertThat(payment.getCardFeeExpected()).isEqualTo(TestPrices.card(PRICE) - PRICE);
-        assertThat(payment.getCommissionPercent()).isEqualTo(10);
-        assertThat(payment.getOwnerAmount() + payment.getPlatformAmount()).isEqualTo(payment.getAmount());
+    @Test
+    void aBookingFromBeforeTheRuleKeepsCountingInTheOwnersTerms() {
+        providerCharges();
+        Booking legacy = booking("confirmed");
+        legacy.setPricingModel(Booking.PricingModel.NET);
+        legacy.setCardPrice(null);
+        legacy.setPaidAmount(MINIMUM);
+        legacy.setPaymentStatus(Booking.PaymentStatus.PARTIALLY_PAID);
+        long rest = PRICE - MINIMUM;
+        long byCard = TestPrices.card(rest);
+
+        // Its remainder charge records what it covers of the owner's price.
+        service.chargeForBooking(legacy, card, new CardFeeSplit(byCard, byCard, 0, byCard - rest),
+                Payment.PaymentType.REMAINDER);
+
+        assertThat(legacy.getPaidAmount()).isEqualTo(PRICE);
+        assertThat(legacy.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);
     }
 
     @Test
     void aPaymentRecordsItsMethodTypeAndProviderTransaction() {
         providerCharges();
 
-        Payment payment = service.chargeForBooking(booking("pending"), card, TestPrices.net(PRICE));
+        Payment payment = service.chargeForBooking(booking("pending"), card, TestPrices.charge(PRICE));
 
         assertThat(payment.getMethod()).isEqualTo(Payment.Method.CARD);
         assertThat(payment.getPaymentType()).isEqualTo(Payment.PaymentType.BOOKING);
@@ -183,7 +195,7 @@ class BookingConfirmationTest {
         ProviderStubs.declineCharges(paymentProvider);
         Booking pending = booking("pending");
 
-        Payment payment = service.chargeForBooking(pending, card, TestPrices.net(PRICE));
+        Payment payment = service.chargeForBooking(pending, card, TestPrices.charge(PRICE));
 
         assertThat(payment.getStatus()).isEqualTo(Payment.Status.FAILED);
         assertThat(pending.getStatus()).isEqualTo("pending");
@@ -200,7 +212,7 @@ class BookingConfirmationTest {
         when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(false);
         Booking expired = booking("expired");
 
-        service.chargeForBooking(expired, card, TestPrices.net(PRICE));
+        service.chargeForBooking(expired, card, TestPrices.charge(PRICE));
 
         assertThat(expired.getStatus()).isEqualTo("confirmed");
         assertThat(expired.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);
@@ -213,7 +225,7 @@ class BookingConfirmationTest {
         when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(true);
         Booking expired = booking("expired");
 
-        service.chargeForBooking(expired, card, TestPrices.net(PRICE));
+        service.chargeForBooking(expired, card, TestPrices.charge(PRICE));
 
         verify(paymentProvider).reverse(org.mockito.ArgumentMatchers.startsWith("succ-txn-"), any());
         assertThat(expired.getStatus()).isEqualTo("expired");
@@ -226,7 +238,7 @@ class BookingConfirmationTest {
         providerCharges();
         when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(true);
 
-        service.chargeForBooking(booking("expired"), card, TestPrices.net(PRICE));
+        service.chargeForBooking(booking("expired"), card, TestPrices.charge(PRICE));
 
         ArgumentCaptor<Payment> captor = ArgumentCaptor.forClass(Payment.class);
         verify(paymentRepository, org.mockito.Mockito.atLeast(2)).save(captor.capture());
@@ -249,7 +261,7 @@ class BookingConfirmationTest {
         when(bookingRepository.saveAndFlush(any(Booking.class)))
                 .thenThrow(new DataIntegrityViolationException("bookings_no_overlap"));
 
-        Payment payment = service.chargeForBooking(booking("expired"), card, TestPrices.net(PRICE));
+        Payment payment = service.chargeForBooking(booking("expired"), card, TestPrices.charge(PRICE));
 
         assertThat(payment.getStatus()).isEqualTo(Payment.Status.REFUNDED);
         verify(paymentProvider).reverse(org.mockito.ArgumentMatchers.startsWith("succ-txn-"), any());
@@ -264,7 +276,7 @@ class BookingConfirmationTest {
         played.setPaidAmount(MINIMUM);
         played.setPaymentStatus(Booking.PaymentStatus.PARTIALLY_PAID);
 
-        service.chargeForBooking(played, card, TestPrices.net(PRICE - MINIMUM), Payment.PaymentType.REMAINDER);
+        service.chargeForBooking(played, card, TestPrices.charge(PRICE - MINIMUM), Payment.PaymentType.REMAINDER);
 
         assertThat(played.getStatus()).isEqualTo("completed");
         assertThat(played.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);
@@ -278,7 +290,7 @@ class BookingConfirmationTest {
         confirmed.setPaidAmount(MINIMUM);
         confirmed.setPaymentStatus(Booking.PaymentStatus.PARTIALLY_PAID);
 
-        service.chargeForBooking(confirmed, card, TestPrices.net(PRICE - MINIMUM), Payment.PaymentType.REMAINDER);
+        service.chargeForBooking(confirmed, card, TestPrices.charge(PRICE - MINIMUM), Payment.PaymentType.REMAINDER);
 
         assertThat(confirmed.getStatus()).isEqualTo("confirmed");
         assertThat(confirmed.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.PAID);

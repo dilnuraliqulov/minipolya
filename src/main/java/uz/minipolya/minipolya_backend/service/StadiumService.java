@@ -159,25 +159,28 @@ public class StadiumService {
 
     /**
      * What an admin reviews: the same mapping as the public detail, but for a stadium in
-     * any status, and with prices as the owner sees them — {@code pricePerHour} and
-     * {@code netPrice} net, {@code price} what a player pays by card.
+     * any status, and with prices as the owner sees them — {@code pricePerHour} the owner's
+     * own price, {@code playerPrice} what players pay — plus what the owner receives of an
+     * hour paid by card and what ATMOS takes of it.
      */
     @Transactional(readOnly = true)
     public StadiumDetailResponse getAdminDetail(UUID id) {
         Stadium stadium = stadiumRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
-        return ownerPrices(stadiumMapper.toDetailResponse(stadium));
+        StadiumDetailResponse r = ownerPrices(stadiumMapper.toDetailResponse(stadium));
+        if (r.getPlayerPrice() != null) {
+            r.setOwnerReceives(cardPricing.ownerReceives(r.getPlayerPrice()));
+            r.setAtmosFee(r.getPlayerPrice() - r.getOwnerReceives());
+        }
+        return r;
     }
 
     // ---- Helpers ----
 
-    /** Players see what they pay by card: the hourly price and the deposit both grossed up. */
+    /** Players see one price: the hour and the deposit as they pay them. */
     private StadiumDetailResponse publicPrices(StadiumDetailResponse r) {
         if (r != null && r.getPricePerHour() != null) {
-            CardPricing.Quote q = cardPricing.quote(r.getPricePerHour());
-            r.setPricePerHour(q.price());
-            r.setPrice(q.price());
-            r.setCardFee(q.cardFee());
+            r.setPricePerHour(cardPricing.playerAmount(r.getPricePerHour()));
         }
         if (r != null && r.getMinBookingAmount() != null) {
             r.setMinBookingAmount(cardPricing.playerAmount(r.getMinBookingAmount()));
@@ -187,31 +190,25 @@ public class StadiumService {
 
     private StadiumResponse publicPrices(StadiumResponse r) {
         if (r != null && r.getPricePerHour() != null) {
-            CardPricing.Quote q = cardPricing.quote(r.getPricePerHour());
-            r.setPricePerHour(q.price());
-            r.setPrice(q.price());
-            r.setCardFee(q.cardFee());
+            r.setPricePerHour(cardPricing.playerAmount(r.getPricePerHour()));
         }
         return r;
     }
 
-    /** The owner keeps seeing and editing their net price; the card price is alongside. */
+    /** The owner keeps seeing and editing their own price; the player price is alongside. */
     private StadiumDetailResponse ownerPrices(StadiumDetailResponse r) {
         if (r != null && r.getPricePerHour() != null) {
-            CardPricing.Quote q = cardPricing.quote(r.getPricePerHour());
-            r.setPrice(q.price());
-            r.setNetPrice(q.netPrice());
-            r.setCardFee(q.cardFee());
+            r.setPlayerPrice(cardPricing.playerAmount(r.getPricePerHour()));
+        }
+        if (r != null && r.getMinBookingAmount() != null) {
+            r.setPlayerMinBookingAmount(cardPricing.playerAmount(r.getMinBookingAmount()));
         }
         return r;
     }
 
     private StadiumResponse ownerPrices(StadiumResponse r) {
         if (r != null && r.getPricePerHour() != null) {
-            CardPricing.Quote q = cardPricing.quote(r.getPricePerHour());
-            r.setPrice(q.price());
-            r.setNetPrice(q.netPrice());
-            r.setCardFee(q.cardFee());
+            r.setPlayerPrice(cardPricing.playerAmount(r.getPricePerHour()));
         }
         return r;
     }

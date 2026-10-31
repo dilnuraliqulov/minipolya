@@ -9,8 +9,8 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /**
- * Platform-wide money settings. Fees are tiyin;
- * {@code bookingCommissionPercent} is a whole percentage.
+ * Platform-wide money settings. Fees are tiyin.
+ * The platform takes nothing from ordinary bookings.
  */
 @Data
 @Builder
@@ -19,7 +19,6 @@ import java.util.UUID;
 public class PlatformSettingsResponse {
 
     private UUID id;
-    private int bookingCommissionPercent;
     private long teamGamePlatformFee;
     private long casualGameServiceFee;
     /** Basis points: 150 = 1.5%. */

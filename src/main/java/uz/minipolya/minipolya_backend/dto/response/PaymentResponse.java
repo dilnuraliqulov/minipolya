@@ -25,11 +25,8 @@ public class PaymentResponse {
     private UUID bookingId;
     private UUID gameId;
     private UUID userId;
-    /** All tiyin; ownerAmount + platformAmount always equals amount. */
+    /** Tiyin: what the player paid (negative on a refund). */
     private Long amount;
-    private Long ownerAmount;
-    private Long platformAmount;
-    private Integer commissionPercent;
 
     private Payment.Method method;
     private Payment.PaymentType paymentType;

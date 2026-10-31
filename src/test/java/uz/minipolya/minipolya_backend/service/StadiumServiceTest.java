@@ -253,7 +253,7 @@ class StadiumServiceTest {
     // ---- Card prices ----
 
     @Test
-    void playersSeeTheCardPriceAndOwnersTheirNetPrice() {
+    void playersSeeOnePriceAndOwnersTheirOwnPriceWithThePlayerPrice() {
         User owner = User.builder().id(OWNER_ID).name("Owner").build();
         Stadium stadium = Stadium.builder().id(STADIUM_ID).owner(owner).status("approved").isActive(true)
                 .pricePerHour(20_000_000L).minBookingAmount(5_000_000L).build();
@@ -267,14 +267,15 @@ class StadiumServiceTest {
         StadiumDetailResponse forOwner = stadiumService.update(OWNER_ID, STADIUM_ID, new UpdateStadiumRequest());
 
         assertThat(player.getPricePerHour()).isEqualTo(20_310_000L);
-        assertThat(player.getPrice()).isEqualTo(20_310_000L);
-        assertThat(player.getCardFee()).isEqualTo(310_000L);
-        assertThat(player.getNetPrice()).isNull();
         assertThat(player.getMinBookingAmount()).isEqualTo(TestPrices.card(5_000_000L));
+        assertThat(player.getPlayerPrice()).isNull();
+        assertThat(player.getPlayerMinBookingAmount()).isNull();
+        assertThat(player.getOwnerReceives()).isNull();
+        assertThat(player.getAtmosFee()).isNull();
 
         assertThat(forOwner.getPricePerHour()).isEqualTo(20_000_000L);
-        assertThat(forOwner.getNetPrice()).isEqualTo(20_000_000L);
-        assertThat(forOwner.getPrice()).isEqualTo(20_310_000L);
+        assertThat(forOwner.getPlayerPrice()).isEqualTo(20_310_000L);
         assertThat(forOwner.getMinBookingAmount()).isEqualTo(5_000_000L);
+        assertThat(forOwner.getPlayerMinBookingAmount()).isEqualTo(TestPrices.card(5_000_000L));
     }
 }

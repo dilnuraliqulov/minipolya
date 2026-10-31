@@ -20,7 +20,7 @@ public interface AdminPaymentMapper {
     @Mapping(source = "user.phone", target = "userPhone")
     @Mapping(source = "booking.id", target = "bookingId")
     @Mapping(source = "game.id", target = "gameId")
-    @Mapping(source = "cardFeeExpected", target = "cardFee")
+    @Mapping(source = "cardFeeExpected", target = "atmosFee")
     @Mapping(source = "refundOfPayment.id", target = "refundOfPaymentId")
     @Mapping(target = "stadiumId", ignore = true)
     @Mapping(target = "stadiumName", ignore = true)

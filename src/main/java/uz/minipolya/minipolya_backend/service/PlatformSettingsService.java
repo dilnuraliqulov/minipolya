@@ -18,9 +18,9 @@ import java.util.UUID;
 
 /**
  * Reads and updates the single {@code platform_settings} row. Every money rule
- * that is not per-stadium lives here: the booking commission the platform
- * keeps, the per-team fee on a team game and the per-player service fee on a
- * casual game.
+ * that is not per-stadium lives here: the per-team fee on a team game, the
+ * per-player service fee on a casual game and the card fee and rounding step
+ * that turn an owner's price into the player price.
  *
  * <p>An update validates every supplied field before writing any of them, so a
  * rejected value leaves the row untouched, and records one audit entry naming
@@ -57,12 +57,6 @@ public class PlatformSettingsService {
 
         PlatformSettings settings = current();
         AuditEntry audit = AuditEntry.admin(adminUserId, AuditAction.SETTINGS_CHANGED);
-
-        Integer commission = request.getBookingCommissionPercent();
-        if (commission != null && commission != settings.getBookingCommissionPercent()) {
-            audit.change("bookingCommissionPercent", settings.getBookingCommissionPercent(), commission);
-            settings.setBookingCommissionPercent(commission);
-        }
 
         Long teamFee = request.getTeamGamePlatformFee();
         if (teamFee != null && teamFee != settings.getTeamGamePlatformFee()) {
@@ -102,12 +96,6 @@ public class PlatformSettingsService {
 
     /** All-or-nothing: every supplied value is checked before the first write. */
     private void validate(UpdatePlatformSettingsRequest request) {
-        Integer commission = request.getBookingCommissionPercent();
-        if (commission != null
-                && (commission < 0 || commission > PlatformSettings.MAX_BOOKING_COMMISSION_PERCENT)) {
-            throw new BadRequestException("bookingCommissionPercent must be between 0 and "
-                    + PlatformSettings.MAX_BOOKING_COMMISSION_PERCENT);
-        }
         requireNotNegative("teamGamePlatformFee", request.getTeamGamePlatformFee());
         requireNotNegative("casualGameServiceFee", request.getCasualGameServiceFee());
         Integer bps = request.getCardFeeBps();

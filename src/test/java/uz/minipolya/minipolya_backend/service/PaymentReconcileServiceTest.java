@@ -95,7 +95,7 @@ class PaymentReconcileServiceTest {
     private Booking pendingBooking() {
         OffsetDateTime start = OffsetDateTime.ofInstant(NOW, ZoneOffset.UTC).plusDays(2);
         return Booking.builder().id(UUID.randomUUID()).stadium(stadium).user(player).status("pending")
-                .price(20_000_000L).paidAmount(0L).paymentStatus(Booking.PaymentStatus.UNPAID)
+                .price(20_000_000L).cardPrice(20_310_000L).paidAmount(0L).paymentStatus(Booking.PaymentStatus.UNPAID)
                 .startsAt(start).endsAt(start.plusHours(1)).build();
     }
 
@@ -137,7 +137,7 @@ class PaymentReconcileServiceTest {
         assertThat(payment.getProviderCommission()).isEqualTo(304_646L);
         assertThat(payment.getOfdUrl()).isEqualTo("https://ofd/1");
         assertThat(booking.getStatus()).isEqualTo("confirmed");
-        assertThat(booking.getPaidAmount()).isEqualTo(20_000_000L);   // the net, not the gross
+        assertThat(booking.getPaidAmount()).isEqualTo(20_310_000L);   // what the player paid, against D
     }
 
     @Test

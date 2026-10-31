@@ -79,13 +79,7 @@ public class AdminBookingService {
     private AdminBookingResponse toResponse(Booking booking, List<Payment> payments,
                                             CardPricing pricing, OffsetDateTime now) {
         AdminBookingResponse response = adminActivityMapper.toAdminBooking(booking);
-        response.setBooking(bookingResponseFactory.forOwner(booking, now, payments, pricing));
-        response.setPaidInApp(payments.stream()
-                .filter(p -> p.getMethod() == Payment.Method.CARD)
-                .filter(p -> KEPT.contains(p.getStatus()))
-                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
-                .mapToLong(Payment::getAmount)
-                .sum());
+        response.setBooking(bookingResponseFactory.forAdmin(booking, now, payments, pricing));
         List<Payment> cash = payments.stream()
                 .filter(p -> p.getMethod() == Payment.Method.CASH)
                 .filter(p -> KEPT.contains(p.getStatus()))

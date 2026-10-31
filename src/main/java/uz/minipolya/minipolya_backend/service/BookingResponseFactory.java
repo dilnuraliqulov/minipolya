@@ -11,63 +11,119 @@ import uz.minipolya.minipolya_backend.util.CancellationPolicy;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 import java.util.function.LongSupplier;
 
 /**
- * Builds booking responses, adding the two cancellation fields the mapper
- * cannot work out on its own: the deadline and what a cancellation right now
- * would actually refund.
+ * Builds booking responses in three views.
  *
- * <p>Both come from the same {@link CancellationPolicy} and the same refundable
- * payments that {@code PaymentService} gives back on a real cancellation, so a
- * player is never shown a figure the cancellation would not honour.
+ * <ul>
+ *   <li><b>Player</b> ({@link #of}): one price. {@code price} is the player price D,
+ *       {@code paidAmount} what was paid of it, {@code remainingAmount} what is left — the
+ *       same amount in the app or in cash. No owner price, fee or other breakdown.</li>
+ *   <li><b>Owner</b> ({@link #forOwner}): the same {@code price} (what the player pays),
+ *       plus {@code ownerPrice}, {@code paidInApp}, {@code remainingAmount} (the remainder
+ *       to collect in cash) and {@code ownerReceives}.</li>
+ *   <li><b>Admin</b> ({@link #forAdmin}): the owner's view plus {@code atmosFee}.</li>
+ * </ul>
+ *
+ * <p>Every view also carries the cancellation deadline and what a cancellation right now
+ * would refund, from the same {@link CancellationPolicy} and refundable payments that
+ * {@code PaymentService} gives back on a real cancellation.
  */
 @Component
 @RequiredArgsConstructor
 public class BookingResponseFactory {
+
+    /** Money that arrived and was not given back. */
+    private static final Set<Payment.Status> KEPT = Set.of(
+            Payment.Status.PAID, Payment.Status.CAPTURED, Payment.Status.COMPLETED);
 
     private final BookingMapper bookingMapper;
     private final CancellationPolicy cancellationPolicy;
     private final PaymentService paymentService;
     private final CardPricing cardPricing;
 
-    /** The player's view: card prices, no netPrice. */
+    /** The player's view. */
     public BookingResponse of(Booking booking) {
         return of(booking, OffsetDateTime.now(ZoneOffset.UTC));
     }
 
-    /** The owner's and admin's view: the same, plus the owner's netPrice. */
-    public BookingResponse forOwner(Booking booking) {
-        BookingResponse response = of(booking);
-        response.setNetPrice(booking.getPrice());
+    public BookingResponse of(Booking booking, OffsetDateTime now) {
+        BookingResponse response = build(booking, now,
+                () -> paymentService.refundableCardTotal(booking.getId()));
+        if (booking.getPrice() != null) {
+            long price = cardPricing.playerPrice(booking);
+            long remaining = Math.min(price, cardPricing.remainingForPlayer(booking));
+            response.setPrice(price);
+            response.setRemainingAmount(remaining);
+            response.setPaidAmount(price - remaining);
+        }
         return response;
+    }
+
+    public List<BookingResponse> of(List<Booking> bookings) {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        return bookings.stream().map(booking -> of(booking, now)).toList();
+    }
+
+    /** The owner's view of one booking. */
+    public BookingResponse forOwner(Booking booking) {
+        return forOwner(booking, OffsetDateTime.now(ZoneOffset.UTC),
+                booking.getId() == null ? List.of() : paymentService.paymentsOf(booking.getId()), cardPricing);
     }
 
     public List<BookingResponse> forOwner(List<Booking> bookings) {
         return bookings.stream().map(this::forOwner).toList();
     }
 
-    public BookingResponse of(Booking booking, OffsetDateTime now) {
-        return build(booking, now, cardPricing, () -> paymentService.refundableCardTotal(booking.getId()));
-    }
-
     /**
-     * The owner's and admin's view for one row of a list, from what the list has already
-     * loaded: the booking's payments and the card settings read once
-     * ({@link CardPricing#snapshot()}). Costs no query of its own.
+     * The owner's view for one row of a list, from what the list has already loaded: the
+     * booking's payments and the settings read once ({@link CardPricing#snapshot()}). Costs
+     * no query of its own.
      */
     public BookingResponse forOwner(Booking booking, OffsetDateTime now, List<Payment> payments, CardPricing pricing) {
-        BookingResponse response = build(booking, now, pricing, () -> payments.stream()
+        BookingResponse response = build(booking, now, () -> payments.stream()
                 .filter(PaymentService::isRefundableCardPayment)
                 .mapToLong(Payment::getAmount)
                 .sum());
-        response.setNetPrice(booking.getPrice());
+        if (booking.getPrice() != null) {
+            response.setPrice(pricing.playerPrice(booking));
+            response.setOwnerPrice(booking.getPrice());
+            // The remainder to collect in cash: the same amount the player would pay in the app.
+            response.setPaidAmount(booking.getPaidAmount() == null ? 0L : booking.getPaidAmount());
+            response.setRemainingAmount(booking.getRemainingAmount());
+        }
+        List<Payment> kept = payments.stream()
+                .filter(p -> KEPT.contains(p.getStatus()))
+                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .toList();
+        response.setPaidInApp(kept.stream()
+                .filter(p -> p.getMethod() != Payment.Method.CASH)
+                .mapToLong(Payment::getAmount)
+                .sum());
+        response.setOwnerReceives(kept.stream()
+                .mapToLong(p -> p.getMethod() == Payment.Method.CASH
+                        ? p.getAmount()
+                        : pricing.ownerReceives(p.getOwnerAmount() == null ? 0L : p.getOwnerAmount()))
+                .sum());
         return response;
     }
 
-    private BookingResponse build(Booking booking, OffsetDateTime now, CardPricing pricing, LongSupplier refundable) {
+    /** The admin's view: the owner's, plus what ATMOS takes of the card money kept. */
+    public BookingResponse forAdmin(Booking booking, OffsetDateTime now, List<Payment> payments, CardPricing pricing) {
+        BookingResponse response = forOwner(booking, now, payments, pricing);
+        response.setAtmosFee(payments.stream()
+                .filter(p -> KEPT.contains(p.getStatus()))
+                .filter(p -> p.getMethod() != Payment.Method.CASH)
+                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .mapToLong(pricing::atmosFee)
+                .sum());
+        return response;
+    }
+
+    private BookingResponse build(Booking booking, OffsetDateTime now, LongSupplier refundable) {
         BookingResponse response = bookingMapper.toResponse(booking);
-        applyCardPrices(response, booking, pricing);
         if (booking.getStartsAt() == null || booking.getStadium() == null) {
             return response; // not enough to say anything about cancelling
         }
@@ -76,27 +132,5 @@ public class BookingResponseFactory {
                 ? refundable.getAsLong()
                 : 0L);
         return response;
-    }
-
-    /**
-     * {@code price} becomes the card price — stored at booking time, or worked out from
-     * the net price for manual and older bookings — and the remainder is offered both ways.
-     */
-    private void applyCardPrices(BookingResponse response, Booking booking, CardPricing pricing) {
-        if (booking.getPrice() == null) {
-            return;
-        }
-        long net = booking.getPrice();
-        long card = booking.getCardPrice() != null ? booking.getCardPrice() : pricing.playerAmount(net);
-        response.setPrice(card);
-        response.setCardFee(card - net);
-        long remainingNet = booking.getRemainingAmount();
-        response.setRemainderInCash(remainingNet);
-        response.setRemainderByCard(remainingNet > 0 ? pricing.playerAmount(remainingNet) : 0L);
-    }
-
-    public List<BookingResponse> of(List<Booking> bookings) {
-        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        return bookings.stream().map(booking -> of(booking, now)).toList();
     }
 }

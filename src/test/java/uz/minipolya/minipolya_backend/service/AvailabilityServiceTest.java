@@ -221,10 +221,9 @@ class AvailabilityServiceTest {
 
         AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
-        // Slots show what the player pays by card.
+        // Slots show the one price the player pays.
         assertThat(slotAt(response, LocalTime.of(18, 0)).getPricePerHour()).isEqualTo(TestPrices.card(80_000));
         assertThat(slotAt(response, LocalTime.of(8, 0)).getPricePerHour()).isEqualTo(TestPrices.card(50_000));
-        assertThat(slotAt(response, LocalTime.of(18, 0)).getCardFee()).isEqualTo(TestPrices.card(80_000) - 80_000);
     }
 
     @Test
@@ -234,7 +233,6 @@ class AvailabilityServiceTest {
         AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
         assertThat(slotAt(response, LocalTime.of(8, 0)).getPricePerHour()).isEqualTo(TestPrices.card(50_000));
-        assertThat(slotAt(response, LocalTime.of(8, 0)).getPrice()).isEqualTo(TestPrices.card(50_000));
     }
 
     @Test

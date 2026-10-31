@@ -13,8 +13,8 @@ import java.util.UUID;
 
 /**
  * A payment or a refund for the admin panel. Money is tiyin and negative on a refund;
- * {@code amount = ownerAmount + platformAmount}. {@code cardFee} is what the card fee and
- * the price rounding added to the net ({@code card_fee_expected}); {@code providerCommission}
+ * {@code amount = ownerAmount + platformAmount}. {@code atmosFee} is what ATMOS was expected
+ * to take ({@code card_fee_expected}); {@code providerCommission}
  * is what ATMOS reports having taken, absent until it does. Absent fields are omitted.
  * {@code linkedPayments} is only on the detail.
  */
@@ -42,7 +42,8 @@ public class AdminPaymentResponse {
     private Long amount;
     private Long ownerAmount;
     private Long platformAmount;
-    private Long cardFee;
+    /** What ATMOS was expected to take when the payment was made (the card fee and rounding on rows from before the one-player-price rule). */
+    private Long atmosFee;
     private Long providerCommission;
     private Integer commissionPercent;
 

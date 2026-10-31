@@ -31,6 +31,7 @@ public class GameResponse {
     private Integer currentPlayers;
     private OffsetDateTime startsAt;
     private OffsetDateTime endsAt;
+    /** What the players pay for this game altogether, as on its detail. */
     private Long totalPrice;
 
     @JsonProperty("isPublic")

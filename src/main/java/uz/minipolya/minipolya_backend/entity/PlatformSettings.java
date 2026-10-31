@@ -20,8 +20,8 @@ import java.time.ZoneOffset;
 /**
  * Platform-wide money settings, edited by admins. Exactly one row exists —
  * {@code singleton} is UNIQUE and CHECKed true, so the database rejects a
- * second one. All fees are tiyin; {@code bookingCommissionPercent} is a
- * percentage of the booking price kept by the platform.
+ * second one. All fees are tiyin. The platform takes nothing from ordinary
+ * bookings; its only money is the team-game fee and the casual-game service fee.
  */
 @Entity
 @Table(name = "platform_settings")
@@ -32,17 +32,11 @@ import java.time.ZoneOffset;
 @AllArgsConstructor
 public class PlatformSettings {
 
-    /** Default booking commission: the platform takes nothing for now. */
-    public static final int DEFAULT_BOOKING_COMMISSION_PERCENT = 0;
-
     /** Default team-game platform fee: 2 500 000 tiyin = 25 000 so'm per team. */
     public static final long DEFAULT_TEAM_GAME_PLATFORM_FEE = 2_500_000L;
 
     /** Default casual-game service fee per player: nothing for now. */
     public static final long DEFAULT_CASUAL_GAME_SERVICE_FEE = 0L;
-
-    /** The highest commission an admin may set. */
-    public static final int MAX_BOOKING_COMMISSION_PERCENT = 50;
 
     /** Default card fee: 150 basis points = 1.5%, what ATMOS takes from each card payment. */
     public static final int DEFAULT_CARD_FEE_BPS = 150;
@@ -64,10 +58,6 @@ public class PlatformSettings {
     @Builder.Default
     @Column(nullable = false)
     private boolean singleton = true;
-
-    @Builder.Default
-    @Column(name = "booking_commission_percent", nullable = false)
-    private int bookingCommissionPercent = DEFAULT_BOOKING_COMMISSION_PERCENT;
 
     @Builder.Default
     @Column(name = "team_game_platform_fee", nullable = false)
