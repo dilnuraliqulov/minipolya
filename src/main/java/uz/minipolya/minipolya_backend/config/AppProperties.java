@@ -23,6 +23,19 @@ public class AppProperties {
     private Atmos atmos = new Atmos();
     private Security security = new Security();
     private Cors cors = new Cors();
+    private Dev dev = new Dev();
+
+    @Getter
+    @Setter
+    public static class Dev {
+        /**
+         * DEV_LOGIN_KEY: the dev-only sign-in ({@code dev} profile) answers only requests that
+         * send this value in {@code X-Dev-Login-Key}; anything else is 404. At least
+         * {@link uz.minipolya.minipolya_backend.config.DevProfileGuard#MIN_LOGIN_KEY_LENGTH}
+         * characters, or the application refuses to start under {@code dev}.
+         */
+        private String loginKey;
+    }
 
     @Getter
     @Setter

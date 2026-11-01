@@ -61,6 +61,11 @@ app:
   # never *). Empty, the default, sends no CORS headers: only same-origin pages can call it.
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+  # The dev-only sign-in (dev profile): every /api/auth/dev/* call must send this value in
+  # X-Dev-Login-Key. At least 16 characters; with the dev profile active and no such key the
+  # application refuses to start.
+  dev:
+    login-key: ${DEV_LOGIN_KEY:}
   # The real ATMOS client, active only under the "atmos" profile (it then refuses to start
   # unless every value except the two OFD codes is set). Never commit real values.
   security:

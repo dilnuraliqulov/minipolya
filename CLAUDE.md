@@ -1095,8 +1095,11 @@ For testing the Mini App in a plain browser, without Telegram `initData`:
 as the Telegram sign-in (400 "Invalid id", 404 "User not found", 403 `ACCOUNT_BLOCKED`).
 `DevAuthController` / `DevAuthService` exist **only under `SPRING_PROFILES_ACTIVE=dev`**;
 in every other profile the paths are 404. `DevProfileGuard` makes the application
-**refuse to start** when `dev` is active together with `prod` or `atmos`. Never enable it
-on a server.
+**refuse to start** when `dev` is active together with `prod` or `atmos`, or without a
+`DEV_LOGIN_KEY` (`app.dev.login-key`) of at least 16 characters. Every `/api/auth/dev/*`
+request must send that key in **`X-Dev-Login-Key`**: `DevLoginKeyInterceptor` compares
+SHA-256 digests in constant time, and a missing or wrong key answers exactly like an
+unknown path — 404 "Not found" — before the body is read. Never enable it on a server.
 
 ### Telegram Login Widget (web dashboard)
 - Same flow, different payload format
@@ -1357,6 +1360,7 @@ MINIAPP_URL=https://...     # the Mini App; opened by the bot's buttons and menu
 SUPPORT_USERNAME=           # optional, without @: the support contact the bot shows
 CARD_TOKEN_KEY=...    # 32 bytes, base64; encrypts saved card tokens (required under prod/atmos)
 CORS_ALLOWED_ORIGINS= # optional: browser origins allowed cross-origin, comma-separated; empty = no CORS
+DEV_LOGIN_KEY=        # dev profile only: 16+ chars, sent as X-Dev-Login-Key to /api/auth/dev/*
 
 # ATMOS — used only with SPRING_PROFILES_ACTIVE=atmos
 ATMOS_BASE_URL=https://apigw.atmos.uz
