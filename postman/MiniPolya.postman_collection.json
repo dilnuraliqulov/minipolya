@@ -1886,14 +1886,14 @@
           }
         },
         {
-          "name": "403 create as a player",
+          "name": "400 a player may add a stadium (R42), validated like anyone",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });",
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
                   "pm.test('uses the ApiResponse envelope', function () {",
                   "    var b = pm.response.json();",
                   "    pm.expect(b).to.have.property('success');",
@@ -1930,16 +1930,107 @@
                 "stadiums"
               ]
             },
-            "description": "",
+            "description": "R42: POST and GET /api/owner/stadiums need only a token. A blank name is still 400, which shows the request got past security.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"X\",\n  \"address\": \"Y\",\n  \"format\": \"5x5\",\n  \"surfaceType\": \"artificial\",\n  \"openTime\": \"08:00\",\n  \"closeTime\": \"23:00\",\n  \"pricePerHour\": 1\n}",
+              "raw": "{\n  \"name\": \"\",\n  \"address\": \"Y\",\n  \"format\": \"5x5\",\n  \"surfaceType\": \"artificial\",\n  \"openTime\": \"08:00\",\n  \"closeTime\": \"23:00\",\n  \"pricePerHour\": 1\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             }
+          }
+        },
+        {
+          "name": "200 a player lists their own stadiums (R42)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('a list', function () { pm.expect(pm.response.json().data).to.be.an('array'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/stadiums",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "stadiums"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "403 a player still cannot use other owner endpoints (R42)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/stadiums/{{stadiumId}}/pricing",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "stadiums",
+                "{{stadiumId}}",
+                "pricing"
+              ]
+            },
+            "description": ""
           }
         },
         {

@@ -45,6 +45,10 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/stadiums/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/reviews/stadium/**").permitAll()
                         .requestMatchers("/webhooks/**").permitAll()
+                        // R42: anyone signed in may add a stadium (it starts pending; approval
+                        // makes them an owner) and see their own. Exactly these two, no sub-paths.
+                        .requestMatchers(HttpMethod.POST, "/api/owner/stadiums").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/owner/stadiums").authenticated()
                         .requestMatchers("/api/owner/**").hasRole("OWNER")
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated()

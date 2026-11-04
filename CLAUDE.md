@@ -268,6 +268,11 @@ When you need to change the schema (add column, new table, alter constraint):
   (`StadiumService.toPublicResponses`; `PublicStadiumListTest` counts the queries with 22
   stadiums). The detail (`GET /api/stadiums/{id}`) carries `averageRating` /
   `reviewCount` too.
+- **Anyone signed in can add a stadium** (R42): `POST /api/owner/stadiums` and
+  `GET /api/owner/stadiums` need only a token, not `isOwner`, so a player adds their first
+  stadium and sees it (with `status` / `statusReason`) in their list. It starts `pending`;
+  approval sets `is_owner`, and the user needs a fresh token (the flag is a JWT claim) for
+  the rest of `/api/owner/**`, which stays owner-only.
 - Owner adds stadium → admin reviews (`GET /api/admin/stadiums/{id}` works in any
   status) → approves or rejects.
 - **Approval needs the owner's ATMOS contract signed** (`owner_legal_details`, see
@@ -1196,7 +1201,9 @@ WHERE LOWER(username) = LOWER('dilnur');
 - `/api/auth/**` → public (Telegram sign-in and `POST /api/auth/admin/login`)
 - `/api/stadiums/**` GET → public (listing, detail, availability)
 - `/api/bookings/**` → authenticated
-- `/api/owner/**` → authenticated + isOwner check
+- `/api/owner/**` → authenticated + isOwner check, except exactly `POST /api/owner/stadiums`
+  and `GET /api/owner/stadiums` (no sub-paths): any signed-in user, so a player can add
+  their first stadium and follow its review (R42)
 - `/api/admin/**` → authenticated + isAdmin check
 - `/api/games/**` → authenticated
 - `/api/teams/**` → authenticated
