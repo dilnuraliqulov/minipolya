@@ -74,7 +74,7 @@ class OwnerDashboardServiceTest {
         service = new OwnerDashboardService(stadiumRepository, bookingRepository, paymentRepository,
                 reviewRepository,
                 new BookingResponseFactory(bookingMapper, new CancellationPolicy(), mock(PaymentService.class), CardPricing.withDefaults()),
-                stadiumService, reviewService, gameRepository, gameTeamRepository);
+                stadiumService, reviewService, gameRepository, gameTeamRepository, CardPricing.withDefaults());
 
         stadium = Stadium.builder().id(STADIUM_ID).name("Arena").owner(User.builder().id(OWNER_ID).build())
                 .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).build();

@@ -31,6 +31,7 @@ import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.exception.SlotAlreadyBookedException;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
+import uz.minipolya.minipolya_backend.repository.BookingSpecifications;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.CancellationPolicy;
@@ -433,12 +434,32 @@ public class BookingService {
     @Transactional(readOnly = true)
     public PageResponse<BookingResponse> getStadiumBookings(UUID ownerId, UUID stadiumId,
                                                             LocalDate from, LocalDate to, int page, int size) {
+        return getStadiumBookings(ownerId, stadiumId, from, to, false, page, size);
+    }
+
+    /**
+     * As above; with {@code unpaid}, only live bookings (pending, confirmed, completed) with
+     * {@code remainingAmount > 0}, soonest first — filtered in the query
+     * ({@link BookingSpecifications#ownerUnpaid}), so the pages and totals are exact (R38).
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<BookingResponse> getStadiumBookings(UUID ownerId, UUID stadiumId, LocalDate from,
+                                                            LocalDate to, boolean unpaid, int page, int size) {
         Stadium stadium = stadiumRepository.findById(stadiumId)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
         if (!stadium.getOwner().getId().equals(ownerId)) {
             throw new ForbiddenException("You do not own this stadium");
         }
         Pageable pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"));
+        if (unpaid) {
+            pageable = Pagination.of(page, size,
+                    Sort.by(Sort.Direction.ASC, "startsAt").and(Sort.by(Sort.Direction.ASC, "id")));
+            OffsetDateTime fromUtc = from == null ? null : from.atStartOfDay(TASHKENT).toOffsetDateTime();
+            OffsetDateTime toUtc = to == null ? null : to.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime();
+            return PageResponse.from(
+                    bookingRepository.findAll(BookingSpecifications.ownerUnpaid(stadiumId, fromUtc, toUtc), pageable),
+                    bookingResponseFactory::forOwner);
+        }
         if (from != null && to != null) {
             OffsetDateTime fromUtc = from.atStartOfDay(TASHKENT).toOffsetDateTime();
             OffsetDateTime toUtc = to.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime();

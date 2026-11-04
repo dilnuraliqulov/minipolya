@@ -67,10 +67,18 @@ public class BookingResponseFactory {
     /** price, paidAmount and remainingAmount in the player's terms, adding up for every booking. */
     private static void setPlayerAmounts(BookingResponse response, Booking booking, CardPricing pricing) {
         long price = pricing.playerPrice(booking);
-        long remaining = Math.min(price, pricing.remainingForPlayer(booking));
+        long remaining = remainingAmount(booking, pricing);
         response.setPrice(price);
         response.setRemainingAmount(remaining);
         response.setPaidAmount(price - remaining);
+    }
+
+    /** The {@code remainingAmount} every view shows — the one definition, also summed by the owner dashboard. */
+    public static long remainingAmount(Booking booking, CardPricing pricing) {
+        if (booking.getPrice() == null) {
+            return booking.getRemainingAmount();
+        }
+        return Math.min(pricing.playerPrice(booking), pricing.remainingForPlayer(booking));
     }
 
     public List<BookingResponse> of(List<Booking> bookings) {

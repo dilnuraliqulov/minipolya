@@ -22,6 +22,7 @@ import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
+import uz.minipolya.minipolya_backend.repository.BookingSpecifications;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.GameTeamRepository;
@@ -64,6 +65,11 @@ public class OwnerDashboardService {
     private final ReviewService reviewService;
     private final GameRepository gameRepository;
     private final GameTeamRepository gameTeamRepository;
+    private final CardPricing cardPricing;
+
+    /** Money that arrived and was kept: what the paid-in figures count. */
+    private static final List<Payment.Status> ARRIVED =
+            List.of(Payment.Status.PAID, Payment.Status.CAPTURED, Payment.Status.COMPLETED);
 
     @Transactional(readOnly = true)
     public List<StadiumResponse> getMyStadiums(UUID ownerUserId) {
@@ -94,6 +100,36 @@ public class OwnerDashboardService {
 
         Double avg = reviewRepository.averageRatingByStadiumId(stadiumId);
 
+        // R38: paid in the app / in cash, one grouped query for all three periods.
+        OffsetDateTime spanFrom = weekStartUtc.isBefore(monthStartUtc) ? weekStartUtc : monthStartUtc;
+        OffsetDateTime spanTo = weekEndUtc.isAfter(monthEndUtc) ? weekEndUtc : monthEndUtc;
+        long[] app = new long[3];
+        long[] cash = new long[3];
+        for (Object[] row : paymentRepository.sumStadiumPaymentsByMethod(stadiumId, ARRIVED,
+                todayStart, todayEnd, weekStartUtc, weekEndUtc, monthStartUtc, monthEndUtc, spanFrom, spanTo)) {
+            long[] target = row[0] == Payment.Method.CASH ? cash : app;
+            for (int i = 0; i < 3; i++) {
+                target[i] += ((Number) row[i + 1]).longValue();
+            }
+        }
+        // Outstanding: the live bookings with something owed in the span, one query.
+        CardPricing pricing = cardPricing.snapshot();
+        long[] outstanding = new long[3];
+        for (Booking booking : bookingRepository.findAll(
+                BookingSpecifications.ownerUnpaid(stadiumId, spanFrom, spanTo))) {
+            long remaining = BookingResponseFactory.remainingAmount(booking, pricing);
+            OffsetDateTime at = booking.getStartsAt();
+            if (!at.isBefore(todayStart) && at.isBefore(todayEnd)) {
+                outstanding[0] += remaining;
+            }
+            if (!at.isBefore(weekStartUtc) && at.isBefore(weekEndUtc)) {
+                outstanding[1] += remaining;
+            }
+            if (!at.isBefore(monthStartUtc) && at.isBefore(monthEndUtc)) {
+                outstanding[2] += remaining;
+            }
+        }
+
         return OwnerDashboardStatsResponse.builder()
                 .stadiumId(stadiumId)
                 .stadiumName(stadium.getName())
@@ -103,6 +139,9 @@ public class OwnerDashboardService {
                 .weekRevenue(revenue(stadiumId, weekStartUtc, weekEndUtc))
                 .monthBookings((int) bookingRepository.countByStadiumAndDateRange(stadiumId, monthStartUtc, monthEndUtc, COUNTED_STATUSES))
                 .monthRevenue(revenue(stadiumId, monthStartUtc, monthEndUtc))
+                .todayPaidInApp(app[0]).todayPaidInCash(cash[0]).todayOutstanding(outstanding[0])
+                .weekPaidInApp(app[1]).weekPaidInCash(cash[1]).weekOutstanding(outstanding[1])
+                .monthPaidInApp(app[2]).monthPaidInCash(cash[2]).monthOutstanding(outstanding[2])
                 .totalBookings((int) bookingRepository.countByStadiumIdAndStatusIn(stadiumId, COUNTED_STATUSES))
                 .totalRevenue(paymentRepository.sumRevenueByStadium(stadiumId, Payment.Status.COMPLETED, Payment.PaymentType.BOOKING))
                 .averageRating(avg == null ? 0.0 : avg)

@@ -77,8 +77,10 @@ public class OwnerDashboardController {
             @PathVariable UUID stadiumId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(defaultValue = "false") boolean unpaid,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(bookingService.getStadiumBookings(ownerId, stadiumId, from, to, page, size));
+        // unpaid=true (R38): live bookings with something still owed, soonest first.
+        return ApiResponse.ok(bookingService.getStadiumBookings(ownerId, stadiumId, from, to, unpaid, page, size));
     }
 }

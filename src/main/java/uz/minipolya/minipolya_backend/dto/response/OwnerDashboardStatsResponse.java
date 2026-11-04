@@ -25,6 +25,19 @@ public class OwnerDashboardStatsResponse {
     private int monthBookings;
     private long monthRevenue;
 
+    // R38, tiyin. PaidInApp / PaidInCash: money that arrived for the stadium's bookings in the
+    // period (card / cash), counted when it was paid. Outstanding: the remainingAmount of live
+    // bookings starting in the period.
+    private long todayPaidInApp;
+    private long todayPaidInCash;
+    private long todayOutstanding;
+    private long weekPaidInApp;
+    private long weekPaidInCash;
+    private long weekOutstanding;
+    private long monthPaidInApp;
+    private long monthPaidInCash;
+    private long monthOutstanding;
+
     private int totalBookings;
     private long totalRevenue;
 

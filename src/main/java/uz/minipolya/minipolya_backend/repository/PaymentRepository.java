@@ -22,6 +22,32 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
 
     List<Payment> findByBookingId(UUID bookingId);
 
+    /**
+     * R38: money that arrived for one stadium's bookings, by method — one row per method
+     * ({@code [method, today, week, month]}, tiyin, as players paid it), counted when the
+     * payment was taken. {@code from}/{@code to} span all three periods.
+     */
+    @Query("""
+            SELECT p.method,
+                   COALESCE(SUM(CASE WHEN p.createdAt >= :todayFrom AND p.createdAt < :todayTo THEN p.amount ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN p.createdAt >= :weekFrom AND p.createdAt < :weekTo THEN p.amount ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN p.createdAt >= :monthFrom AND p.createdAt < :monthTo THEN p.amount ELSE 0 END), 0)
+            FROM Payment p JOIN p.booking b
+            WHERE b.stadium.id = :stadiumId AND p.status IN :statuses
+              AND p.createdAt >= :from AND p.createdAt < :to
+            GROUP BY p.method
+            """)
+    List<Object[]> sumStadiumPaymentsByMethod(@Param("stadiumId") UUID stadiumId,
+                                              @Param("statuses") Collection<Payment.Status> statuses,
+                                              @Param("todayFrom") OffsetDateTime todayFrom,
+                                              @Param("todayTo") OffsetDateTime todayTo,
+                                              @Param("weekFrom") OffsetDateTime weekFrom,
+                                              @Param("weekTo") OffsetDateTime weekTo,
+                                              @Param("monthFrom") OffsetDateTime monthFrom,
+                                              @Param("monthTo") OffsetDateTime monthTo,
+                                              @Param("from") OffsetDateTime from,
+                                              @Param("to") OffsetDateTime to);
+
     /** Whether a booking has a payment in one of these statuses — e.g. a charge still being confirmed. */
     boolean existsByBookingIdAndStatusIn(UUID bookingId, Collection<Payment.Status> statuses);
 

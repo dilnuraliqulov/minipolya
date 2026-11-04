@@ -14740,7 +14740,8 @@
                   "    ['todayRevenue', 'weekRevenue', 'monthRevenue', 'totalRevenue'].forEach(function (k) {",
                   "        pm.expect(d[k] % 1, k).to.eql(0);",
                   "    });",
-                  "});"
+                  "});",
+                  "pm.test('paid in app / in cash / outstanding (R38)', function () { var d = pm.response.json().data; ['today', 'week', 'month'].forEach(function (p) { ['PaidInApp', 'PaidInCash', 'Outstanding'].forEach(function (f) { pm.expect(d[p + f], p + f).to.be.a('number'); }); }); });"
                 ]
               }
             }
@@ -15166,6 +15167,161 @@
                 "stadiums",
                 "{{stadiumId}}",
                 "bookings"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "200 bookings still owing money (R38)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('each owes something', function () { pm.response.json().data.content.forEach(function (b) { pm.expect(b.remainingAmount).to.be.above(0); }); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/dashboard/stadiums/{{stadiumId}}/bookings?unpaid=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "dashboard",
+                "stadiums",
+                "{{stadiumId}}",
+                "bookings"
+              ],
+              "query": [
+                {
+                  "key": "unpaid",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "R38: unpaid=true — live bookings with remainingAmount > 0, soonest first, paged."
+          }
+        },
+        {
+          "name": "403 unpaid bookings of a stadium I do not own (R38)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{owner2Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/dashboard/stadiums/{{stadiumId}}/bookings?unpaid=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "dashboard",
+                "stadiums",
+                "{{stadiumId}}",
+                "bookings"
+              ],
+              "query": [
+                {
+                  "key": "unpaid",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "401 unpaid bookings without a token (R38)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/dashboard/stadiums/{{stadiumId}}/bookings?unpaid=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "dashboard",
+                "stadiums",
+                "{{stadiumId}}",
+                "bookings"
+              ],
+              "query": [
+                {
+                  "key": "unpaid",
+                  "value": "true"
+                }
               ]
             },
             "description": ""
