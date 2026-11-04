@@ -65,6 +65,7 @@ public interface StadiumMapper {
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     @Mapping(source = "isActive", target = "active")
+    // clearMinBookingAmount has no column: the service applies it.
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "owner", ignore = true)
     @Mapping(target = "status", ignore = true)

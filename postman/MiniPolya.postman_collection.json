@@ -3799,6 +3799,124 @@
           }
         },
         {
+          "name": "400 set and clear the minimum at once (R41)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql('Send either minBookingAmount or clearMinBookingAmount'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/stadiums/{{stadiumId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "stadiums",
+                "{{stadiumId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"minBookingAmount\": 5000000,\n  \"clearMinBookingAmount\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "200 clear the minimum: full payment only (R41)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('no minimum', function () { pm.expect(pm.response.json().data).to.not.have.property('minBookingAmount'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/stadiums/{{stadiumId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "stadiums",
+                "{{stadiumId}}"
+              ]
+            },
+            "description": "R41: sets minBookingAmount to null (players pay in full). A plain null in minBookingAmount means leave it as is.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clearMinBookingAmount\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
           "name": "403 update a stadium I do not own",
           "event": [
             {

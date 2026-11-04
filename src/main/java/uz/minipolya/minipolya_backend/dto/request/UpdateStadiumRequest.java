@@ -66,6 +66,12 @@ public class UpdateStadiumRequest {
     @PositiveOrZero
     private Long minBookingAmount;
 
+    /**
+     * R41: {@code true} removes the minimum booking amount — players then pay in full. Absent
+     * or false leaves it alone. Not together with a {@code minBookingAmount}.
+     */
+    private Boolean clearMinBookingAmount;
+
     /** Hours before kick-off up to which a player can cancel and be refunded in full. */
     @PositiveOrZero
     private Integer cancellationHours;

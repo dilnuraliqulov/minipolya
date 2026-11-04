@@ -93,12 +93,19 @@ public class StadiumService {
     public StadiumDetailResponse update(UUID ownerId, UUID stadiumId, UpdateStadiumRequest request) {
         Stadium stadium = requireOwnedStadium(ownerId, stadiumId);
 
+        boolean clearMinimum = Boolean.TRUE.equals(request.getClearMinBookingAmount());
+        if (clearMinimum && request.getMinBookingAmount() != null) {
+            throw new BadRequestException("Send either minBookingAmount or clearMinBookingAmount");
+        }
         requireValidMinBookingAmount(request.getMinBookingAmount());
         // Absent leaves the district as it is (the update only touches what is sent).
         request.setDistrict(Districts.require(request.getDistrict()));
 
         Map<String, Object> before = auditSnapshot(stadium);
         stadiumMapper.updateStadiumFromRequest(request, stadium);
+        if (clearMinimum) {
+            stadium.setMinBookingAmount(null); // full payment only; audited like any field
+        }
 
         if (request.getAmenities() != null) {
             if (stadium.getAmenities() == null) {

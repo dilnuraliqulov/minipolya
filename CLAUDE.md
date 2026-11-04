@@ -328,7 +328,8 @@ the same amount whether the player pays it in the app or the owner takes it in c
 
 There are no other amounts. `min_booking_amount` is nullable — null means full
 payment is required — and when set must be at least 50 000 tiyin (500 so'm, the
-smallest payment ATMOS takes).
+smallest payment ATMOS takes). The owner removes it with `"clearMinBookingAmount": true`
+on `PUT /api/owner/stadiums/{id}` (R41; a plain null is "leave as is").
 
 - `bookings.payment_status` is `unpaid` / `partially_paid` / `paid`.
   `bookings.pricing_model` (changeset 040) says how the money is counted:
@@ -1102,7 +1103,7 @@ alongside (`playerPrice`, `playerMinBookingAmount`).
 |---|---|
 | `POST /api/owner/stadiums` · `GET /api/owner/stadiums` | add a stadium (starts `pending`) · the caller's stadiums with `status` / `statusReason` — any signed-in user (R42) |
 | `GET /api/owner/stadiums/{id}` | one of the caller's stadiums, any status: the `StadiumDetailResponse` that `PUT` returns, built by the same code (R35) |
-| `PUT /api/owner/stadiums/{id}` | partial update; audited `STADIUM_UPDATED` |
+| `PUT /api/owner/stadiums/{id}` | partial update (only non-null fields); audited `STADIUM_UPDATED`. `"clearMinBookingAmount": true` sets `minBookingAmount` to null — full payment only (R41); sent with a non-null `minBookingAmount` it is 400 "Send either minBookingAmount or clearMinBookingAmount" |
 | `POST /api/owner/stadiums/{id}/photos` | multipart field `file` → `PhotoResponse {id,url,position}`, "Photo uploaded" (R36, see "Stadium photos") |
 | `DELETE /api/owner/stadiums/{id}/photos/{photoId}` | `data: null`, "Photo deleted"; the rest renumbered 0..n-1; 404 "Photo not found" if not this stadium's |
 | `GET /api/owner/legal-details` | the caller's own `{ legalType?, atmosContractStatus, ownerContractStatus }` (R39), read-only; see "Owner legal details" |
