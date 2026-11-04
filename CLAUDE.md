@@ -1083,6 +1083,13 @@ approved until its owner's contract is signed. Changes are audited
 old `users.atmos_recipient_id` by changeset 037 are `signed` with no legal type or tin
 until an admin fills them in.
 
+**The owner's own view** (R39): `GET /api/owner/legal-details` (owner role) answers
+`{ legalType?, atmosContractStatus, ownerContractStatus }` — `ownerContractStatus` is the
+same value as `atmosContractStatus`, under the admin stadium list's name. Never `tin`,
+`atmosRecipientId` or who changed it. With no row it answers what the admin side shows for
+such an owner: both statuses `none`, no `legalType` (the admin's own
+`GET /api/admin/users/{id}/legal-details` still answers `data: null` then).
+
 ## Owner API
 
 Owner endpoints live under `/api/owner/**` (owner role; see "Endpoint Security" for the two
@@ -1098,6 +1105,7 @@ alongside (`playerPrice`, `playerMinBookingAmount`).
 | `PUT /api/owner/stadiums/{id}` | partial update; audited `STADIUM_UPDATED` |
 | `POST /api/owner/stadiums/{id}/photos` | multipart field `file` → `PhotoResponse {id,url,position}`, "Photo uploaded" (R36, see "Stadium photos") |
 | `DELETE /api/owner/stadiums/{id}/photos/{photoId}` | `data: null`, "Photo deleted"; the rest renumbered 0..n-1; 404 "Photo not found" if not this stadium's |
+| `GET /api/owner/legal-details` | the caller's own `{ legalType?, atmosContractStatus, ownerContractStatus }` (R39), read-only; see "Owner legal details" |
 | `POST /api/owner/bookings/{id}/cash` | the rest of a booking taken in cash (R37) — see "Paying for a booking" |
 | `PUT /api/owner/stadiums/{id}/photos/order` | `{ photoIds: UUID[] }` = every photo exactly once, else 400 "photoIds must list every photo of the stadium exactly once" → `PhotoResponse[]` in order, "Photos reordered" |
 
