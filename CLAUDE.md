@@ -1088,6 +1088,34 @@ alongside (`playerPrice`, `playerMinBookingAmount`).
 | `POST /api/owner/stadiums` · `GET /api/owner/stadiums` | add a stadium (starts `pending`) · the caller's stadiums with `status` / `statusReason` — any signed-in user (R42) |
 | `GET /api/owner/stadiums/{id}` | one of the caller's stadiums, any status: the `StadiumDetailResponse` that `PUT` returns, built by the same code (R35) |
 | `PUT /api/owner/stadiums/{id}` | partial update; audited `STADIUM_UPDATED` |
+| `POST /api/owner/stadiums/{id}/photos` | multipart field `file` → `PhotoResponse {id,url,position}`, "Photo uploaded" (R36, see "Stadium photos") |
+| `DELETE /api/owner/stadiums/{id}/photos/{photoId}` | `data: null`, "Photo deleted"; the rest renumbered 0..n-1; 404 "Photo not found" if not this stadium's |
+| `PUT /api/owner/stadiums/{id}/photos/order` | `{ photoIds: UUID[] }` = every photo exactly once, else 400 "photoIds must list every photo of the stadium exactly once" → `PhotoResponse[]` in order, "Photos reordered" |
+
+### Stadium photos
+
+`StadiumPhotoService` / `StadiumPhotoStorage` (R36). Any stadium status, owner only.
+
+- **Upload:** JPEG, PNG or WebP, told by the **magic bytes** (`util/ImageType`), never the
+  client's content type or file name → otherwise 400 "Unsupported image type". Over 10 MB
+  → **413 "File too large"** (the service checks it, and Spring's multipart limit —
+  `spring.servlet.multipart.max-file-size: 10MB` — maps `MaxUploadSizeExceededException`
+  to the same 413). At most 10 photos → 400 "A stadium can have at most 10 photos". A
+  missing `file` part is 400 "file is required"; a non-multipart body 415.
+- Stored on the local filesystem under `app.uploads.dir` (`UPLOADS_DIR`, default
+  `./uploads`, git-ignored) as `stadiums/<stadiumId>/<random uuid>.<jpg|png|webp>`; the
+  stored `url` is `/api/uploads/stadiums/<stadiumId>/<file>`. A new photo goes last
+  (`max(position) + 1`); the lowest position is the cover (`coverPhotoUrl`). The stadium
+  row is locked for each change, so concurrent uploads cannot pass the limit.
+- Files follow the database: a written file is removed if the transaction rolls back; a
+  deleted photo's file goes after the deletion commits. URLs that are not ours (photos sent
+  as URLs on create/update) are never touched on disk.
+- **Serving:** `GET /api/uploads/stadiums/{stadiumId}/{file}` is public (`permitAll` on
+  `GET /api/uploads/**`), with the image's Content-Type, `Cache-Control: max-age=31536000,
+  public, immutable` and `nosniff`. Only a `<uuid>.<jpg|png|webp>` name under a stadium id
+  resolves; anything else (directories, other names, `..`) is 404/400 — no listing, no
+  traversal (`StadiumPhotoTest`).
+- Audited as `STADIUM_UPDATED` with the `photos` URL list before → after.
 
 ## Auth
 
@@ -1221,6 +1249,7 @@ WHERE LOWER(username) = LOWER('dilnur');
 - `/api/admin/**` → authenticated + isAdmin check
 - `/api/games/**` → authenticated
 - `/api/teams/**` → authenticated
+- `GET /api/uploads/**` → public (uploaded stadium photos, see "Stadium photos")
 - `/webhooks/**` → verify provider signature, no JWT (`/webhooks/telegram`: the
   `X-Telegram-Bot-Api-Secret-Token` header, see "Telegram bot")
 
@@ -1382,6 +1411,7 @@ SUPPORT_USERNAME=           # optional, without @: the support contact the bot s
 CARD_TOKEN_KEY=...    # 32 bytes, base64; encrypts saved card tokens (required under prod/atmos)
 CORS_ALLOWED_ORIGINS= # optional: browser origins allowed cross-origin, comma-separated; empty = no CORS
 DEV_LOGIN_KEY=        # dev profile only: 16+ chars, sent as X-Dev-Login-Key to /api/auth/dev/*
+UPLOADS_DIR=./uploads # optional: where uploaded stadium photos are stored (back it up with the DB)
 
 # ATMOS — used only with SPRING_PROFILES_ACTIVE=atmos
 ATMOS_BASE_URL=https://apigw.atmos.uz
@@ -1494,6 +1524,8 @@ forwarded headers — and then every admin shares one 20-attempt budget.
   the owner can create them during the Liquibase run.
 - Liquibase applies pending changesets on startup; take a backup before deploying
   a release that contains new ones.
+- Back up `UPLOADS_DIR` (stadium photos) together with the database: photo rows point
+  at files there. Put it on persistent storage, not inside the release directory.
 - Automated daily backups (`pg_dump` or PITR) and a restore you have actually tried.
 - PostgreSQL listens only on localhost / the private network, with TLS if it is on
   another host.

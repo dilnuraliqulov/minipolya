@@ -24,9 +24,18 @@ spring:
         default_schema: public
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.yaml
+  servlet:
+    multipart:
+      # Stadium photos: 10 MB a file. Larger is 413 "File too large" (GlobalExceptionHandler).
+      max-file-size: 10MB
+      max-request-size: 11MB
 
 server:
   port: 8080
+  tomcat:
+    # Read (and drop) an over-limit upload up to this size, so the client gets the 413
+    # rather than a reset connection.
+    max-swallow-size: 32MB
 
 app:
   jwt:
@@ -43,6 +52,9 @@ app:
     webhook-secret: ${TELEGRAM_WEBHOOK_SECRET:}
     miniapp-url: ${MINIAPP_URL:}
     support-username: ${SUPPORT_USERNAME:}
+  uploads:
+    # Uploaded files (stadium photos) on the local filesystem, served under /api/uploads/**.
+    dir: ${UPLOADS_DIR:./uploads}
   booking:
     max-weeks-ahead: 4
     hold-expiry-minutes: 10

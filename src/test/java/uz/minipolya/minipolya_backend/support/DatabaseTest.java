@@ -28,6 +28,8 @@ import java.lang.annotation.Target;
         "logging.level.org.hibernate.engine.internal.StatisticalLoggingSessionEventListener=WARN",
         "app.scheduling.enabled=false",
         "app.payments.provider=fake",
+        // Uploaded photos land under target/, never in the project's uploads/.
+        "app.uploads.dir=target/test-uploads",
         "app.jwt.secret=${JWT_SECRET:test-secret-test-secret-test-secret-0123456789}",
         "app.bot.token=test-bot-token",
         // Never call the real Telegram API from a test, whatever .env says.

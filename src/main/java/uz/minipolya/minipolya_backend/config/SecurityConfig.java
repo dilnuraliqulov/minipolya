@@ -45,6 +45,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/stadiums/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/reviews/stadium/**").permitAll()
                         .requestMatchers("/webhooks/**").permitAll()
+                        // Uploaded files (stadium photos), public like the stadiums that show them.
+                        .requestMatchers(HttpMethod.GET, "/api/uploads/**").permitAll()
                         // R42: anyone signed in may add a stadium (it starts pending; approval
                         // makes them an owner) and see their own. Exactly these two, no sub-paths.
                         .requestMatchers(HttpMethod.POST, "/api/owner/stadiums").authenticated()

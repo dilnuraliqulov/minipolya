@@ -24,6 +24,18 @@ public class AppProperties {
     private Security security = new Security();
     private Cors cors = new Cors();
     private Dev dev = new Dev();
+    private Uploads uploads = new Uploads();
+
+    @Getter
+    @Setter
+    public static class Uploads {
+        /**
+         * UPLOADS_DIR: where uploaded files (stadium photos) are stored on the local filesystem,
+         * served back under {@code /api/uploads/**}. Relative paths are taken from the working
+         * directory. Back it up with the database: a photo row points at a file here.
+         */
+        private String dir = "./uploads";
+    }
 
     @Getter
     @Setter

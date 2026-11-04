@@ -3,6 +3,9 @@
 .env.local
 .env.production
 
+# Uploaded files (app.uploads.dir)
+uploads/
+
 # Java / Maven
 target/
 *.class

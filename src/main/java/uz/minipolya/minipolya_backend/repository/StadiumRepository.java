@@ -1,7 +1,9 @@
 package uz.minipolya.minipolya_backend.repository;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -17,6 +19,11 @@ import java.util.UUID;
 public interface StadiumRepository extends JpaRepository<Stadium, UUID>, JpaSpecificationExecutor<Stadium> {
 
     Optional<Stadium> findByIdAndStatus(UUID id, String status);
+
+    /** The row, locked until the transaction ends — so two photo uploads cannot both take the 10th place. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM Stadium s WHERE s.id = :id")
+    Optional<Stadium> findForUpdate(@Param("id") UUID id);
 
     List<Stadium> findByOwnerId(UUID ownerId);
 
