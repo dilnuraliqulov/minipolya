@@ -100,6 +100,16 @@ public class BookingController {
         return ApiResponse.ok(bookingService.getStadiumBookings(ownerId, stadiumId, from, to, page, size));
     }
 
+    /**
+     * R37: the owner took the rest of a booking in cash. Answers the owner's view of the
+     * booking; the player's app payment and this are first-come, first-served.
+     */
+    @PostMapping("/api/owner/bookings/{bookingId}/cash")
+    public ApiResponse<BookingResponse> recordCash(@AuthenticationPrincipal UUID ownerId,
+                                                   @PathVariable UUID bookingId) {
+        return ApiResponse.ok(bookingService.recordCashByOwner(ownerId, bookingId), "Cash recorded");
+    }
+
     @DeleteMapping("/api/owner/bookings/{bookingId}")
     public ApiResponse<BookingResponse> cancelByOwner(@AuthenticationPrincipal UUID ownerId,
                                                       @PathVariable UUID bookingId,

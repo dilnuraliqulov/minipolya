@@ -1022,6 +1022,17 @@ public class PaymentService {
         return refunded;
     }
 
+    /**
+     * Whether a card payment of this booking is still being settled with the provider — its
+     * outcome unknown, so money may yet land. The owner must not record the same money in
+     * cash meanwhile.
+     */
+    @Transactional(readOnly = true)
+    public boolean hasPaymentInFlight(UUID bookingId) {
+        return paymentRepository.existsByBookingIdAndStatusIn(bookingId,
+                java.util.List.of(Payment.Status.PROCESSING, Payment.Status.CAPTURE_PENDING));
+    }
+
     @Transactional
     public Payment recordCashPayment(UUID bookingId, UUID ownerUserId) {
         Booking booking = bookingRepository.findById(bookingId)

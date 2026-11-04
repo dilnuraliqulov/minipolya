@@ -26,6 +26,7 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.BookingExpiredException;
+import uz.minipolya.minipolya_backend.exception.ConflictException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.exception.SlotAlreadyBookedException;
@@ -179,7 +180,8 @@ public class BookingService {
      */
     @Transactional
     public BookingResponse payRemainder(UUID userId, UUID bookingId, UUID cardId) {
-        Booking booking = requireBooking(bookingId);
+        // Locked, like the owner's cash: whichever settles first, the other sees it.
+        Booking booking = requireBookingForUpdate(bookingId);
         if (booking.getUser() == null || !booking.getUser().getId().equals(userId)) {
             throw new ForbiddenException("This booking does not belong to you");
         }
@@ -223,6 +225,42 @@ public class BookingService {
             return cardPricing.toOwner(playerAmount);
         }
         return new CardFeeSplit(playerAmount, playerAmount, 0L, playerAmount - booking.getRemainingAmount());
+    }
+
+    /**
+     * R37: the owner took what is still owed on a booking in cash. The same money the player
+     * would pay with {@link #payRemainder} — {@code remainingAmount} — recorded by
+     * {@link PaymentService#recordCashPayment}; whichever lands first wins.
+     *
+     * <p>Applies to a live (confirmed or completed) booking that is partially paid, or a
+     * manual booking still unpaid. A game booking's remainders belong to its teams
+     * ({@code POST /api/games/{id}/cash}), and a pending, cancelled or expired booking has
+     * nothing to complete: 400 "This booking has no part payment to complete". Nothing left:
+     * 400 "Already paid". A card payment of the booking still being confirmed: 409.
+     */
+    @Transactional
+    public BookingResponse recordCashByOwner(UUID ownerId, UUID bookingId) {
+        Booking booking = requireBookingForUpdate(bookingId);
+        if (!booking.getStadium().getOwner().getId().equals(ownerId)) {
+            throw new ForbiddenException("You do not own this stadium");
+        }
+        if (booking.getPaymentStatus() == Booking.PaymentStatus.PAID) {
+            throw new BadRequestException("Already paid");
+        }
+        boolean live = "confirmed".equals(booking.getStatus()) || "completed".equals(booking.getStatus());
+        boolean owed = booking.getPaymentStatus() == Booking.PaymentStatus.PARTIALLY_PAID
+                || (booking.getPaymentStatus() == Booking.PaymentStatus.UNPAID && "manual".equals(booking.getSource()));
+        if (!live || !owed || "game".equals(booking.getSource())) {
+            throw new BadRequestException("This booking has no part payment to complete");
+        }
+        if (paymentService.hasPaymentInFlight(bookingId)) {
+            throw new ConflictException("A payment for this booking is being processed");
+        }
+
+        paymentService.recordCashPayment(bookingId, ownerId);
+        log.info("Cash recorded by owner: bookingId={} ownerId={} paymentStatus={}",
+                bookingId, ownerId, booking.getPaymentStatus().getValue());
+        return bookingResponseFactory.forOwner(booking);
     }
 
     /** Owner adds a walk-in/phone booking: confirmed immediately, no hold. */
@@ -456,6 +494,11 @@ public class BookingService {
 
     private Booking requireBooking(UUID bookingId) {
         return bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
+    }
+
+    private Booking requireBookingForUpdate(UUID bookingId) {
+        return bookingRepository.findForUpdate(bookingId)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
     }
 

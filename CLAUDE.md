@@ -350,10 +350,18 @@ settled two ways, and whichever lands first wins:
   the whole remainder to a saved card, at any time, **before or after the game**.
   Paying after the game leaves the booking `completed`; it is never dragged back
   to `confirmed`.
-- `POST /api/bookings/{id}/cash` — the owner marks the same money as received in
-  cash (it takes `remainingAmount`, not the full price).
+- `POST /api/owner/bookings/{id}/cash` (R37, no body) — the owner marks the same money as
+  received in cash (it takes `remainingAmount`, not the full price), through
+  `PaymentService.recordCashPayment`; answers the owner's `BookingResponse`, "Cash recorded".
+  It applies to a `confirmed`/`completed` booking that is `partially_paid`, or a manual
+  booking still `unpaid`; anything else (pending, cancelled, expired, a game booking —
+  its teams' remainders go through `POST /api/games/{id}/cash`) is **400 "This booking has
+  no part payment to complete"**. A card payment of the booking still `processing` /
+  `capture_pending` (outcome unknown) is **409 "A payment for this booking is being
+  processed"**. 403 "You do not own this stadium", 404 "Booking not found".
 
-Once `payment_status` is `paid`, the other one answers **400 "Already paid"**.
+Both lock the booking row (`BookingRepository.findForUpdate`), so they settle one at a
+time. Once `payment_status` is `paid`, the other one answers **400 "Already paid"**.
 The remainder is charged as a `remainder` payment row, and a declined card
 leaves the booking `partially_paid` with a `failed` row.
 
@@ -1090,6 +1098,7 @@ alongside (`playerPrice`, `playerMinBookingAmount`).
 | `PUT /api/owner/stadiums/{id}` | partial update; audited `STADIUM_UPDATED` |
 | `POST /api/owner/stadiums/{id}/photos` | multipart field `file` → `PhotoResponse {id,url,position}`, "Photo uploaded" (R36, see "Stadium photos") |
 | `DELETE /api/owner/stadiums/{id}/photos/{photoId}` | `data: null`, "Photo deleted"; the rest renumbered 0..n-1; 404 "Photo not found" if not this stadium's |
+| `POST /api/owner/bookings/{id}/cash` | the rest of a booking taken in cash (R37) — see "Paying for a booking" |
 | `PUT /api/owner/stadiums/{id}/photos/order` | `{ photoIds: UUID[] }` = every photo exactly once, else 400 "photoIds must list every photo of the stadium exactly once" → `PhotoResponse[]` in order, "Photos reordered" |
 
 ### Stadium photos

@@ -22,6 +22,9 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
 
     List<Payment> findByBookingId(UUID bookingId);
 
+    /** Whether a booking has a payment in one of these statuses — e.g. a charge still being confirmed. */
+    boolean existsByBookingIdAndStatusIn(UUID bookingId, Collection<Payment.Status> statuses);
+
     List<Payment> findByGameId(UUID gameId);
 
     /** Every payment of several bookings in one query — for a list of bookings. */

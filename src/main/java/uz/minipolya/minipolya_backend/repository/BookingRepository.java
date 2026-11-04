@@ -2,8 +2,10 @@ package uz.minipolya.minipolya_backend.repository;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -12,12 +14,21 @@ import uz.minipolya.minipolya_backend.entity.Booking;
 import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Repository
 public interface BookingRepository extends JpaRepository<Booking, UUID>, JpaSpecificationExecutor<Booking> {
 
     List<Booking> findByUserIdAndStatusIn(UUID userId, Collection<String> statuses);
+
+    /**
+     * The row, locked until the transaction ends — so the owner's cash and the player's
+     * remainder charge settle one at a time, and the second sees the first's outcome.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT b FROM Booking b WHERE b.id = :id")
+    Optional<Booking> findForUpdate(@Param("id") UUID id);
 
     List<Booking> findByStadiumIdAndStartsAtBetween(UUID stadiumId, OffsetDateTime from, OffsetDateTime to);
 

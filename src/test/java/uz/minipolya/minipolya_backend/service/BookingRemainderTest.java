@@ -97,6 +97,7 @@ class BookingRemainderTest {
                 .endsAt(OffsetDateTime.now(ZoneOffset.UTC).plusDays(2).plusHours(2))
                 .build();
         when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findForUpdate(BOOKING_ID)).thenReturn(Optional.of(booking));
         return booking;
     }
 
