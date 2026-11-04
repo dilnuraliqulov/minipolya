@@ -1075,6 +1075,20 @@ approved until its owner's contract is signed. Changes are audited
 old `users.atmos_recipient_id` by changeset 037 are `signed` with no legal type or tin
 until an admin fills them in.
 
+## Owner API
+
+Owner endpoints live under `/api/owner/**` (owner role; see "Endpoint Security" for the two
+exceptions). Every per-stadium endpoint checks ownership the same way, in any stadium status:
+**404 "Stadium not found"**, then **403 "You do not own this stadium"**
+(`StadiumService.requireOwnedStadium`). Prices are the owner's own, with the player price
+alongside (`playerPrice`, `playerMinBookingAmount`).
+
+| Endpoint | What |
+|---|---|
+| `POST /api/owner/stadiums` · `GET /api/owner/stadiums` | add a stadium (starts `pending`) · the caller's stadiums with `status` / `statusReason` — any signed-in user (R42) |
+| `GET /api/owner/stadiums/{id}` | one of the caller's stadiums, any status: the `StadiumDetailResponse` that `PUT` returns, built by the same code (R35) |
+| `PUT /api/owner/stadiums/{id}` | partial update; audited `STADIUM_UPDATED` |
+
 ## Auth
 
 ### Telegram Mini App (primary)

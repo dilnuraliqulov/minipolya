@@ -86,16 +86,12 @@ public class StadiumService {
                 .entity(AuditEntityType.STADIUM, saved.getId(), AuditLabels.stadium(saved))
                 .diff(Map.of(), auditSnapshot(saved)));
         log.info("Stadium created: id={} ownerId={} status={}", saved.getId(), ownerId, saved.getStatus());
-        return ownerPrices(stadiumMapper.toDetailResponse(saved));
+        return toOwnerDetail(saved);
     }
 
     @Transactional
     public StadiumDetailResponse update(UUID ownerId, UUID stadiumId, UpdateStadiumRequest request) {
-        Stadium stadium = stadiumRepository.findById(stadiumId)
-                .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
-        if (!stadium.getOwner().getId().equals(ownerId)) {
-            throw new ForbiddenException("You do not own this stadium");
-        }
+        Stadium stadium = requireOwnedStadium(ownerId, stadiumId);
 
         requireValidMinBookingAmount(request.getMinBookingAmount());
         // Absent leaves the district as it is (the update only touches what is sent).
@@ -127,7 +123,35 @@ public class StadiumService {
             auditService.record(audit);
         }
         log.info("Stadium updated: id={} ownerId={}", saved.getId(), ownerId);
-        return ownerPrices(stadiumMapper.toDetailResponse(saved));
+        return toOwnerDetail(saved);
+    }
+
+    /**
+     * R35: the owner's own stadium in any status, exactly as {@link #update} answers it —
+     * the owner's prices with the player prices alongside, status and status reason.
+     */
+    @Transactional(readOnly = true)
+    public StadiumDetailResponse getOwnerDetail(UUID ownerId, UUID stadiumId) {
+        return toOwnerDetail(requireOwnedStadium(ownerId, stadiumId));
+    }
+
+    /**
+     * The stadium, if the caller owns it — any status. 404 "Stadium not found", 403 "You do
+     * not own this stadium".
+     */
+    @Transactional(readOnly = true)
+    public Stadium requireOwnedStadium(UUID ownerId, UUID stadiumId) {
+        Stadium stadium = stadiumRepository.findById(stadiumId)
+                .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
+        if (!stadium.getOwner().getId().equals(ownerId)) {
+            throw new ForbiddenException("You do not own this stadium");
+        }
+        return stadium;
+    }
+
+    /** The owner's view of one stadium: what create, update and the owner detail return. */
+    StadiumDetailResponse toOwnerDetail(Stadium stadium) {
+        return ownerPrices(stadiumMapper.toDetailResponse(stadium));
     }
 
     @Transactional(readOnly = true)

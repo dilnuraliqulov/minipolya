@@ -68,6 +68,13 @@ public class StadiumController {
         return ApiResponse.ok(stadiumService.create(ownerId, request), "Stadium submitted for review");
     }
 
+    /** R35: the owner's own stadium, any status, exactly as {@code PUT} answers it. */
+    @GetMapping("/api/owner/stadiums/{id}")
+    public ApiResponse<StadiumDetailResponse> ownerDetail(@AuthenticationPrincipal UUID ownerId,
+                                                          @PathVariable UUID id) {
+        return ApiResponse.ok(stadiumService.getOwnerDetail(ownerId, id));
+    }
+
     @PutMapping("/api/owner/stadiums/{id}")
     public ApiResponse<StadiumDetailResponse> update(@AuthenticationPrincipal UUID ownerId,
                                                      @PathVariable UUID id,
