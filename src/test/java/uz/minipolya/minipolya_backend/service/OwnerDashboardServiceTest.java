@@ -147,12 +147,31 @@ class OwnerDashboardServiceTest {
                 Payment.builder().amount(50_000L).createdAt(d1).build(),
                 Payment.builder().amount(70_000L).createdAt(d2).build()));
 
-        OwnerRevenueResponse revenue = service.getRevenue(STADIUM_ID, OWNER_ID);
+        OwnerRevenueResponse revenue = service.getRevenue(STADIUM_ID, OWNER_ID, 30);
 
-        assertThat(revenue.getDailyRevenue()).hasSize(2);
-        assertThat(revenue.getDailyRevenue().get(0).getRevenue()).isEqualTo(150_000);
-        assertThat(revenue.getDailyRevenue().get(0).getBookingCount()).isEqualTo(2);
-        assertThat(revenue.getDailyRevenue().get(1).getRevenue()).isEqualTo(70_000);
+        // Every day of the window, oldest first, ending today; empty days are zero.
+        assertThat(revenue.getDailyRevenue()).hasSize(30);
+        assertThat(revenue.getDailyRevenue().get(0).getDate()).isEqualTo(LocalDate.now(TASHKENT).minusDays(29));
+        assertThat(revenue.getDailyRevenue().get(0).getRevenue()).isZero();
+        assertThat(revenue.getDailyRevenue().get(0).getBookingCount()).isZero();
+        assertThat(revenue.getDailyRevenue().get(28).getRevenue()).isEqualTo(150_000);
+        assertThat(revenue.getDailyRevenue().get(28).getBookingCount()).isEqualTo(2);
+        assertThat(revenue.getDailyRevenue().get(29).getDate()).isEqualTo(LocalDate.now(TASHKENT));
+        assertThat(revenue.getDailyRevenue().get(29).getRevenue()).isEqualTo(70_000);
+
+        OwnerRevenueResponse week = service.getRevenue(STADIUM_ID, OWNER_ID, 7);
+        assertThat(week.getDailyRevenue()).hasSize(7);
+        assertThat(week.getDailyRevenue().get(6).getRevenue()).isEqualTo(70_000);
+    }
+
+    @Test
+    void getRevenueTakesOnly7Or30Days() {
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        for (int days : new int[]{0, 1, 14, 31, -7}) {
+            assertThatThrownBy(() -> service.getRevenue(STADIUM_ID, OWNER_ID, days))
+                    .isInstanceOf(uz.minipolya.minipolya_backend.exception.BadRequestException.class)
+                    .hasMessage("days must be 7 or 30");
+        }
     }
 
     @Test
@@ -271,9 +290,9 @@ class OwnerDashboardServiceTest {
                         Payment.builder().amount(2_000_000_000L).createdAt(day).build(),
                         Payment.builder().amount(2_000_000_000L).createdAt(day).build()));
 
-        OwnerRevenueResponse revenue = service.getRevenue(STADIUM_ID, OWNER_ID);
+        OwnerRevenueResponse revenue = service.getRevenue(STADIUM_ID, OWNER_ID, 30);
 
-        assertThat(revenue.getDailyRevenue().get(0).getRevenue()).isEqualTo(4_000_000_000L);
+        assertThat(revenue.getDailyRevenue().get(29).getRevenue()).isEqualTo(4_000_000_000L);
     }
 
     @Test

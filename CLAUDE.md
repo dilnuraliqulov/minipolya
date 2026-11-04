@@ -1107,6 +1107,7 @@ alongside (`playerPrice`, `playerMinBookingAmount`).
 | `POST /api/owner/stadiums/{id}/photos` | multipart field `file` → `PhotoResponse {id,url,position}`, "Photo uploaded" (R36, see "Stadium photos") |
 | `DELETE /api/owner/stadiums/{id}/photos/{photoId}` | `data: null`, "Photo deleted"; the rest renumbered 0..n-1; 404 "Photo not found" if not this stadium's |
 | `GET /api/owner/legal-details` | the caller's own `{ legalType?, atmosContractStatus, ownerContractStatus }` (R39), read-only; see "Owner legal details" |
+| `GET /api/owner/dashboard/stadiums/{id}/revenue?days=` | `{ stadiumId, dailyRevenue: [{ date, revenue, bookingCount }] }`: `days` 7 or 30 (default 30, anything else 400 "days must be 7 or 30"); **every** Tashkent day of the window, oldest first, ending today, `0` / `0` on a day without payments (R43). Revenue as before: completed `booking` payments, by `created_at` |
 | `POST /api/owner/bookings/{id}/cash` | the rest of a booking taken in cash (R37) — see "Paying for a booking" |
 | `PUT /api/owner/stadiums/{id}/photos/order` | `{ photoIds: UUID[] }` = every photo exactly once, else 400 "photoIds must list every photo of the stadium exactly once" → `PhotoResponse[]` in order, "Photos reordered" |
 

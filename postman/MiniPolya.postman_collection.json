@@ -14366,7 +14366,8 @@
                   "});",
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
-                  "});"
+                  "});",
+                  "pm.test('every day of 30, oldest first (R43)', function () { var d = pm.response.json().data.dailyRevenue; pm.expect(d).to.have.length(30); pm.expect(d[0].date < d[29].date).to.eql(true); });"
                 ]
               }
             }
@@ -14391,6 +14392,114 @@
                 "stadiums",
                 "{{stadiumId}}",
                 "revenue"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "200 revenue, last 7 days (R43)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('7 days', function () { pm.expect(pm.response.json().data.dailyRevenue).to.have.length(7); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/dashboard/stadiums/{{stadiumId}}/revenue?days=7",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "dashboard",
+                "stadiums",
+                "{{stadiumId}}",
+                "revenue"
+              ],
+              "query": [
+                {
+                  "key": "days",
+                  "value": "7"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "400 revenue, days=14 (R43)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql('days must be 7 or 30'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/dashboard/stadiums/{{stadiumId}}/revenue?days=14",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "dashboard",
+                "stadiums",
+                "{{stadiumId}}",
+                "revenue"
+              ],
+              "query": [
+                {
+                  "key": "days",
+                  "value": "14"
+                }
               ]
             },
             "description": ""

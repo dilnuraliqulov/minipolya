@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameTeam;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.Stadium;
+import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 
@@ -38,6 +39,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -109,24 +111,39 @@ public class OwnerDashboardService {
                 .build();
     }
 
+    /** The windows {@code GET .../revenue?days=} accepts. */
+    public static final Set<Integer> REVENUE_WINDOWS = Set.of(7, 30);
+
+    /**
+     * R43: revenue per Tashkent day for the last {@code days} days (7 or 30, else 400 "days
+     * must be 7 or 30"), oldest first and ending today. Every day of the window is present,
+     * 0 / 0 on a day without payments. The revenue definition itself is unchanged.
+     */
     @Transactional(readOnly = true)
-    public OwnerRevenueResponse getRevenue(UUID stadiumId, UUID ownerUserId) {
+    public OwnerRevenueResponse getRevenue(UUID stadiumId, UUID ownerUserId, int days) {
+        if (!REVENUE_WINDOWS.contains(days)) {
+            throw new BadRequestException("days must be 7 or 30");
+        }
         requireOwnedStadium(stadiumId, ownerUserId);
         LocalDate today = LocalDate.now(TASHKENT);
-        OffsetDateTime from = startOfDay(today.minusDays(29));
+        LocalDate first = today.minusDays(days - 1L);
+        OffsetDateTime from = startOfDay(first);
         OffsetDateTime to = startOfDay(today.plusDays(1));
 
-        Map<LocalDate, long[]> byDate = new LinkedHashMap<>(); // [revenue in tiyin, count]
+        Map<LocalDate, long[]> byDate = new LinkedHashMap<>(); // [revenue in tiyin, count], oldest first
+        for (LocalDate date = first; !date.isAfter(today); date = date.plusDays(1)) {
+            byDate.put(date, new long[2]);
+        }
         for (Payment payment : paymentRepository.findStadiumBookingPayments(
                 stadiumId, Payment.Status.COMPLETED, Payment.PaymentType.BOOKING, from, to)) {
-            LocalDate date = payment.getCreatedAt().atZoneSameInstant(TASHKENT).toLocalDate();
-            long[] agg = byDate.computeIfAbsent(date, d -> new long[2]);
-            agg[0] += payment.getAmount();
-            agg[1] += 1;
+            long[] agg = byDate.get(payment.getCreatedAt().atZoneSameInstant(TASHKENT).toLocalDate());
+            if (agg != null) {
+                agg[0] += payment.getAmount();
+                agg[1] += 1;
+            }
         }
 
         List<DailyRevenue> daily = byDate.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
                 .map(e -> DailyRevenue.builder()
                         .date(e.getKey()).revenue(e.getValue()[0]).bookingCount((int) e.getValue()[1]).build())
                 .toList();

@@ -44,10 +44,12 @@ public class OwnerDashboardController {
         return ApiResponse.ok(dashboardService.getStats(stadiumId, ownerId));
     }
 
+    /** {@code days}: 7 or 30 (default 30); every day of the window, oldest first, ending today. */
     @GetMapping("/api/owner/dashboard/stadiums/{stadiumId}/revenue")
     public ApiResponse<OwnerRevenueResponse> revenue(@AuthenticationPrincipal UUID ownerId,
-                                                     @PathVariable UUID stadiumId) {
-        return ApiResponse.ok(dashboardService.getRevenue(stadiumId, ownerId));
+                                                     @PathVariable UUID stadiumId,
+                                                     @RequestParam(defaultValue = "30") int days) {
+        return ApiResponse.ok(dashboardService.getRevenue(stadiumId, ownerId, days));
     }
 
     @GetMapping("/api/owner/dashboard/stadiums/{stadiumId}/schedule")
