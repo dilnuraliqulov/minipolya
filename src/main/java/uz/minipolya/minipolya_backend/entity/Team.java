@@ -49,6 +49,14 @@ public class Team {
     @Column(nullable = false, length = 100)
     private String name;
 
+    /**
+     * R32: the code in the team's invite link — random, URL-safe, unique. Null until the
+     * leader first asks for a link; replaced (old links dead) when the leader renews it.
+     * Never in a team response: only the leader gets it, from the invite endpoint.
+     */
+    @Column(name = "invite_code", length = 32, unique = true)
+    private String inviteCode;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 

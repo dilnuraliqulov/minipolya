@@ -7,12 +7,15 @@ import org.springframework.stereotype.Repository;
 import uz.minipolya.minipolya_backend.entity.Team;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Repository
 public interface TeamRepository extends JpaRepository<Team, UUID> {
 
     List<Team> findByLeaderId(UUID leaderId);
+
+    Optional<Team> findByInviteCode(String inviteCode);
 
     /** Every team a user leads or belongs to, its leader loaded with it, by name. */
     @Query("""

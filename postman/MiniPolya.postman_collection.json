@@ -9340,6 +9340,521 @@
           }
         },
         {
+          "name": "200 the leader gets the invite code (R32)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('captured inviteCode', function () { var v = pm.response.json().data.code; pm.expect(v).to.match(/^[A-Za-z0-9_-]{22}$/); pm.environment.set('inviteCode', v); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{teamLeaderAToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/teams/{{teamAId}}/invite",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "teams",
+                "{{teamAId}}",
+                "invite"
+              ]
+            },
+            "description": "R32: { code } — 22 URL-safe characters, created on first request. The Mini App builds the link from it."
+          }
+        },
+        {
+          "name": "403 invite code as a non-leader (R32)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql('Only the team leader can perform this action'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/teams/{{teamAId}}/invite",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "teams",
+                "{{teamAId}}",
+                "invite"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "200 renew the invite code (R32)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('a new code', function () { var v = pm.response.json().data.code; pm.expect(v).to.not.eql(pm.environment.get('inviteCode')); pm.environment.set('oldInviteCode', pm.environment.get('inviteCode')); pm.environment.set('inviteCode', v); });",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql('Invite link renewed'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{teamLeaderAToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/teams/{{teamAId}}/invite",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "teams",
+                "{{teamAId}}",
+                "invite"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "404 the old invite link is dead (R32)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () { pm.response.to.have.status(404); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql('Invite not found'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/teams/invite/{{oldInviteCode}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "teams",
+                "invite",
+                "{{oldInviteCode}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "200 preview the invite (R32)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('team and isMember', function () { var d = pm.response.json().data; pm.expect(d.team.id).to.eql(pm.environment.get('teamAId')); pm.expect(d.isMember).to.eql(false); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/teams/invite/{{inviteCode}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "teams",
+                "invite",
+                "{{inviteCode}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "200 join by invite (R32)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql('Joined team'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/teams/join",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "teams",
+                "join"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{inviteCode}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "409 join again (R32)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql('User is already a member of this team'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/teams/join",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "teams",
+                "join"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{inviteCode}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "404 join with an unknown code (R32)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () { pm.response.to.have.status(404); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql('Invite not found'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/teams/join",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "teams",
+                "join"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"nope\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "400 join without a code (R32)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/teams/join",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "teams",
+                "join"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "401 join without a token (R32)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/teams/join",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "teams",
+                "join"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{inviteCode}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
           "name": "400 add without a userId",
           "event": [
             {

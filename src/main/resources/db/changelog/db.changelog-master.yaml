@@ -83,3 +83,5 @@ databaseChangeLog:
       file: db/changelog/changes/041-user-profile-names.sql
   - include:
       file: db/changelog/changes/042-telegram-bot.sql
+  - include:
+      file: db/changelog/changes/043-team-invite-code.sql
