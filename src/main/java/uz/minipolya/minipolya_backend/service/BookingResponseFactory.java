@@ -70,7 +70,7 @@ public class BookingResponseFactory {
         if (booking.getPrice() != null) {
             setPlayerAmounts(response, booking, cardPricing);
         }
-        response.setDeclineReason(declineReasonOf(payments));
+        setPaymentState(response, payments);
         return response;
     }
 
@@ -79,16 +79,57 @@ public class BookingResponseFactory {
      * or null — when it was not refused, or a later one went through.
      */
     static DeclineReason declineReasonOf(List<Payment> payments) {
+        return latestCardPayment(payments)
+                .filter(p -> p.getStatus() == Payment.Status.FAILED)
+                .map(Payment::getDeclineReason)
+                .orElse(null);
+    }
+
+    /** Money that reached the card holder's payee — kept, or given back since. */
+    private static final Set<Payment.Status> ARRIVED = Set.of(
+            Payment.Status.PAID, Payment.Status.CAPTURED, Payment.Status.COMPLETED,
+            Payment.Status.REFUNDED, Payment.Status.RETURN_PENDING, Payment.Status.REFUND_FAILED);
+
+    /**
+     * Where the booking's latest card payment stands (the same payment {@link #declineReasonOf}
+     * reads, so {@code declined} exactly when a reason is present): {@code paid} — its money
+     * arrived (even if given back since); {@code processing} — no answer yet; {@code declined}
+     * — the provider refused it, see the reason; {@code failed} — it failed without a refusal
+     * (e.g. never acknowledged); {@code none} — no card payment (cash, manual, game bookings).
+     */
+    static BookingResponse.PaymentState paymentStateOf(List<Payment> payments) {
+        return latestCardPayment(payments).map(p -> {
+            if (p.getStatus() == Payment.Status.FAILED) {
+                return p.getDeclineReason() != null
+                        ? BookingResponse.PaymentState.DECLINED
+                        : BookingResponse.PaymentState.FAILED;
+            }
+            if (ARRIVED.contains(p.getStatus())) {
+                return BookingResponse.PaymentState.PAID;
+            }
+            return p.getStatus() == Payment.Status.PROCESSING
+                    || p.getStatus() == Payment.Status.HELD
+                    || p.getStatus() == Payment.Status.CAPTURE_PENDING
+                    ? BookingResponse.PaymentState.PROCESSING
+                    : BookingResponse.PaymentState.NONE;
+        }).orElse(BookingResponse.PaymentState.NONE);
+    }
+
+    /** The booking's latest card payment attempt — in full, deposit or remainder; refunds and cash are not attempts. */
+    private static java.util.Optional<Payment> latestCardPayment(List<Payment> payments) {
         return payments.stream()
                 .filter(p -> p.getMethod() != Payment.Method.CASH)
                 .filter(p -> p.getAmount() != null && p.getAmount() > 0)
                 .filter(p -> p.getPaymentType() == Payment.PaymentType.BOOKING
                         || p.getPaymentType() == Payment.PaymentType.REMAINDER)
                 .max(Comparator.comparing(Payment::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
-                        .thenComparing(Payment::getId, Comparator.nullsLast(Comparator.naturalOrder())))
-                .filter(p -> p.getStatus() == Payment.Status.FAILED)
-                .map(Payment::getDeclineReason)
-                .orElse(null);
+                        .thenComparing(Payment::getId, Comparator.nullsLast(Comparator.naturalOrder())));
+    }
+
+    /** declineReason and paymentState, from the same payments. */
+    private static void setPaymentState(BookingResponse response, List<Payment> payments) {
+        response.setDeclineReason(declineReasonOf(payments));
+        response.setPaymentState(paymentStateOf(payments));
     }
 
     /** price, paidAmount and remainingAmount in the player's terms, adding up for every booking. */
@@ -155,7 +196,7 @@ public class BookingResponseFactory {
                         ? p.getAmount()
                         : pricing.ownerReceives(p.getOwnerAmount() == null ? 0L : p.getOwnerAmount()))
                 .sum());
-        response.setDeclineReason(declineReasonOf(payments));
+        setPaymentState(response, payments);
         return response;
     }
 

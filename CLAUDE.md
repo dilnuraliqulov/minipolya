@@ -791,6 +791,11 @@ unreachable) and shown as:
 - **`declineReason`** on `BookingResponse` (every view): why the booking's latest card
   payment (in full, deposit or remainder) was refused — a declined booking or remainder
   answers 200, so this is where the reason is; absent once a later payment went through;
+- **`paymentState`** on `BookingResponse` (every view, always present), from the same
+  latest card payment, so **`declined` ⇔ `declineReason` present**: `paid` (its money
+  arrived, even if given back since), `processing` (no answer yet), `declined` (refused —
+  see the reason), `failed` (failed without a refusal, e.g. never acknowledged), `none`
+  (no card payment: cash, manual and game bookings). `BookingResponseFactory.paymentStateOf`;
 - **`declineReason`** on `PaymentResponse` (`GET /api/payments/my`) and
   `AdminPaymentResponse`, on a refused row. Never the provider's own code or text.
 

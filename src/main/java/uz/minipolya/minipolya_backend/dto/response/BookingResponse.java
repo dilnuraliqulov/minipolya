@@ -91,6 +91,21 @@ public class BookingResponse {
      * otherwise — including once a later payment went through.
      */
     private DeclineReason declineReason;
+    /**
+     * Where the booking's latest card payment stands: {@code paid}, {@code processing},
+     * {@code declined} (exactly when {@link #declineReason} is present), {@code failed} or
+     * {@code none} (no card payment). Always present.
+     */
+    private PaymentState paymentState;
+
+    public enum PaymentState {
+        PAID, PROCESSING, DECLINED, FAILED, NONE;
+
+        @com.fasterxml.jackson.annotation.JsonValue
+        public String getValue() {
+            return name().toLowerCase(java.util.Locale.ROOT);
+        }
+    }
 
     private OffsetDateTime createdAt;
 }

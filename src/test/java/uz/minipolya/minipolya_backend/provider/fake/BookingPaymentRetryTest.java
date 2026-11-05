@@ -49,12 +49,14 @@ class BookingPaymentRetryTest extends FakeProviderFlowSupport {
         UUID declining = addCard(player, "8600123412340002");
         UUID good = addCard(player, "8600123412341234");
         UUID bookingId = bookingId(book(player, declining, "FULL", slot(4, 10))
+                .andExpect(jsonPath("$.data.paymentState").value("declined"))
                 .andExpect(jsonPath("$.data.declineReason").value("CARD_DECLINED")));
 
         pay(player, bookingId, good)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("confirmed"))
                 .andExpect(jsonPath("$.data.paymentStatus").value("paid"))
+                .andExpect(jsonPath("$.data.paymentState").value("paid"))
                 .andExpect(jsonPath("$.data.declineReason").doesNotExist())
                 .andExpect(jsonPath("$.message").value("Booking confirmed and paid in full"));
 
@@ -94,6 +96,7 @@ class BookingPaymentRetryTest extends FakeProviderFlowSupport {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("pending"))
                 .andExpect(jsonPath("$.data.paymentStatus").value("unpaid"))
+                .andExpect(jsonPath("$.data.paymentState").value("declined"))
                 .andExpect(jsonPath("$.data.declineReason").value("INSUFFICIENT_FUNDS"));
 
         assertThat(bookings.findById(bookingId).orElseThrow().getExpiresAt()).isEqualTo(hold);
@@ -120,7 +123,8 @@ class BookingPaymentRetryTest extends FakeProviderFlowSupport {
         User player = data.user("Retry Processing Player");
         UUID unclear = addCard(player, "8600123412340091");
         UUID good = addCard(player, "8600123412341237");
-        UUID bookingId = bookingId(book(player, unclear, "FULL", slot(4, 14)));
+        UUID bookingId = bookingId(book(player, unclear, "FULL", slot(4, 14))
+                .andExpect(jsonPath("$.data.paymentState").value("processing")));
 
         pay(player, bookingId, good)
                 .andExpect(status().isConflict())
