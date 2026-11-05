@@ -292,6 +292,9 @@ public class PaymentService {
     public Payment confirmCommittedCharge(UUID paymentId) {
         Payment row = paymentRepository.findForUpdate(paymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (!stillAsSeen(row)) {
+            return row; // moved by another transaction meanwhile
+        }
         if (row.getStatus() != Payment.Status.PROCESSING || row.getProviderTxnId() == null) {
             return row;
         }
@@ -316,6 +319,9 @@ public class PaymentService {
     public boolean markCapturePending(UUID paymentId) {
         Payment row = paymentRepository.findForUpdate(paymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (!stillAsSeen(row)) {
+            return false; // moved by another transaction meanwhile
+        }
         if (row.getStatus() != Payment.Status.HELD) {
             return false;
         }
@@ -335,6 +341,9 @@ public class PaymentService {
     public Payment captureCommitted(UUID paymentId) {
         Payment row = paymentRepository.findForUpdate(paymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (!stillAsSeen(row)) {
+            return row; // moved by another transaction meanwhile
+        }
         if (row.getStatus() != Payment.Status.CAPTURE_PENDING) {
             return row;
         }
@@ -375,6 +384,9 @@ public class PaymentService {
     public boolean markReturnPending(UUID paymentId) {
         Payment row = paymentRepository.findForUpdate(paymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (!stillAsSeen(row)) {
+            return false; // moved by another transaction meanwhile
+        }
         if (row.getAmount() == null || row.getAmount() <= 0 || row.getMethod() == Payment.Method.CASH) {
             return false;
         }
@@ -399,6 +411,9 @@ public class PaymentService {
     public void completeReturn(UUID paymentId, String reason) {
         Payment row = paymentRepository.findForUpdate(paymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (!stillAsSeen(row)) {
+            return; // moved by another transaction meanwhile
+        }
         if (row.getStatus() != Payment.Status.RETURN_PENDING) {
             return; // done meanwhile
         }
@@ -437,6 +452,26 @@ public class PaymentService {
             return;
         }
         recordRefund(row, statusBefore, reason);
+    }
+
+    /**
+     * Locks the payment's row (until this transaction ends) and checks that its committed
+     * status is still the one this copy shows. False means another transaction moved it
+     * meanwhile — refunded it, started giving it back, captured it — and nothing here may act
+     * on the stale copy: above all, never ask the provider to reverse it a second time.
+     * Every give-back, capture and return goes through this before calling the provider.
+     */
+    boolean stillAsSeen(Payment payment) {
+        if (payment.getId() == null) {
+            return true; // not saved yet: nobody else can have touched it
+        }
+        String committed = paymentRepository.lockStatus(payment.getId());
+        if (committed == null || Payment.Status.fromValue(committed) == payment.getStatus()) {
+            return true;
+        }
+        log.info("Payment {} is {} by now, not {}: left to whoever moved it",
+                payment.getId(), committed, payment.getStatus().getValue());
+        return false;
     }
 
     /** The provider splits of a row: the owner's to the owner's recipient, the platform's to the platform. */
@@ -580,6 +615,9 @@ public class PaymentService {
      */
     @Transactional
     public Payment giveBackInFull(Payment original, String reason) {
+        if (!stillAsSeen(original)) {
+            return null; // another transaction is giving it back, or already has
+        }
         if (original.getStatus() == Payment.Status.CAPTURE_PENDING) {
             // Whether the capture went through is unknown; giving back is now the intent, and
             // the reconcile job reverses it if it was taken or releases it if it was not.
@@ -958,7 +996,9 @@ public class PaymentService {
             log.info("Cash payment {} is not refunded through the platform", original.getId());
             return null;
         }
-        if (!REFUNDABLE_STATUSES.contains(original.getStatus())) {
+        // Locked and read as committed: a payment refunded (or being refunded) by another
+        // transaction since this one loaded it is never sent to the provider a second time.
+        if (!stillAsSeen(original) || !REFUNDABLE_STATUSES.contains(original.getStatus())) {
             return null; // never settled, or already given back
         }
         if (original.getAmount() == null || original.getAmount() <= 0) {

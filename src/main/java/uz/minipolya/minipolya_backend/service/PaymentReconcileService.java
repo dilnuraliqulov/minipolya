@@ -73,8 +73,8 @@ public class PaymentReconcileService {
     @Transactional
     public void reconcile(UUID paymentId) {
         Payment payment = paymentRepository.findById(paymentId).orElse(null);
-        if (payment == null || !STUCK.contains(payment.getStatus())) {
-            return; // settled meanwhile
+        if (payment == null || !STUCK.contains(payment.getStatus()) || !paymentService.stillAsSeen(payment)) {
+            return; // settled meanwhile (the row is locked from here on, so nobody settles it twice)
         }
         switch (payment.getStatus()) {
             case PROCESSING -> {

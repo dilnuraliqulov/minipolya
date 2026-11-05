@@ -61,6 +61,14 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
     @Query("SELECT p FROM Payment p WHERE p.id = :id")
     Optional<Payment> findForUpdate(@Param("id") UUID id);
 
+    /**
+     * Locks the row until the transaction ends and answers its status as committed — read
+     * straight from the database, so a payment this transaction loaded earlier (and another
+     * one has refunded since) cannot be acted on from its stale copy. Null when no such row.
+     */
+    @Query(value = "SELECT status FROM payments WHERE id = :id FOR UPDATE", nativeQuery = true)
+    String lockStatus(@Param("id") UUID id);
+
     /** Failed refunds still waiting for an admin: how many, and since when. */
     long countByPaymentTypeAndStatus(Payment.PaymentType paymentType, Payment.Status status);
 

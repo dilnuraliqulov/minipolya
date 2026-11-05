@@ -856,6 +856,13 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   (0 for cash; on rows from before changeset 040, what the card fee and rounding added);
   `provider_commission` is what ATMOS reports. **Amounts never change after insert**;
   only statuses move forward.
+- **Never reversed twice.** Every give-back, refund, capture, return and reconciliation
+  first locks the payment row and re-reads its *committed* status
+  (`PaymentService.stillAsSeen` → `PaymentRepository.lockStatus`, a native
+  `SELECT status … FOR UPDATE`, because a JPA `findForUpdate` of an entity already loaded
+  in the transaction answers with the stale copy). If another transaction has moved it
+  meanwhile — refunded it, started giving it back — nothing is sent to the provider. Two
+  cancellations at once (player and owner) reverse once (`NoDoubleReverseTest`).
 - Statuses: `processing` (provider called, answer not in) → `paid` / `held` / `failed`;
   `held` → `captured` or `released`; a give-back goes through `return_pending` →
   `refunded` / `released`; a capture through `capture_pending` → `captured`. A give-back
