@@ -202,7 +202,8 @@ db/changelog/
     ├── 040-player-price.sql          # drops platform_settings.booking_commission_percent; bookings.pricing_model
     ├── 041-user-profile-names.sql    # users.first_name, users.last_name (set only by the user)
     ├── 042-telegram-bot.sql          # telegram_processed_updates (dedupe), telegram_bot_values (banner file_id)
-    └── 043-team-invite-code.sql      # teams.invite_code (unique, nullable) for invite links (R32)
+    ├── 043-team-invite-code.sql      # teams.invite_code (unique, nullable) for invite links (R32)
+    └── 044-fake-payment-provider.sql # fake_payment_* tables: FakePaymentProvider's state (dev/tests only)
 ```
 
 ### Adding New Migrations
@@ -754,12 +755,22 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   recipient the provider takes from `ATMOS_PLATFORM_RECIPIENT_ID`.
 - `account` is our payment row id: the row is written first (`processing`), so a retry
   never charges twice.
-- A declined card is a `FAILED` outcome. `STPIMS-ERR-092` (transaction closed),
-  `-145` (hold cancelled) and `-144` (hold expired) are `TransactionClosedException`,
-  `HoldCancelledException`, `HoldExpiredException`; any other code is a
-  `PaymentProviderException` carrying it — logged, never shown raw to a player. No
-  answer is a `ProviderTimeoutException`: the payment stays `processing`, never assumed
-  failed, never sent again.
+- A declined card is a `FAILED` outcome. `STPIMS-ERR-092` (transaction closed) and `-100`
+  (already reversed), `-145` (hold cancelled) and `-144` (hold expired) are
+  `TransactionClosedException`, `HoldCancelledException`, `HoldExpiredException`; any
+  other code is a `PaymentProviderException` carrying it — logged, never shown raw to a
+  player. The codes we act on live in `provider/AtmosCodes` (with the ones ATMOS does not
+  document marked as ours). No answer is a `ProviderTimeoutException`: the payment stays
+  `processing`, never assumed failed, never sent again.
+- **A refusal is never a 500.** A charge or hold refused while being created: an
+  unreachable provider (`AtmosCodes.isUnavailable`: HTTP 5xx, `STPIMS-ERR-024/-026/-041/
+  -094/-102`) is **502** "To'lov tizimi vaqtincha ishlamayapti. Birozdan so'ng qayta urinib
+  ko'ring" and nothing is kept; any other refusal (removed card, under the minimum) a
+  `failed` row with `failure_reason`. Refused after creation: left `processing` for the
+  reconcile job. Card binding refusals are **400 with a `code`** (`CardBindingException`):
+  `CARD_NOT_SUPPORTED` "Faqat Uzcard va Humo kartalari qabul qilinadi", `CARD_EXPIRY_INVALID`,
+  `CARD_EXPIRED`, `SMS_CODE_WRONG`, `SMS_CODE_EXPIRED`, `SMS_RESEND_TOO_EARLY`,
+  `SMS_RESEND_UNAVAILABLE`, `BINDING_NOT_FOUND`, `CARD_BINDING_FAILED`; unreachable → 502.
 - **`AtmosPaymentProvider`** is active only under the `atmos` profile and refuses to
   start unless `ATMOS_BASE_URL`, `ATMOS_CONSUMER_KEY`, `ATMOS_CONSUMER_SECRET`,
   `ATMOS_STORE_ID` and `ATMOS_PLATFORM_RECIPIENT_ID` are set. Token from `POST /token`
@@ -767,10 +778,47 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   it once. `ofd_items` are sent only when `ATMOS_OFD_CODE_RENTAL` and
   `ATMOS_OFD_CODE_SERVICE` are both set; `ofd_url` is saved on the payment. It never
   logs a request or response body — only operation names, ids and result codes.
-- **`FakePaymentProvider`** is the default in dev and tests (`app.payments.provider=fake`,
-  not `atmos`) and refuses the `prod` profile: SMS code `111111`, a card ending in `0002`
-  is declined, 1.5% commission per split, a hold lapses after its duration (capture then
-  fails with `HOLD_EXPIRED`), the same account never charges twice.
+- **`FakePaymentProvider`** is the default in dev and tests (`app.payments.provider=fake`).
+  It is never created under `atmos` and the application refuses to start with it under
+  `prod` (`FakeProviderGuardTest`). It answers like ATMOS, with ATMOS's codes, behind the
+  same interface — switching to `AtmosPaymentProvider` changes nothing above it. Its state
+  (bindings, cards with balances, charges and holds with their splits, reverses) is in the
+  `fake_payment_*` tables (changeset 044, `JdbcFakeProviderStore`, plain JDBC — no
+  entities), so it **survives a restart**; each call commits on its own (`REQUIRES_NEW`),
+  so our rollback never undoes what "the provider" did. Tokens are kept only as SHA-256,
+  card numbers and SMS codes not at all. ATMOS keeps 1.5% of each split (rounded so the
+  recipient gets `netAfterFee`); every split must be ≥ 500 so'm; a reverse is whole, once,
+  within 3 months; a hold lapses after its duration; release is idempotent; the same
+  account never charges or holds twice. Settings `app.payments.fake.*`: `otp-length` (6),
+  `otp-ttl-seconds` (180), `resend-cooldown-seconds` (60), `starting-balance` (10 000 000
+  so'm), `min-amount` (500 so'm), `refund-window-months` (3), `delay-min-ms` /
+  `delay-max-ms` (300 / 800; `@DatabaseTest` sets 0).
+- `GET /api/dev/fake-payments?limit=` (dev profile + `X-Dev-Login-Key`, no JWT; 404
+  otherwise): the latest fake cards (masked, balance, scenario), charges and holds (status,
+  splits, commission, what each recipient receives) and reverses. No token anywhere.
+
+##### To simulate X in dev, do Y (fake provider)
+
+| To simulate | Do |
+|---|---|
+| A card that works | any 16 digits starting `8600` (Uzcard) or `9860` (Humo), expiry `MM/YY` not passed, e.g. `8600 1234 1234 1234`, `12/29` — no Luhn check |
+| A card we don't take | any other prefix, e.g. `4111…` → 400 `CARD_NOT_SUPPORTED` |
+| A bad / past expiry | `13/29` → `CARD_EXPIRY_INVALID`; last month → `CARD_EXPIRED` |
+| The SMS code | any 6 digits (`app.payments.fake.otp-length`) |
+| A wrong code | `000000` → `SMS_CODE_WRONG` (the binding stays open) |
+| An expired code | `999999`, or wait 180 s → `SMS_CODE_EXPIRED` |
+| Resending the code | `POST /api/cards/resend {bindingId}`; within 60 s → `SMS_RESEND_TOO_EARLY` |
+| A declined card | card ending `0002` (`STPIMS-ERR-058`): booking stays `pending`, row `failed` |
+| Insufficient funds | ending `0051` (`-057`), or spend the 10 000 000 so'm balance (`-112`) |
+| An expired card at payment | ending `0054` (`-067`) |
+| A lost answer that did charge | ending `0091`: the payment stays `processing`; the reconcile job (or `getCharge`) finds it paid |
+| A lost answer that did not | ending `0092`: `processing`, then `failed` on reconciliation |
+| The provider down | ending `0099`: every charge / hold → 502 |
+| A refund the provider refuses | ending `0098`: payments work, every reverse is refused (`-15`) → `refund_failed`, then admin retry / mark-refunded |
+| A team game whose capture fails | creator's card ending `0097`: the hold works, the capture is refused and the hold cancelled → the joiner is reversed and the game ends |
+| A hold that lapses | create a team game, then let `hold_expires_at` pass (or move `games.starts_at` inside 3 h and let `GameTimeoutJob` release it) |
+| An amount ATMOS refuses | any split under 500 so'm → `STPIMS-ERR-039`, a `failed` row |
+| What happened | `GET /api/dev/fake-payments` with `X-Dev-Login-Key` |
 - `LegacyCheckoutProvider` (Payme/Click hosted checkout) is **legacy**, kept only as the
   no-`cardId` branch of the friends-game pay endpoint. Never use it in a new flow.
 
@@ -852,12 +900,15 @@ from then on only an admin retries them, so the two never race.
 
 `saved_cards` keeps the provider token **encrypted at rest** (AES-256-GCM,
 `CARD_TOKEN_KEY`; required under the `prod` and `atmos` profiles), the provider's card
-id, a masked number (`8600 •••• 1234`), the expiry ATMOS reports and an active flag. The
+id, a masked number (`8600 •••• •••• 1234`, `provider/CardMask` for both providers; rows
+saved earlier keep `8600 •••• 1234`), the expiry ATMOS reports and an active flag. The
 card number and the expiry the player typed go straight to ATMOS and are **never stored
 or logged**; the token never appears in any API response. The player sees only the
 masked number and expiry; deleting a card removes it at ATMOS (`removeCard`) and sets
-`is_active = false`. Endpoints: `POST /api/cards`, `POST /api/cards/confirm`,
-`GET /api/cards`, `DELETE /api/cards/{id}`.
+`is_active = false`. Endpoints: `POST /api/cards` (→ `bindingId`, `maskedPhone` like
+`+998 ** *** ** 58`), `POST /api/cards/resend {bindingId}` (a new code after 60 s),
+`POST /api/cards/confirm`, `GET /api/cards`, `DELETE /api/cards/{id}`. Refusals: see "The
+provider" above.
 
 **Never logged or returned**: card numbers, expiry dates, SMS codes, card tokens, ATMOS
 credentials or access tokens. The request DTOs and provider records override
@@ -880,6 +931,13 @@ credentials or access tokens. The request DTOs and provider records override
       means "released" (its example) or an error.
 - [ ] The token lifetime: the text says 3600 s, the example 2525.
 - [ ] `/token`: `grant_type` in the form body (the docs) or the query string?
+- [ ] Card binding: no way to resend the SMS code is documented (only `pay/retry-otp`, for
+      payments). `AtmosPaymentProvider.resendBindingCode` answers `BIND_RESEND_UNSUPPORTED`
+      (→ `SMS_RESEND_UNAVAILABLE`: enter the card again). Nor are codes for an expired OTP or
+      a resend too soon (we use `OTP_EXPIRED`, `OTP_RESEND_TOO_EARLY`).
+- [ ] The code for a reverse past the refund window (the fake uses `STPIMS-ERR-113`), and the
+      window itself (3 months assumed).
+- [ ] Is the 500 so'm minimum per split transaction or per payment? The fake checks each split.
 
 ### Availability Calculation
 
@@ -1188,6 +1246,7 @@ in every other profile the paths are 404. `DevProfileGuard` makes the applicatio
 request must send that key in **`X-Dev-Login-Key`**: `DevLoginKeyInterceptor` compares
 SHA-256 digests in constant time, and a missing or wrong key answers exactly like an
 unknown path — 404 "Not found" — before the body is read. Never enable it on a server.
+The same key guards `GET /api/dev/fake-payments` (see "Payments → The provider").
 
 ### Telegram Login Widget (web dashboard)
 - Same flow, different payload format
@@ -1291,6 +1350,8 @@ WHERE LOWER(username) = LOWER('dilnur');
 - `/api/games/**` → authenticated
 - `/api/teams/**` → authenticated
 - `GET /api/uploads/**` → public (uploaded stadium photos, see "Stadium photos")
+- `GET /api/dev/**` → no JWT; exists only under the `dev` profile, behind `X-Dev-Login-Key`
+  (the fake payments view)
 - `/webhooks/**` → verify provider signature, no JWT (`/webhooks/telegram`: the
   `X-Telegram-Bot-Api-Secret-Token` header, see "Telegram bot")
 
@@ -1431,6 +1492,7 @@ For paginated lists:
   - `app.game.opponent-deadline-hours` (default 3) is the team-game joining
     cutoff. Money rules live in `platform_settings`, not here — only timing does.
   - `app.admin-login.*` holds the admin password sign-in limits (see "Admin accounts").
+  - `app.payments.fake.*` shapes the fake provider (see "Payments → The provider").
 - Use constructor injection (Lombok `@RequiredArgsConstructor`), never `@Autowired` on fields
 - Log important actions: booking created, payment received, game confirmed, errors
 - Write unit tests for service layer, integration tests for controllers
