@@ -349,6 +349,17 @@ on `PUT /api/owner/stadiums/{id}` (R41; a plain null is "leave as is").
   `pending` with a `failed` payment row, so the usual hold timeout expires it;
   the create call still answers 200 with `paymentStatus: unpaid`, and the
   message says the payment failed.
+- **Paying it again (R28):** `POST /api/bookings/{id}/pay` `{ cardId }` — the booking's
+  own player, while it is `pending` and its hold has not run out, with no payment of it
+  `processing` or arrived. The **same amount** as the first attempt (the deposit or the
+  whole price), on the same path (`PaymentService.chargeForBooking`): success confirms it;
+  a decline is still **200**, `pending`, the **same `expiresAt`** (the hold is never
+  extended) and the new `declineReason`. The booking row is locked for the call, so two
+  taps at once charge once. Errors: **409** `BOOKING_NOT_PENDING` "This booking is not
+  awaiting payment", **409** `BOOKING_EXPIRED` "The booking's hold has expired; book the
+  slot again", **409** `PAYMENT_IN_PROGRESS` "A payment for this booking is being
+  processed"; 403 "This booking does not belong to you"; 404 "Booking not found" / "Card
+  not found". Audited `BOOKING_PAYMENT_RETRIED` (PLAYER). Same messages as creation.
 **Paying off the rest.** While a booking is `partially_paid` the remainder can be
 settled two ways, and whichever lands first wins:
 
@@ -1090,7 +1101,7 @@ number is not logged either; their name is part of the booking label.
 |---|---|
 | Admin | `ADMIN_LOGIN_SUCCEEDED`, `ADMIN_LOGIN_FAILED`, `APPLICATION_APPROVED`, `APPLICATION_REJECTED`, `STADIUM_APPROVED`, `STADIUM_REJECTED` (pending → rejected; before changeset 038, pending → blocked), `STADIUM_BLOCKED`, `STADIUM_UNBLOCKED` (blocked → approved), `STADIUM_STATUS_CHANGED` (back to pending) — each with `status` and `statusReason` changes, `STADIUM_NOTE_ADDED` (the note's id, never its text), `USER_BLOCKED`, `USER_UNBLOCKED`, `USER_ROLE_CHANGED`, `OWNER_LEGAL_DETAILS_CHANGED`, `REFUND_RETRIED`, `REFUND_MARKED_MANUAL`, `SETTINGS_CHANGED` |
 | Owner | `STADIUM_CREATED`, `STADIUM_UPDATED` (incl. `pricePerHour`, `minBookingAmount`, `cancellationHours`, photos, amenities), `PRICING_RULE_CREATED` / `_UPDATED` / `_DELETED`, `CLOSURE_CREATED` / `_DELETED`, `PROMOTION_CREATED` / `_DEACTIVATED`, `MANUAL_BOOKING_CREATED`, `CASH_RECEIVED` (a booking, or one team's game remainder), `BOOKING_CANCELLED_BY_OWNER` |
-| Player | `BOOKING_CREATED`, `BOOKING_CANCELLED_BY_USER`, `BOOKING_REMAINDER_PAID`, `BOOKING_SERIES_CREATED` / `_CANCELLED`, `GAME_CREATED`, `GAME_JOINED`, `GAME_LEFT`, `GAME_CANCELLED`, `GAME_OPPONENT_LEFT`, `GAME_REMAINDER_PAID`, `PROFILE_UPDATED` (also a language picked in the bot), `PHONE_SHARED_VIA_BOT` (`phoneChanged`, never the number) |
+| Player | `BOOKING_CREATED`, `BOOKING_CANCELLED_BY_USER`, `BOOKING_REMAINDER_PAID`, `BOOKING_PAYMENT_RETRIED`, `BOOKING_SERIES_CREATED` / `_CANCELLED`, `GAME_CREATED`, `GAME_JOINED`, `GAME_LEFT`, `GAME_CANCELLED`, `GAME_OPPONENT_LEFT`, `GAME_REMAINDER_PAID`, `PROFILE_UPDATED` (also a language picked in the bot), `PHONE_SHARED_VIA_BOT` (`phoneChanged`, never the number) |
 | System | `BOOKING_CONFIRMED` (a payment confirmed it), `BOOKING_EXPIRED`, `BOOKING_COMPLETED`, `BOOKING_CANCELLED_BY_OWNER` (by a stadium block), `GAME_CONFIRMED`, `GAME_AUTO_CANCELLED`, `PAYMENT_COMPLETED`, `PAYMENT_RELEASED`, `REFUND_CREATED`, `REFUND_FAILED` (ATMOS declined; the reason is its error), `PROMOTION_EXPIRED` |
 
 Codes are **stable**: they are stored and filtered on, so never rename one — add a

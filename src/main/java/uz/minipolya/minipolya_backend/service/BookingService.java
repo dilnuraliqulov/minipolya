@@ -26,6 +26,7 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.BookingExpiredException;
+import uz.minipolya.minipolya_backend.exception.BookingPaymentConflictException;
 import uz.minipolya.minipolya_backend.exception.ConflictException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
@@ -43,6 +44,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -171,6 +173,69 @@ public class BookingService {
                     "This stadium requires full payment; it has no minimum booking amount");
         }
         return cardPricing.deposit(minimum, playerPrice);
+    }
+
+    /** A payment of a booking that is on its way or arrived: no other attempt may start. */
+    private static final Set<Payment.Status> TAKEN_OR_TAKING = Set.of(
+            Payment.Status.PROCESSING, Payment.Status.PAID, Payment.Status.CAPTURED, Payment.Status.COMPLETED,
+            Payment.Status.HELD, Payment.Status.CAPTURE_PENDING);
+
+    /**
+     * R28: the player pays a pending booking again — another card after a decline — on the
+     * same path as {@link #createBooking}: the same amount as the first attempt (the deposit
+     * or the whole price), charged by {@link PaymentService#chargeForBooking}, which
+     * confirms the booking on success. A decline leaves it pending with its hold unchanged
+     * (never extended) and the reason on the response.
+     *
+     * <p>The booking row is locked for the whole call, so two taps at once run one after the
+     * other and the second finds the first's payment: one charge.
+     *
+     * @throws BookingPaymentConflictException 409 {@code BOOKING_NOT_PENDING} (confirmed,
+     *         cancelled, expired by the job), {@code BOOKING_EXPIRED} (its hold ran out),
+     *         {@code PAYMENT_IN_PROGRESS} (a payment of it is processing or arrived)
+     */
+    @Transactional
+    public BookingResponse retryPayment(UUID userId, UUID bookingId, UUID cardId) {
+        Booking booking = bookingRepository.findForUpdate(bookingId)
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
+        if (booking.getUser() == null || !booking.getUser().getId().equals(userId)) {
+            throw new ForbiddenException("This booking does not belong to you");
+        }
+        if (!"pending".equals(booking.getStatus())) {
+            throw new BookingPaymentConflictException(BookingPaymentConflictException.NOT_PENDING,
+                    "This booking is not awaiting payment");
+        }
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        if (booking.getExpiresAt() == null || !now.isBefore(booking.getExpiresAt())) {
+            throw new BookingPaymentConflictException(BookingPaymentConflictException.EXPIRED,
+                    "The booking's hold has expired; book the slot again");
+        }
+        List<Payment> attempts = paymentService.paymentsOf(bookingId).stream()
+                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .toList();
+        if (attempts.stream().anyMatch(p -> TAKEN_OR_TAKING.contains(p.getStatus()))) {
+            throw new BookingPaymentConflictException(BookingPaymentConflictException.IN_PROGRESS,
+                    "A payment for this booking is being processed");
+        }
+        SavedCard card = savedCardService.requireOwnedCard(userId, cardId);
+
+        // The same amount as when it was created: the first attempt's (deposit or in full).
+        long amount = attempts.stream()
+                .filter(p -> p.getPaymentType() == Payment.PaymentType.BOOKING)
+                .min(java.util.Comparator.comparing(Payment::getCreatedAt,
+                        java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+                .map(Payment::getAmount)
+                .orElse(booking.getCardPrice());
+        Payment payment = paymentService.chargeForBooking(booking, card, cardPricing.toOwner(amount));
+
+        auditService.record(AuditEntry.player(userId, AuditAction.BOOKING_PAYMENT_RETRIED)
+                .entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
+                .created("amount", amount)
+                .created("paymentStatus", payment.getStatus())
+                .created("bookingStatus", booking.getStatus()));
+        log.info("Booking payment retried: bookingId={} userId={} amount={} payment={}",
+                booking.getId(), userId, amount, payment.getStatus().getValue());
+        return bookingResponseFactory.of(booking);
     }
 
     /**

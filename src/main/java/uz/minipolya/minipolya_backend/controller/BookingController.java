@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.CreateBookingRequest;
 import uz.minipolya.minipolya_backend.dto.request.CreateManualBookingRequest;
+import uz.minipolya.minipolya_backend.dto.request.PayBookingRequest;
 import uz.minipolya.minipolya_backend.dto.request.PayRemainderRequest;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
@@ -39,11 +40,29 @@ public class BookingController {
     public ApiResponse<BookingResponse> create(@AuthenticationPrincipal UUID userId,
                                                @Valid @RequestBody CreateBookingRequest request) {
         BookingResponse booking = bookingService.createBooking(userId, request);
-        return ApiResponse.ok(booking, switch (booking.getPaymentStatus()) {
+        return ApiResponse.ok(booking, paymentMessage(booking));
+    }
+
+    /**
+     * R28: pays a pending booking again (another card after a decline), for the same amount
+     * as when it was created. A decline is still 200, with the booking pending and its
+     * declineReason; 409 BOOKING_NOT_PENDING / BOOKING_EXPIRED / PAYMENT_IN_PROGRESS.
+     */
+    @PostMapping("/api/bookings/{id}/pay")
+    public ApiResponse<BookingResponse> pay(@AuthenticationPrincipal UUID userId,
+                                            @PathVariable UUID id,
+                                            @Valid @RequestBody PayBookingRequest request) {
+        BookingResponse booking = bookingService.retryPayment(userId, id, request.getCardId());
+        return ApiResponse.ok(booking, paymentMessage(booking));
+    }
+
+    /** The same message for a booking's first payment and a retried one. */
+    private static String paymentMessage(BookingResponse booking) {
+        return switch (booking.getPaymentStatus()) {
             case PAID -> "Booking confirmed and paid in full";
             case PARTIALLY_PAID -> "Booking confirmed; the remainder is still due";
             case UNPAID -> "Payment failed — the booking is held until it expires; try paying again";
-        });
+        };
     }
 
     /**

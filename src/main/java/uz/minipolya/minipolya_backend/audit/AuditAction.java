@@ -47,6 +47,8 @@ public enum AuditAction {
     BOOKING_CREATED,
     BOOKING_CANCELLED_BY_USER,
     BOOKING_REMAINDER_PAID,
+    /** R28: the player paid a pending booking again (another card after a decline). */
+    BOOKING_PAYMENT_RETRIED,
     BOOKING_SERIES_CREATED,
     BOOKING_SERIES_CANCELLED,
     GAME_CREATED,

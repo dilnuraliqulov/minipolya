@@ -6646,6 +6646,164 @@
           }
         },
         {
+          "name": "200 pay a declined booking again with another card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the booking is confirmed by the second card', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.success).to.eql(true);",
+                  "    pm.expect(b.data.status).to.eql('confirmed');",
+                  "    pm.expect(b.data.declineReason).to.eql(undefined);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/{{declinedBookingId}}/pay",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings",
+                "{{declinedBookingId}}",
+                "pay"
+              ]
+            },
+            "description": "R28. Set declinedBookingId first: book with a fake card ending 0002 (declined: the booking stays pending, paymentState 'declined', declineReason CARD_DECLINED), then pay it here with {{cardId}} within its 10-minute hold. The same amount as the first attempt (deposit or full); the hold is never extended. A second decline is still 200, pending, with the new declineReason.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardId\": \"{{cardId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "409 pay a booking that is not pending",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('says it is not awaiting payment', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.success).to.eql(false);",
+                  "    pm.expect(b.code).to.eql('BOOKING_NOT_PENDING');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/{{bookingId}}/pay",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings",
+                "{{bookingId}}",
+                "pay"
+              ]
+            },
+            "description": "R28. The booking created above is confirmed already. The other 409s: BOOKING_EXPIRED (its hold ran out) and PAYMENT_IN_PROGRESS (a payment of it is processing or arrived — e.g. a fake card ending 0091).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardId\": \"{{cardId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "404 pay an unknown booking",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () { pm.response.to.have.status(404); });",
+                  "pm.test('says so', function () { pm.expect(pm.response.json().message).to.eql('Booking not found'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/00000000-0000-0000-0000-000000000000/pay",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings",
+                "00000000-0000-0000-0000-000000000000",
+                "pay"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardId\": \"{{cardId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
           "name": "200 booking detail",
           "event": [
             {
