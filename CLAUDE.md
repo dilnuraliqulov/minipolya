@@ -534,7 +534,12 @@ for a game that will not happen:
 
 The joining team takes whichever side is **free**, not always B: when the
 creating team walks out of a confirmed game the team left behind is on side B,
-so the next opponent takes A. Confirming also clears any **other** team still
+so the next opponent takes A. **The server decides the side**, never the client:
+`POST /api/games/{id}/join` on a team game takes `teamId` + `cardId` from that team's
+**leader** only (anyone else, or no `teamId` → 403 "Only the joining team's leader can
+join a team game, with their team and a card"; no card → 400), and the leader always
+pays. A sent `side` is optional; `"b"` is still accepted from older clients, any other
+side that is not the free one → 400 "The opposing team joins as side b". Confirming also clears any **other** team still
 waiting on that hour, the same rule an ordinary booking follows — otherwise
 their money would sit on hold for a pitch that is already gone.
 
@@ -620,7 +625,8 @@ still playing say afterwards. An invited member leads no team, so they keep
 their side's whole history.
 
 *Members.* Leaders still invite team members via the link, and members do **not**
-pay for the pitch.
+pay for the pitch — but a member cannot join a team game through
+`POST /api/games/{id}/join` (403); that endpoint is the paying leader's only.
 
 **Common game rules:**
 - `GameTimeoutJob` runs two cutoffs: team games whose **3-hour point** has

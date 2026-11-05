@@ -412,20 +412,23 @@ class GameServiceTest {
     }
 
     @Test
-    void anInvitedMemberJoinsWithoutASideAndWithoutATeamId() {
+    void nobodyButTheJoiningTeamsLeaderMayJoinATeamGame() {
         Game game = tvtGameWithTeamA();
         when(participantRepository.findByGameIdAndUserId(GAME_ID, JOINER_ID)).thenReturn(Optional.empty());
-        when(userRepository.findById(JOINER_ID))
-                .thenReturn(Optional.of(User.builder().id(JOINER_ID).name("Member").build()));
-        when(participantRepository.save(any(GameParticipant.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(participantMapper.toResponse(any())).thenReturn(new GameParticipantResponse());
 
-        service.joinGame(GAME_ID, JOINER_ID, null, null, null);
+        // Without a team, or with a team the caller does not lead: never a free, side-less member.
+        assertThatThrownBy(() -> service.joinGame(GAME_ID, JOINER_ID, null, null, null))
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.ForbiddenException.class)
+                .hasMessage(GameService.ONLY_LEADERS_JOIN);
+        when(teamRepository.findById(TEAM_B_ID)).thenReturn(Optional.of(
+                uz.minipolya.minipolya_backend.entity.Team.builder().id(TEAM_B_ID)
+                        .leader(User.builder().id(LEADER_B_ID).build()).build()));
+        assertThatThrownBy(() -> service.joinGame(GAME_ID, JOINER_ID, "b", TEAM_B_ID, UUID.randomUUID()))
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.ForbiddenException.class);
 
         assertThat(game.getTeamB()).isNull();
-        ArgumentCaptor<GameParticipant> captor = ArgumentCaptor.forClass(GameParticipant.class);
-        verify(participantRepository).save(captor.capture());
-        assertThat(captor.getValue().getSide()).isNull();
+        verify(participantRepository, never()).save(any());
+        verify(teamGameService, never()).join(any(), any(), any(), any());
     }
 
     @Test
@@ -572,7 +575,10 @@ class GameServiceTest {
         when(userRepository.findById(LEADER_B_ID)).thenReturn(Optional.of(
                 User.builder().id(LEADER_B_ID).name("Leader B").build()));
         when(teamRepository.findById(TEAM_B_ID)).thenReturn(Optional.of(
-                Team.builder().id(TEAM_B_ID).name("Team B").build()));
+                Team.builder().id(TEAM_B_ID).name("Team B").leader(User.builder().id(LEADER_B_ID).build()).build()));
+        when(teamGameService.freeSide(game)).thenReturn(GameParticipant.Side.B);
+        when(teamGameService.join(any(), any(), any(), any())).thenReturn(
+                uz.minipolya.minipolya_backend.entity.GameTeam.builder().side(GameParticipant.Side.B).build());
         when(gameRepository.findByStadiumIdAndStatus(STADIUM_ID, "open")).thenReturn(List.of());
 
         service.joinGame(GAME_ID, LEADER_B_ID, "b", TEAM_B_ID, UUID.randomUUID());

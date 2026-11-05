@@ -930,6 +930,11 @@ public class TeamGameService {
      * The side a newcomer takes: whichever has no live occupant. A game with
      * both sides taken is not looking for anyone.
      */
+    /** The side a joining team gets: whichever is free (B, unless the creating team left a confirmed game). */
+    Side freeSide(Game game) {
+        return freeSideOf(game);
+    }
+
     private Side freeSideOf(Game game) {
         Set<Side> taken = gameTeamRepository
                 .findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE).stream()

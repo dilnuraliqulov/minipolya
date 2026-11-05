@@ -66,6 +66,8 @@ public class GameService {
     private static final String STATUS_APPROVED = "approved";
     private static final String STATUS_OPEN = "open";
     private static final String TYPE_TEAM_VS_TEAM = "team_vs_team";
+    static final String ONLY_LEADERS_JOIN =
+            "Only the joining team's leader can join a team game, with their team and a card";
     private static final String TYPE_OPEN = "open";
 
     private final GameRepository gameRepository;
@@ -179,23 +181,32 @@ public class GameService {
         long playersBefore = participantRepository.findByGameId(gameId).size();
         String joinedTeam = null;
         if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
-            // A leader joins with an explicit side; invited members join without one (no payment).
-            assignedSide = parseSide(side);
-            if (assignedSide == GameParticipant.Side.B) {
-                // Taking the free side is what books the slot and settles both
-                // teams, so it is the team flow's job, not a plain membership row.
-                Team teamB = teamId == null ? null : teamRepository.findById(teamId)
-                        .orElseThrow(() -> new ResourceNotFoundException("Team not found"));
-                User leader = userRepository.findById(userId)
-                        .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-                teamGameService.join(game, teamB, leader, cardId);
-                joinedTeam = teamB.getName();
-                // The game has just taken the slot, so any other team still
-                // waiting on it must be cleared and refunded — the same rule an
-                // ordinary booking follows. This game is 'confirmed' by now, so
-                // it cannot cancel itself.
-                cancelGamesOnSlot(game.getStadium().getId(), game.getStartsAt(), game.getEndsAt());
+            // The server decides, never the client's side: only the joining team's leader
+            // joins a team game, always on the free side, and always pays. Nobody joins the
+            // other side as a plain, non-paying member.
+            Team joiningTeam = teamId == null ? null : teamRepository.findById(teamId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Team not found"));
+            if (joiningTeam == null || !joiningTeam.getLeader().getId().equals(userId)) {
+                throw new ForbiddenException(ONLY_LEADERS_JOIN);
             }
+            if (cardId == null) {
+                throw new BadRequestException("cardId is required to join a team game");
+            }
+            GameParticipant.Side free = teamGameService.freeSide(game);
+            GameParticipant.Side requested = parseSide(side);
+            // "b" stays accepted from older clients, which always sent it for the opponent.
+            if (requested != null && requested != free && requested != GameParticipant.Side.B) {
+                throw new BadRequestException("The opposing team joins as side " + free.getValue());
+            }
+            User leader = userRepository.findById(userId)
+                    .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+            assignedSide = teamGameService.join(game, joiningTeam, leader, cardId).getSide();
+            joinedTeam = joiningTeam.getName();
+            // The game has just taken the slot, so any other team still
+            // waiting on it must be cleared and refunded — the same rule an
+            // ordinary booking follows. This game is 'confirmed' by now, so
+            // it cannot cancel itself.
+            cancelGamesOnSlot(game.getStadium().getId(), game.getStartsAt(), game.getEndsAt());
         } else {
             if (playersBefore >= game.getMaxPlayers()) {
                 throw new BadRequestException("Game is already full");
