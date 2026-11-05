@@ -204,6 +204,46 @@ class BookingConfirmationTest {
         assertThat(pending.getExpiresAt()).isNotNull();
     }
 
+    @Test
+    void aChargeTheProviderRefusesOutrightIsAFailedRowWithTheReason() {
+        when(paymentProvider.charge(any())).thenThrow(new uz.minipolya.minipolya_backend.provider.PaymentProviderException(
+                uz.minipolya.minipolya_backend.provider.AtmosCodes.CARD_NOT_FOUND, "Карта не найдена"));
+        Booking pending = booking("pending");
+
+        Payment payment = service.chargeForBooking(pending, card, TestPrices.charge(PRICE));
+
+        assertThat(payment.getStatus()).isEqualTo(Payment.Status.FAILED);
+        assertThat(payment.getFailureReason()).isEqualTo("Карта не найдена (STPIMS-ERR-004)");
+        assertThat(pending.getStatus()).isEqualTo("pending");
+        assertThat(pending.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.UNPAID);
+    }
+
+    @Test
+    void anUnavailableProviderIsA502AndNothingIsRecordedAsPaid() {
+        when(paymentProvider.charge(any())).thenThrow(new uz.minipolya.minipolya_backend.provider.PaymentProviderException(
+                uz.minipolya.minipolya_backend.provider.AtmosCodes.SERVICE_UNAVAILABLE, "ATMOS refused bulk/pay/create"));
+        Booking pending = booking("pending");
+
+        assertThatThrownBy(() -> service.chargeForBooking(pending, card, TestPrices.charge(PRICE)))
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.ProviderUnavailableException.class)
+                .hasMessage("To'lov tizimi vaqtincha ishlamayapti. Birozdan so'ng qayta urinib ko'ring");
+        assertThat(pending.getPaymentStatus()).isEqualTo(Booking.PaymentStatus.UNPAID);
+    }
+
+    @Test
+    void aRefusalAfterTheChargeWasCreatedLeavesItProcessingForTheReconcileJob() {
+        ProviderStubs.behaveLikeAtmos(paymentProvider);
+        org.mockito.Mockito.doThrow(new uz.minipolya.minipolya_backend.provider.PaymentProviderException(
+                uz.minipolya.minipolya_backend.provider.AtmosCodes.SERVICE_UNAVAILABLE, "ATMOS refused bulk/pay/apply"))
+                .when(paymentProvider).confirmCharge(any(), any());
+        Booking pending = booking("pending");
+
+        Payment payment = service.chargeForBooking(pending, card, TestPrices.charge(PRICE));
+
+        assertThat(payment.getStatus()).isEqualTo(Payment.Status.PROCESSING);
+        assertThat(payment.getProviderTxnId()).isNotBlank();
+    }
+
     // ---- money that arrives after the hold expired ----
 
     @Test

@@ -24,8 +24,10 @@ import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
+import uz.minipolya.minipolya_backend.exception.ProviderUnavailableException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
+import uz.minipolya.minipolya_backend.provider.AtmosCodes;
 import uz.minipolya.minipolya_backend.provider.ChargeOutcome;
 import uz.minipolya.minipolya_backend.provider.ChargeRequest;
 import uz.minipolya.minipolya_backend.provider.HoldCancelledException;
@@ -491,15 +493,44 @@ public class PaymentService {
      */
     private Payment chargeCard(Payment row, SavedCard card, CardFeeSplit split, User owner) {
         Payment saved = paymentRepository.save(row);
+        PendingCharge pending = null;
         try {
-            PendingCharge pending = paymentProvider.charge(ChargeRequest.withToken(
+            pending = paymentProvider.charge(ChargeRequest.withToken(
                     splitsFor(owner, split), card.getProviderToken(), saved.getId().toString()));
             saved.setProviderTxnId(String.join(",", pending.transactionIds()));
             applyChargeOutcome(saved, paymentProvider.confirmCharge(pending.transactionIds(), null));
         } catch (ProviderTimeoutException ex) {
             log.warn("Payment {} left processing: {}", saved.getId(), ex.getMessage());
+        } catch (PaymentProviderException ex) {
+            refusedByProvider(saved, pending != null, ex);
         }
         return paymentRepository.save(saved);
+    }
+
+    static final String PROVIDER_UNAVAILABLE =
+            "To'lov tizimi vaqtincha ishlamayapti. Birozdan so'ng qayta urinib ko'ring";
+
+    /**
+     * The provider refused a charge or hold outright (not a decline, which is an outcome).
+     * Refused while being created: nothing exists at the provider, so an unreachable provider
+     * is a 502 the player may retry (this transaction, the row included, rolls back) and any
+     * other refusal (a removed card, an amount under the minimum) a failed row. Refused once
+     * created: whether the money moved is unknown, so the row stays {@code processing} for
+     * the reconcile job, like a lost answer.
+     */
+    private void refusedByProvider(Payment payment, boolean created, PaymentProviderException ex) {
+        if (created) {
+            log.warn("Payment {} left processing: provider refused the confirmation, code={}",
+                    payment.getId(), ex.getCode());
+            return;
+        }
+        if (AtmosCodes.isUnavailable(ex.getCode())) {
+            log.warn("Payment {} not attempted: provider unavailable, code={}", payment.getId(), ex.getCode());
+            throw new ProviderUnavailableException(PROVIDER_UNAVAILABLE);
+        }
+        payment.setStatus(Payment.Status.FAILED);
+        payment.setFailureReason(failureReason(ex));
+        log.info("Payment {} refused by the provider: code={}", payment.getId(), ex.getCode());
     }
 
     /** As {@link #chargeCard}, for a hold of {@code minutes}. */
@@ -507,14 +538,17 @@ public class PaymentService {
         // Set before the call, so even a hold whose creation went unanswered is known to be a hold.
         row.setHoldExpiresAt(java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(minutes));
         Payment saved = paymentRepository.save(row);
+        HoldOutcome created = null;
         try {
-            HoldOutcome created = paymentProvider.hold(new HoldRequest(
+            created = paymentProvider.hold(new HoldRequest(
                     splitsFor(owner, split), card.getProviderToken(), saved.getId().toString(), minutes));
             saved.setProviderTxnId(created.holdId());
             saved.setHoldExpiresAt(created.holdTill());
             applyHoldOutcome(saved, paymentProvider.confirmHold(created.holdId(), null));
         } catch (ProviderTimeoutException ex) {
             log.warn("Payment {} left processing: {}", saved.getId(), ex.getMessage());
+        } catch (PaymentProviderException ex) {
+            refusedByProvider(saved, created != null, ex);
         }
         return paymentRepository.save(saved);
     }
