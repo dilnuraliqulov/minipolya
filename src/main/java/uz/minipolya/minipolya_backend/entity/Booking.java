@@ -77,7 +77,7 @@ public class Booking {
      * cancelled_by_user, cancelled_by_owner.
      */
     @Builder.Default
-    @Column(nullable = false, length = 20)
+    @Column(nullable = false, length = 30)
     private String status = "pending";
 
     @Column(name = "starts_at", nullable = false)
