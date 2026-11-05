@@ -61,9 +61,19 @@ class FakeProviderPersistenceTest {
         return jdbc.queryForObject("SELECT balance FROM fake_payment_cards WHERE card_id = ?", Long.class, cardId);
     }
 
+    @Autowired
+    private org.springframework.test.web.servlet.MockMvc mvc;
+
     @Test
     void theStoreIsTheDatabaseOne() {
         assertThat(store).isInstanceOf(JdbcFakeProviderStore.class);
+    }
+
+    @Test
+    void theDevViewDoesNotExistOutsideTheDevProfile() throws Exception {
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/dev/fake-payments")
+                        .header("X-Dev-Login-Key", "test-dev-login-key-0123"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound());
     }
 
     @Test

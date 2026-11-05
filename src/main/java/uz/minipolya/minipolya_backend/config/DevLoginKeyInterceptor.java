@@ -16,7 +16,8 @@ import java.security.NoSuchAlgorithmException;
 
 /**
  * The dev-only sign-in answers only a caller that knows {@code DEV_LOGIN_KEY}: every
- * {@code /api/auth/dev/**} request must send it in {@value #HEADER}. A missing or wrong key
+ * {@code /api/auth/dev/**} and {@code /api/dev/**} request (the dev sign-in and the fake
+ * payments view) must send it in {@value #HEADER}. A missing or wrong key
  * gets exactly what an unknown path gets — 404 "Not found" — before the body is even read,
  * so nothing tells a caller the endpoints exist. The comparison is constant time: both
  * values are hashed first, so neither their content nor their length shows in the timing.
@@ -37,7 +38,7 @@ public class DevLoginKeyInterceptor implements HandlerInterceptor, WebMvcConfigu
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(this).addPathPatterns("/api/auth/dev/**");
+        registry.addInterceptor(this).addPathPatterns("/api/auth/dev/**", "/api/dev/**");
     }
 
     @Override
