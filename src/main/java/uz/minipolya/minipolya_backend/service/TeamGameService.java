@@ -775,6 +775,7 @@ public class TeamGameService {
                         .remainderStatus(team.getRemainderStatus().getValue())
                         // What is on the card now: holds and settled charges not given back.
                         .paidInApp(paymentService.refundableTeamTotal(team.getId()))
+                        .heldAmount(paymentService.heldTeamTotal(team.getId(), now))
                         .cancellationDeadline(cancellationPolicy.deadline(
                                 game.getStartsAt(), game.getStadium().getCancellationHours()))
                         .refundIfCancelledNow(refundIfCancelledNow(game, team, now))

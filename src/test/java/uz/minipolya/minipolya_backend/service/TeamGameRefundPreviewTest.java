@@ -329,6 +329,23 @@ class TeamGameRefundPreviewTest {
     }
 
     @Test
+    void aWaitingTeamShowsItsHoldAsHeldAmount() {
+        Game game = waitingGame(Duration.ofDays(2));
+
+        GameTeamResponse a = service.teamsOf(game).getFirst();
+
+        assertThat(a.getHeldAmount()).isEqualTo(FEE + ADVANCE);
+    }
+
+    @Test
+    void heldAmountIsZeroOnceTheHoldsAreCaptured() {
+        Game game = confirmedGame(Duration.ofDays(2));
+
+        assertThat(service.teamsOf(game)).extracting(GameTeamResponse::getHeldAmount)
+                .containsExactly(0L, 0L);
+    }
+
+    @Test
     void theResponseCarriesTheDeadlineAndTheSameFigure() {
         Game game = confirmedGame(Duration.ofDays(2));
 

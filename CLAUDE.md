@@ -637,7 +637,9 @@ settled.
 
 *What a team sees.* `GameDetailResponse.teams` carries, per team, in player prices:
 `price` (paid on joining), `remainderAmount` (the same in the app or in cash),
-`remainderStatus`, `paidInApp`, `cancellationDeadline` and `refundIfCancelledNow`
+`remainderStatus`, `paidInApp`, `heldAmount` (tiyin on hold on the team's card now: a
+hold `held` or `capture_pending` that has not lapsed, `PaymentService.heldTeamTotal`; 0
+otherwise), `cancellationDeadline` and `refundIfCancelledNow`
 (tiyin, 0 when nothing would come back) — no fee or advance. The admin's game detail
 adds `platformFee`, `ownerAdvance`, `ownerRemainder`, `ownerReceives` and `atmosFee`. The last one is computed by the same code that performs the
 cancellation, so the figure shown is the figure paid. Note the asymmetry it

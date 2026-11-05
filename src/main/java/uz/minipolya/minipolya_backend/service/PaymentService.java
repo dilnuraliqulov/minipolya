@@ -82,6 +82,13 @@ public class PaymentService {
     private static final Set<Payment.Status> REFUNDABLE_STATUSES =
             Set.of(Payment.Status.PAID, Payment.Status.CAPTURED, Payment.Status.COMPLETED);
 
+    /**
+     * A hold whose money is still reserved on the card: confirmed and not yet captured
+     * ({@code held}), or being captured ({@code capture_pending}). Only holds take these.
+     */
+    private static final Set<Payment.Status> STILL_HELD =
+            Set.of(Payment.Status.HELD, Payment.Status.CAPTURE_PENDING);
+
     /** Statuses that mean the money is the platform's and is not coming back. */
     private static final Set<Payment.Status> KEPT_STATUSES =
             Set.of(Payment.Status.PAID, Payment.Status.CAPTURED, Payment.Status.COMPLETED);
@@ -731,6 +738,24 @@ public class PaymentService {
                 .filter(p -> p.getStatus() == Payment.Status.HELD
                         || REFUNDABLE_STATUSES.contains(p.getStatus()))
                 .filter(p -> p.getMethod() != Payment.Method.CASH)
+                .mapToLong(Payment::getAmount)
+                .sum();
+    }
+
+    /**
+     * What is on hold on this team's card at {@code now}: its holds that are {@code held} or
+     * {@code capture_pending} and have not lapsed ({@code hold_expires_at} still ahead).
+     * Not a hold still being created ({@code processing}), nor one being given back
+     * ({@code return_pending}: by its status alone that could as well be captured money
+     * being reversed), captured or released. 0 when nothing is held.
+     */
+    @Transactional(readOnly = true)
+    public long heldTeamTotal(UUID gameTeamId, java.time.OffsetDateTime now) {
+        return paymentRepository.findByGameTeamId(gameTeamId).stream()
+                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .filter(p -> p.getMethod() != Payment.Method.CASH)
+                .filter(p -> STILL_HELD.contains(p.getStatus()))
+                .filter(p -> p.getHoldExpiresAt() == null || p.getHoldExpiresAt().isAfter(now))
                 .mapToLong(Payment::getAmount)
                 .sum();
     }

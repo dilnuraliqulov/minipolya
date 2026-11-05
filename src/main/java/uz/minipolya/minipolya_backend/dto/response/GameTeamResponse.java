@@ -44,6 +44,13 @@ public class GameTeamResponse {
     /** Everything this team has actually paid through the app so far. */
     private Long paidInApp;
 
+    /**
+     * What is on hold on this team's card right now: a hold that was created and is not yet
+     * captured or released ({@code held}, or {@code capture_pending} while the capture is
+     * asked for) and has not lapsed. 0 otherwise. Always present.
+     */
+    private Long heldAmount;
+
     /** Admin view only: the platform's fixed fee in this team's payment (what it nets). */
     private Long platformFee;
     /** Admin view only: the owner's advance in this team's payment, in the owner's terms. */

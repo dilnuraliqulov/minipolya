@@ -31,6 +31,8 @@ import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.PriceCalculator;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
@@ -335,6 +337,57 @@ class TeamGamePaymentTest {
         assertThat(settled.getStatus()).isEqualTo(Payment.Status.PAID);
         verify(paymentProvider, never()).reverse(anyString(), any());
         assertThat(kept).isEqualTo(2 * (FEE + ADVANCE));
+    }
+
+    // ---- heldTeamTotal ----
+
+    @Test
+    void theHeldAmountCountsHoldsNotYetCapturedOrReleased() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        Payment held = heldPayment();
+        held.setHoldExpiresAt(now.plusHours(5));
+        Payment capturing = heldPayment();
+        capturing.setStatus(Payment.Status.CAPTURE_PENDING);
+        capturing.setHoldExpiresAt(now.plusHours(5));
+        when(paymentRepository.findByGameTeamId(gameTeam.getId())).thenReturn(List.of(held, capturing));
+
+        assertThat(service.heldTeamTotal(gameTeam.getId(), now)).isEqualTo(2 * (FEE + ADVANCE));
+    }
+
+    @Test
+    void theHeldAmountIsZeroForEveryOtherStage() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        List<Payment> rows = new java.util.ArrayList<>();
+        for (Payment.Status status : List.of(Payment.Status.PROCESSING, Payment.Status.CAPTURED,
+                Payment.Status.RELEASED, Payment.Status.RETURN_PENDING, Payment.Status.FAILED,
+                Payment.Status.PAID, Payment.Status.REFUNDED)) {
+            Payment row = heldPayment();
+            row.setStatus(status);
+            row.setHoldExpiresAt(now.plusHours(5));
+            rows.add(row);
+        }
+        when(paymentRepository.findByGameTeamId(gameTeam.getId())).thenReturn(rows);
+
+        assertThat(service.heldTeamTotal(gameTeam.getId(), now)).isZero();
+    }
+
+    @Test
+    void aLapsedHoldIsNoLongerHeld() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        Payment lapsed = heldPayment();
+        lapsed.setHoldExpiresAt(now.minusMinutes(1));
+        Payment live = heldPayment();
+        live.setHoldExpiresAt(now.plusMinutes(1));
+        when(paymentRepository.findByGameTeamId(gameTeam.getId())).thenReturn(List.of(lapsed, live));
+
+        assertThat(service.heldTeamTotal(gameTeam.getId(), now)).isEqualTo(FEE + ADVANCE);
+    }
+
+    @Test
+    void theHeldAmountIsZeroWithNoPayments() {
+        when(paymentRepository.findByGameTeamId(gameTeam.getId())).thenReturn(List.of());
+
+        assertThat(service.heldTeamTotal(gameTeam.getId(), OffsetDateTime.now(ZoneOffset.UTC))).isZero();
     }
 
     // ---- refundableTeamTotal ----
