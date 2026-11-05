@@ -9,7 +9,7 @@ import java.util.function.Supplier;
 
 /**
  * The fake's state in memory, lost with the process. For unit tests of the fake itself;
- * the application uses {@code JdbcFakeProviderStore}. Objects are shared, not copied, so
+ * the application uses {@link JdbcFakeProviderStore}. Objects are shared, not copied, so
  * a change made inside a failed call is not undone — the provider only changes state on
  * paths that then complete.
  */

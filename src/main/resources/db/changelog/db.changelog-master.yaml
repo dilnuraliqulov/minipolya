@@ -85,3 +85,5 @@ databaseChangeLog:
       file: db/changelog/changes/042-telegram-bot.sql
   - include:
       file: db/changelog/changes/043-team-invite-code.sql
+  - include:
+      file: db/changelog/changes/044-fake-payment-provider.sql
