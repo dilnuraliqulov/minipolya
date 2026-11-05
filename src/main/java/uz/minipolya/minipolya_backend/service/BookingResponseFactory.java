@@ -6,11 +6,15 @@ import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.mapper.BookingMapper;
+import uz.minipolya.minipolya_backend.provider.DeclineReason;
 import uz.minipolya.minipolya_backend.util.CancellationPolicy;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.Set;
 import java.util.function.LongSupplier;
 
@@ -56,12 +60,35 @@ public class BookingResponseFactory {
     }
 
     public BookingResponse of(Booking booking, OffsetDateTime now) {
+        return of(booking, now, booking.getId() == null ? List.of() : paymentService.paymentsOf(booking.getId()));
+    }
+
+    /** The player's view, from the booking's payments already loaded (a list loads them once). */
+    private BookingResponse of(Booking booking, OffsetDateTime now, List<Payment> payments) {
         BookingResponse response = build(booking, now,
                 () -> paymentService.refundableCardTotal(booking.getId()));
         if (booking.getPrice() != null) {
             setPlayerAmounts(response, booking, cardPricing);
         }
+        response.setDeclineReason(declineReasonOf(payments));
         return response;
+    }
+
+    /**
+     * R44: why the booking's latest card payment (in full, deposit or remainder) was refused,
+     * or null — when it was not refused, or a later one went through.
+     */
+    static DeclineReason declineReasonOf(List<Payment> payments) {
+        return payments.stream()
+                .filter(p -> p.getMethod() != Payment.Method.CASH)
+                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .filter(p -> p.getPaymentType() == Payment.PaymentType.BOOKING
+                        || p.getPaymentType() == Payment.PaymentType.REMAINDER)
+                .max(Comparator.comparing(Payment::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(Payment::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .filter(p -> p.getStatus() == Payment.Status.FAILED)
+                .map(Payment::getDeclineReason)
+                .orElse(null);
     }
 
     /** price, paidAmount and remainingAmount in the player's terms, adding up for every booking. */
@@ -83,7 +110,11 @@ public class BookingResponseFactory {
 
     public List<BookingResponse> of(List<Booking> bookings) {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        return bookings.stream().map(booking -> of(booking, now)).toList();
+        Map<UUID, List<Payment>> payments = paymentService.paymentsOfBookings(bookings.stream()
+                .map(Booking::getId).filter(java.util.Objects::nonNull).toList());
+        return bookings.stream()
+                .map(booking -> of(booking, now, payments.getOrDefault(booking.getId(), List.of())))
+                .toList();
     }
 
     /** The owner's view of one booking. */
@@ -124,6 +155,7 @@ public class BookingResponseFactory {
                         ? p.getAmount()
                         : pricing.ownerReceives(p.getOwnerAmount() == null ? 0L : p.getOwnerAmount()))
                 .sum());
+        response.setDeclineReason(declineReasonOf(payments));
         return response;
     }
 

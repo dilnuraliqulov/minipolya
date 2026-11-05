@@ -188,11 +188,14 @@ class TeamGameRemainderTest {
     void aDeclinedCardLeavesTheRemainderUnpaid() {
         when(paymentService.chargeForTeamGame(any(), any(), eq(Payment.PaymentType.REMAINDER)))
                 .thenAnswer(inv -> Payment.builder().id(UUID.randomUUID()).status(Payment.Status.FAILED)
+                        .declineReason(uz.minipolya.minipolya_backend.provider.DeclineReason.INSUFFICIENT_FUNDS)
                         .gameTeam(inv.getArgument(0)).build());
 
+        // R44: a 400 whose code says why.
         assertThatThrownBy(() -> service.payRemainder(GAME_ID, LEADER_B_ID, CARD_B_ID))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("declined");
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.CardDeclinedException.class)
+                .hasMessageContaining("declined")
+                .extracting("code").isEqualTo("INSUFFICIENT_FUNDS");
 
         assertThat(sideB.getRemainderStatus()).isEqualTo(GameTeam.RemainderStatus.UNPAID);
     }

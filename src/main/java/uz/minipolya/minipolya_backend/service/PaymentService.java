@@ -29,6 +29,7 @@ import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
 import uz.minipolya.minipolya_backend.provider.AtmosCodes;
 import uz.minipolya.minipolya_backend.provider.ChargeOutcome;
+import uz.minipolya.minipolya_backend.provider.DeclineReason;
 import uz.minipolya.minipolya_backend.provider.ChargeRequest;
 import uz.minipolya.minipolya_backend.provider.HoldCancelledException;
 import uz.minipolya.minipolya_backend.provider.HoldExpiredException;
@@ -281,6 +282,9 @@ public class PaymentService {
         } catch (PaymentProviderException ex) {
             row.setStatus(Payment.Status.FAILED);
             row.setFailureReason(failureReason(ex));
+            if (!AtmosCodes.isUnavailable(ex.getCode())) {
+                row.setDeclineReason(DeclineReason.of(ex.getCode()));
+            }
             paymentRepository.save(row);
             log.info("Charge for payment {} refused while being created: code={}", paymentId, ex.getCode());
             return AtmosCodes.isUnavailable(ex.getCode()) ? StepOutcome.UNAVAILABLE : StepOutcome.REFUSED;
@@ -796,6 +800,7 @@ public class PaymentService {
         }
         payment.setStatus(Payment.Status.FAILED);
         payment.setFailureReason(failureReason(ex));
+        payment.setDeclineReason(DeclineReason.of(ex.getCode()));
         log.info("Payment {} refused by the provider: code={}", payment.getId(), ex.getCode());
     }
 
@@ -830,6 +835,7 @@ public class PaymentService {
             }
             case FAILED -> {
                 payment.setStatus(Payment.Status.FAILED);
+                payment.setDeclineReason(DeclineReason.of(outcome.errorCode()));
                 log.info("Payment {} declined by the provider: code={}", payment.getId(), outcome.errorCode());
             }
             case REVERSED -> payment.setStatus(Payment.Status.REFUNDED);
@@ -853,6 +859,7 @@ public class PaymentService {
             case RELEASED -> payment.setStatus(Payment.Status.RELEASED);
             case FAILED -> {
                 payment.setStatus(Payment.Status.FAILED);
+                payment.setDeclineReason(DeclineReason.of(outcome.errorCode()));
                 log.info("Hold {} declined by the provider: code={}", payment.getId(), outcome.errorCode());
             }
             default -> {
@@ -1273,6 +1280,16 @@ public class PaymentService {
     @Transactional(readOnly = true)
     public List<Payment> paymentsOf(UUID bookingId) {
         return paymentRepository.findByBookingId(bookingId);
+    }
+
+    /** Every payment of several bookings, grouped by booking — one query for a list. */
+    @Transactional(readOnly = true)
+    public java.util.Map<UUID, List<Payment>> paymentsOfBookings(java.util.Collection<UUID> bookingIds) {
+        if (bookingIds.isEmpty()) {
+            return java.util.Map.of();
+        }
+        return paymentRepository.findByBookingIdIn(bookingIds).stream()
+                .collect(java.util.stream.Collectors.groupingBy(p -> p.getBooking().getId()));
     }
 
     @Transactional(readOnly = true)

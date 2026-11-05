@@ -29,6 +29,7 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
+import uz.minipolya.minipolya_backend.exception.CardDeclinedException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.exception.SlotNotAvailableException;
@@ -314,7 +315,7 @@ public class GameService {
         SavedCard card = savedCardService.requireOwnedCard(userId, cardId);
         Payment payment = paymentService.chargeGameShare(gameId, userId, card);
         if (payment.getStatus() == Payment.Status.FAILED) {
-            throw new BadRequestException("Card payment was declined");
+            throw CardDeclinedException.of(payment, "Card payment was declined");
         }
         return PaymentInitResponse.builder()
                 .paymentId(payment.getId())

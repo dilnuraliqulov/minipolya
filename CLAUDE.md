@@ -205,7 +205,8 @@ db/changelog/
     ├── 043-team-invite-code.sql      # teams.invite_code (unique, nullable) for invite links (R32)
     ├── 044-fake-payment-provider.sql # fake_payment_* tables: FakePaymentProvider's state (dev/tests only)
     ├── 045-booking-status-length.sql # bookings.status VARCHAR(30): 'cancelled_opponent_left' did not fit
-    └── 046-game-team-joining.sql     # game_teams status 'joining' (a join half-way); side index covers it
+    ├── 046-game-team-joining.sql     # game_teams status 'joining' (a join half-way); side index covers it
+    └── 047-payment-decline-reason.sql # payments.decline_reason (R44)
 ```
 
 ### Adding New Migrations
@@ -756,6 +757,28 @@ Every amount a player sees is the final amount they pay.
   `atmosFee` (`card_fee_expected`) and `providerCommission`.
 - The public search's `maxPrice` is a player price, converted to the largest fitting
   owner price.
+
+#### Why a card payment was refused (R44)
+
+A charge or hold the provider refuses says why, in the player's terms, mapped from the
+provider's code in exactly one place, `provider/DeclineReason.of`:
+
+| Reason | ATMOS | Fake card ending |
+|---|---|---|
+| `INSUFFICIENT_FUNDS` | `STPIMS-ERR-057`, `-112` | `0051` (or the balance spent) |
+| `CARD_EXPIRED` | `STPIMS-ERR-067` | `0054` |
+| `CARD_DECLINED` | every other refusal — the fallback; an unknown code is logged (the code only) | `0002` |
+
+It is stored on the failed row (`payments.decline_reason`, changeset 047; null when a
+payment failed without a refusal, e.g. never acknowledged, or the provider was
+unreachable) and shown as:
+- the **`code`** of the 400 declines: `POST /api/games` (team game), `POST /api/games/{id}/join`,
+  `POST /api/games/{id}/pay-remainder`, `POST /api/games/{id}/pay?cardId=` — `CardDeclinedException`;
+- **`declineReason`** on `BookingResponse` (every view): why the booking's latest card
+  payment (in full, deposit or remainder) was refused — a declined booking or remainder
+  answers 200, so this is where the reason is; absent once a later payment went through;
+- **`declineReason`** on `PaymentResponse` (`GET /api/payments/my`) and
+  `AdminPaymentResponse`, on a refused row. Never the provider's own code or text.
 
 #### The provider
 

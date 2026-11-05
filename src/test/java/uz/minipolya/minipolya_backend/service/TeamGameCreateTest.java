@@ -196,11 +196,14 @@ class TeamGameCreateTest {
     void aDeclinedCardMeansNoGame() {
         when(paymentService.holdForTeamGame(any(), any(), anyInt())).thenAnswer(inv ->
                 Payment.builder().id(UUID.randomUUID()).status(Payment.Status.FAILED)
+                        .declineReason(uz.minipolya.minipolya_backend.provider.DeclineReason.INSUFFICIENT_FUNDS)
                         .gameTeam(inv.getArgument(0)).build());
 
+        // R44: a 400 whose code says why.
         assertThatThrownBy(() -> service.createGame(request(CARD_ID), LEADER_A_ID))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("declined");
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.CardDeclinedException.class)
+                .hasMessageContaining("declined")
+                .extracting("code").isEqualTo("INSUFFICIENT_FUNDS");
     }
 
     @Test

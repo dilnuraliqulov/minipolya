@@ -57,6 +57,8 @@ public class AdminPaymentResponse {
 
     /** A refund the provider declined: its error, for the admin. */
     private String failureReason;
+    /** R44: a failed charge or hold the provider refused: why, in the player's terms. */
+    private uz.minipolya.minipolya_backend.provider.DeclineReason declineReason;
     private Boolean refundedManually;
     private String manualRefundReason;
 

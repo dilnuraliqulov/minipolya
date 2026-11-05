@@ -107,9 +107,11 @@ public class PaymentReconcileService {
         Long commission = null;
         String ofdUrl = null;
         ProviderStatus overall = ProviderStatus.SUCCESS;
+        String declinedWith = null;
         for (String id : ids) {
             ChargeOutcome one = paymentProvider.getCharge(id);
             if (one.status() == ProviderStatus.FAILED) {
+                declinedWith = one.errorCode();
                 overall = ProviderStatus.FAILED;
                 break;
             }
@@ -128,7 +130,7 @@ public class PaymentReconcileService {
         }
         ChargeOutcome outcome = overall == ProviderStatus.SUCCESS
                 ? new ChargeOutcome(ProviderStatus.SUCCESS, successIds, commission, ofdUrl, null)
-                : overall == ProviderStatus.FAILED ? ChargeOutcome.failed("RECONCILED") : ChargeOutcome.pending();
+                : overall == ProviderStatus.FAILED ? ChargeOutcome.failed(declinedWith) : ChargeOutcome.pending();
         paymentService.applyChargeOutcome(payment, outcome);
         log.info("Reconciled charge {}: {}", payment.getId(), payment.getStatus().getValue());
         if (payment.getStatus() == Payment.Status.PAID) {
@@ -179,10 +181,10 @@ public class PaymentReconcileService {
         }
         HoldOutcome outcome = paymentProvider.getHold(holdId);
         if (outcome.status() == ProviderStatus.PENDING && abandoned(payment)) {
-            outcome = new HoldOutcome(holdId, ProviderStatus.FAILED, null, null, "RECONCILED");
+            outcome = new HoldOutcome(holdId, ProviderStatus.FAILED, null, null, null);
         }
         if (outcome.status() == ProviderStatus.RELEASED) {
-            outcome = new HoldOutcome(holdId, ProviderStatus.FAILED, null, null, "RECONCILED");
+            outcome = new HoldOutcome(holdId, ProviderStatus.FAILED, null, null, null);
         }
         paymentService.applyHoldOutcome(payment, outcome);
         log.info("Reconciled hold {}: {}", payment.getId(), payment.getStatus().getValue());

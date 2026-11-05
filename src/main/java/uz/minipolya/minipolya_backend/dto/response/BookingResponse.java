@@ -1,6 +1,7 @@
 package uz.minipolya.minipolya_backend.dto.response;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import uz.minipolya.minipolya_backend.provider.DeclineReason;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -84,6 +85,12 @@ public class BookingResponse {
 
     /** Only set on a cancellation response: the refund actually issued, in tiyin. */
     private Long refundAmount;
+    /**
+     * R44: the latest card payment of this booking was refused, and why:
+     * {@code INSUFFICIENT_FUNDS}, {@code CARD_EXPIRED} or {@code CARD_DECLINED}. Absent
+     * otherwise — including once a later payment went through.
+     */
+    private DeclineReason declineReason;
 
     private OffsetDateTime createdAt;
 }

@@ -26,6 +26,7 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
+import uz.minipolya.minipolya_backend.exception.CardDeclinedException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.PaymentPendingException;
 import uz.minipolya.minipolya_backend.exception.PaymentStepFailedException;
@@ -132,7 +133,7 @@ public class TeamGameService {
 
         Payment hold = paymentService.holdForTeamGame(sideA, card, holdMinutes);
         if (hold.getStatus() == Payment.Status.FAILED) {
-            throw new BadRequestException("Card payment was declined; the game was not created");
+            throw CardDeclinedException.of(hold, "Card payment was declined; the game was not created");
         }
 
         log.info("Team game created: gameId={} teamId={} held={}",
@@ -190,8 +191,8 @@ public class TeamGameService {
                 case UNAVAILABLE -> throw new ProviderUnavailableException(
                         "To'lov tizimi vaqtincha ishlamayapti. Birozdan so'ng qayta urinib ko'ring");
                 case UNKNOWN -> throw new PaymentStepFailedException(CHARGE_UNCONFIRMED);
-                default -> throw new BadRequestException(
-                        "Card payment was declined; the game is still looking for an opponent");
+                default -> throw CardDeclinedException.of(
+                        step(() -> paymentService.teamPaymentById(start.paymentId())), JOIN_DECLINED);
             }
         }
         Payment charge = step(() -> paymentService.confirmCommittedCharge(start.paymentId()));
@@ -203,8 +204,7 @@ public class TeamGameService {
                 return null;
             });
             if (charge.getStatus() == Payment.Status.FAILED) {
-                throw new BadRequestException(
-                        "Card payment was declined; the game is still looking for an opponent");
+                throw CardDeclinedException.of(charge, JOIN_DECLINED);
             }
             log.warn("Joining charge unanswered: gameId={} paymentId={}; the game goes on waiting",
                     game.getId(), charge.getId());
@@ -221,6 +221,8 @@ public class TeamGameService {
                             + "your payment is being returned in full");
         };
     }
+
+    static final String JOIN_DECLINED = "Card payment was declined; the game is still looking for an opponent";
 
     static final String CHARGE_UNCONFIRMED =
             "The card payment could not be confirmed; the game is still looking for an opponent. "
@@ -651,7 +653,7 @@ public class TeamGameService {
         SavedCard card = savedCardService.requireOwnedCard(userId, cardId);
         Payment payment = paymentService.chargeForTeamGame(team, card, Payment.PaymentType.REMAINDER);
         if (payment.getStatus() == Payment.Status.FAILED) {
-            throw new BadRequestException("Card payment was declined; the remainder is still owed");
+            throw CardDeclinedException.of(payment, "Card payment was declined; the remainder is still owed");
         }
         if (payment.getStatus() == Payment.Status.PROCESSING) {
             // Kept (committed) for the reconcile job, which settles the remainder if it went through.

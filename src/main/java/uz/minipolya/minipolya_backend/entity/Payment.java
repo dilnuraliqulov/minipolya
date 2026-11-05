@@ -6,6 +6,8 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Converter;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import org.hibernate.annotations.UuidGenerator;
 import java.util.UUID;
@@ -151,6 +153,11 @@ public class Payment {
     /** On a refund the provider declined: the provider's error, for the admin. */
     @Column(name = "failure_reason", length = 500)
     private String failureReason;
+
+    /** R44: why the provider refused this charge or hold, in the player's terms; null otherwise. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "decline_reason", length = 30)
+    private uz.minipolya.minipolya_backend.provider.DeclineReason declineReason;
 
     /** A failed refund an admin marked as returned outside the platform (cash, bank transfer). */
     @Builder.Default
