@@ -508,6 +508,25 @@ class FakePaymentProviderTest {
         refusedWith(() -> provider.hold(tooSmall), AtmosCodes.WRONG_AMOUNT);
     }
 
+    // ---- secrets ----
+
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
+    void noCardNumberSmsCodeOrTokenIsEverLogged(org.springframework.boot.test.system.CapturedOutput output) {
+        CardBindingStart start = provider.bindCardInit("8600555566667777", EXPIRY);
+        BoundCard card = provider.bindCardConfirm(start.bindingId(), "482913");
+        PendingCharge pending = provider.charge(charge(card.cardToken(), 100_000L, 100_000L));
+        provider.confirmCharge(pending.transactionIds(), null);
+        provider.removeCard(card.cardId(), card.cardToken());
+
+        assertThat(output.getAll())
+                .contains("[fake-provider]")
+                .doesNotContain("8600555566667777")
+                .doesNotContain("482913")
+                .doesNotContain(card.cardToken())
+                .doesNotContain(EXPIRY);
+    }
+
     // ---- production ----
 
     @Test
