@@ -5,39 +5,51 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.env.Environment;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
-import uz.minipolya.minipolya_backend.exception.BadRequestException;
+import uz.minipolya.minipolya_backend.config.AppProperties;
+import uz.minipolya.minipolya_backend.entity.User;
+import uz.minipolya.minipolya_backend.provider.fake.FakeBinding;
+import uz.minipolya.minipolya_backend.provider.fake.FakeCard;
+import uz.minipolya.minipolya_backend.provider.fake.FakeProviderStore;
+import uz.minipolya.minipolya_backend.repository.UserRepository;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Stand-in for ATMOS in dev and tests, so every business flow above it runs without
- * real money. Active only while {@code app.payments.provider=fake}, and it refuses to
- * start at all under the {@code prod} profile.
+ * real money. Active only while {@code app.payments.provider=fake} and never under the
+ * {@code atmos} profile; it refuses to start under {@code prod}.
  *
- * <p>It behaves like ATMOS in the ways that matter: a binding needs the SMS code; a
- * charge is one transaction per split, created then confirmed, and the provider takes
- * {@value #COMMISSION_BPS} bps of each split as commission; a reverse gives a confirmed
- * transaction back once ({@link TransactionClosedException} the second time); a hold
- * lapses {@code durationMinutes} after it is placed, after which a capture fails with
- * {@link HoldExpiredException} ({@value #HOLD_EXPIRED}), and a hold settles exactly once
- * ({@link HoldCancelledException} after a release); the same {@code account} never
- * creates a second charge.
+ * <p>It answers the way ATMOS does, with ATMOS's codes ({@link AtmosCodes}), so switching
+ * to the real client changes nothing above the {@link PaymentProvider} interface.
  *
- * <p>Two things make failure paths testable: the SMS code is always
- * {@value #EXPECTED_SMS_CODE}, and a card whose number ends in {@value #DECLINED_SUFFIX}
- * is always declined.
+ * <p><b>Binding.</b> Any 16-digit Uzcard ({@code 8600…}) or Humo ({@code 9860…}) number
+ * with a valid MM/YY that has not passed; anything else is
+ * {@link AtmosCodes#WRONG_CARD_NUMBER}, a bad month {@link AtmosCodes#WRONG_EXPIRY}, a past
+ * one {@link AtmosCodes#CARD_EXPIRED}. Any SMS code of {@code app.payments.fake.otp-length}
+ * digits is accepted except the reserved {@value #WRONG_CODE} (wrong) and
+ * {@value #EXPIRED_CODE} (expired); a code lives {@code otp-ttl-seconds} and may be sent
+ * again after {@code resend-cooldown-seconds}.
  *
- * <p>State lives in memory and resets with the process. Card numbers are held only
- * between {@code bindCardInit} and {@code bindCardConfirm} and are never logged; tokens
- * are never logged either.
+ * <p>Card numbers, SMS codes and tokens are never logged or stored: a card is kept by its
+ * masked number, last four digits and the SHA-256 of its token.
  */
 @Slf4j
 @Component
@@ -45,42 +57,55 @@ import java.util.concurrent.ConcurrentHashMap;
 @Profile("!atmos")
 public class FakePaymentProvider implements PaymentProvider {
 
-    /** The only SMS code this fake accepts. */
+    /** Reserved: always "wrong code". */
+    public static final String WRONG_CODE = "000000";
+    /** Reserved: always "code expired". */
+    public static final String EXPIRED_CODE = "999999";
+    /** Any other code of the configured length works; this one is as good as any. */
     public static final String EXPECTED_SMS_CODE = "111111";
     /** A card number ending in this is always declined, so failures can be tested. */
     public static final String DECLINED_SUFFIX = "0002";
     /** The commission taken from each split: 150 bps = 1.5%, like ATMOS. */
     public static final int COMMISSION_BPS = 150;
-    public static final String HOLD_EXPIRED = "HOLD_EXPIRED";
-    public static final String HOLD_CANCELLED = "HOLD_CANCELLED";
-    public static final String TRANSACTION_CLOSED = "TRANSACTION_CLOSED";
-    public static final String DECLINED = "DECLINED";
+    public static final String HOLD_EXPIRED = AtmosCodes.HOLD_EXPIRED;
+    public static final String HOLD_CANCELLED = AtmosCodes.HOLD_CANCELLED;
+    public static final String TRANSACTION_CLOSED = AtmosCodes.TRANSACTION_CLOSED;
+    public static final String DECLINED = AtmosCodes.CARD_BLOCKED;
+
+    private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
+    private static final String CARD_HOLDER = "MINIPOLYA TEST";
 
     private final Environment environment;
     private final Clock clock;
+    private final AppProperties.Fake config;
+    private final FakeProviderStore store;
+    /** Null in unit tests: the masked phone then ends in {@code **}. */
+    private final UserRepository userRepository;
 
-    private final Map<String, String> pendingBindings = new ConcurrentHashMap<>();
-    /** token → card. */
-    private final Map<String, FakeCard> cards = new ConcurrentHashMap<>();
     private final Map<String, FakeTransaction> transactions = new ConcurrentHashMap<>();
     /** account → the transactions created for it, so a retry returns them instead of charging again. */
     private final Map<String, List<String>> chargesByAccount = new ConcurrentHashMap<>();
     private final Map<String, FakeHold> holds = new ConcurrentHashMap<>();
 
-    public FakePaymentProvider(Environment environment, Clock clock) {
+    public FakePaymentProvider(Environment environment, Clock clock, AppProperties properties,
+                               FakeProviderStore store, UserRepository userRepository) {
         this.environment = environment;
         this.clock = clock;
+        this.config = properties.getPayments().getFake();
+        this.store = store;
+        this.userRepository = userRepository;
     }
 
     /**
      * A fake payment provider in production would silently approve every charge and take
-     * no money, so refuse to come up at all.
+     * no money, so refuse to come up at all. (It is never created under {@code atmos}.)
      */
     @PostConstruct
     public void refuseInProduction() {
-        if (Arrays.asList(environment.getActiveProfiles()).contains("prod")) {
+        List<String> profiles = Arrays.asList(environment.getActiveProfiles());
+        if (profiles.contains("prod") || profiles.contains("atmos")) {
             throw new IllegalStateException(
-                    "app.payments.provider=fake must never run under the prod profile: "
+                    "app.payments.provider=fake must never run under the prod or atmos profile: "
                             + "configure the real payment provider instead");
         }
         log.warn("FakePaymentProvider is active (app.payments.provider=fake): no real money will move");
@@ -90,41 +115,103 @@ public class FakePaymentProvider implements PaymentProvider {
 
     @Override
     public CardBindingStart bindCardInit(String cardNumber, String expiry) {
+        pause();
         String digits = digitsOf(cardNumber);
-        if (digits.length() < 8) {
-            throw new BadRequestException("cardNumber is not a card number");
+        if (digits.length() != 16 || !(digits.startsWith("8600") || digits.startsWith("9860"))) {
+            throw refused(AtmosCodes.WRONG_CARD_NUMBER, "Неправильный номер карты");
         }
-        String bindingId = "bind-" + UUID.randomUUID();
-        pendingBindings.put(bindingId, digits);
-        log.info("[fake-provider] card binding started: bindingId={}", bindingId);
-        return new CardBindingStart(bindingId, "********9999");
+        YearMonth validTo = parseExpiry(expiry);
+        if (validTo == null) {
+            throw refused(AtmosCodes.WRONG_EXPIRY, "Неверно указана дата истечения срока вашей карты");
+        }
+        if (validTo.isBefore(YearMonth.now(clock.withZone(TASHKENT)))) {
+            throw refused(AtmosCodes.CARD_EXPIRED, "Срок действия вашей карты истек");
+        }
+        String maskedPhone = CardMask.phone(currentUserPhone().orElse(null));
+        OffsetDateTime now = now();
+        FakeBinding binding = FakeBinding.builder()
+                .bindingId("bind-" + UUID.randomUUID())
+                .maskedPan(CardMask.pan(digits))
+                .last4(digits.substring(12))
+                .expiry(expiry.trim())
+                .maskedPhone(maskedPhone)
+                .cardHolder(CARD_HOLDER)
+                .codeSentAt(now)
+                .createdAt(now)
+                .build();
+        store.inTransaction(() -> {
+            store.saveBinding(binding);
+            return null;
+        });
+        log.info("[fake-provider] card binding started: bindingId={}", binding.getBindingId());
+        return new CardBindingStart(binding.getBindingId(), maskedPhone);
+    }
+
+    @Override
+    public CardBindingStart resendBindingCode(String bindingId) {
+        pause();
+        return store.inTransaction(() -> {
+            FakeBinding binding = openBinding(bindingId);
+            OffsetDateTime allowedAt = binding.getCodeSentAt().plusSeconds(config.getResendCooldownSeconds());
+            if (now().isBefore(allowedAt)) {
+                throw refused(AtmosCodes.OTP_RESEND_TOO_EARLY, "SMS code was sent less than "
+                        + config.getResendCooldownSeconds() + " s ago");
+            }
+            binding.setCodeSentAt(now());
+            store.saveBinding(binding);
+            log.info("[fake-provider] binding code sent again: bindingId={}", bindingId);
+            return new CardBindingStart(bindingId, binding.getMaskedPhone());
+        });
     }
 
     @Override
     public BoundCard bindCardConfirm(String bindingId, String otp) {
-        String digits = pendingBindings.get(bindingId);
-        if (digits == null) {
-            throw new BadRequestException("Unknown or already-confirmed binding");
-        }
-        if (!EXPECTED_SMS_CODE.equals(otp)) {
-            throw new BadRequestException("Wrong SMS code");
-        }
-        pendingBindings.remove(bindingId);
+        pause();
         String token = "tok-" + UUID.randomUUID();
-        String cardId = "card-" + UUID.randomUUID();
-        cards.put(token, new FakeCard(cardId, digits.endsWith(DECLINED_SUFFIX)));
-        BoundCard card = new BoundCard(token, cardId, mask(digits), "12/30");
-        log.info("[fake-provider] card bound: cardId={} masked={}", cardId, card.maskedPan());
-        return card;
+        BoundCard bound = store.inTransaction(() -> {
+            FakeBinding binding = openBinding(bindingId);
+            String code = otp == null ? "" : otp.trim();
+            if (EXPIRED_CODE.equals(code)
+                    || now().isAfter(binding.getCodeSentAt().plusSeconds(config.getOtpTtlSeconds()))) {
+                throw refused(AtmosCodes.OTP_EXPIRED, "SMS code has expired");
+            }
+            if (WRONG_CODE.equals(code) || !code.matches("\\d{" + config.getOtpLength() + "}")) {
+                throw refused(AtmosCodes.WRONG_OTP, "OTP код указан неверно");
+            }
+            binding.setConfirmedAt(now());
+            store.saveBinding(binding);
+            FakeCard card = FakeCard.builder()
+                    .cardId("card-" + UUID.randomUUID())
+                    .tokenHash(sha256(token))
+                    .maskedPan(binding.getMaskedPan())
+                    .last4(binding.getLast4())
+                    .expiry(binding.getExpiry())
+                    .cardHolder(binding.getCardHolder())
+                    .maskedPhone(binding.getMaskedPhone())
+                    .balance(config.getStartingBalance())
+                    .active(true)
+                    .createdAt(now())
+                    .build();
+            store.saveCard(card);
+            return new BoundCard(token, card.getCardId(), card.getMaskedPan(), card.getExpiry(), card.getCardHolder());
+        });
+        log.info("[fake-provider] card bound: cardId={} masked={}", bound.cardId(), bound.maskedPan());
+        return bound;
     }
 
     @Override
     public void removeCard(String cardId, String cardToken) {
-        FakeCard card = cards.get(cardToken);
-        if (card == null || !card.cardId().equals(cardId)) {
-            throw new PaymentProviderException("CARD_NOT_FOUND", "Unknown card");
-        }
-        cards.remove(cardToken);
+        pause();
+        store.inTransaction(() -> {
+            FakeCard card = store.card(cardId)
+                    .filter(FakeCard::isActive)
+                    .filter(c -> c.getTokenHash().equals(sha256(cardToken)))
+                    .orElseThrow(() -> refused(AtmosCodes.CARD_NOT_FOUND, "Карта не найдена"));
+            card.setActive(false);
+            card.setRemovedAt(now());
+            store.saveCard(card);
+            return null;
+        });
         log.info("[fake-provider] card removed: cardId={}", cardId);
     }
 
@@ -135,11 +222,7 @@ public class FakePaymentProvider implements PaymentProvider {
         boolean byToken = request.cardToken() != null;
         boolean declines;
         if (byToken) {
-            FakeCard card = cards.get(request.cardToken());
-            if (card == null) {
-                throw new BadRequestException("Unknown card token");
-            }
-            declines = card.declines();
+            declines = activeCard(request.cardToken()).getLast4().equals(DECLINED_SUFFIX);
         } else {
             declines = digitsOf(request.cardNumber()).endsWith(DECLINED_SUFFIX);
         }
@@ -167,7 +250,7 @@ public class FakePaymentProvider implements PaymentProvider {
             return outcomeOf(txns); // confirming twice answers with where it already stands
         }
         if (txns.stream().anyMatch(t -> t.otpRequired) && !EXPECTED_SMS_CODE.equals(otp)) {
-            throw new PaymentProviderException("WRONG_OTP", "Wrong SMS code");
+            throw new PaymentProviderException(AtmosCodes.WRONG_OTP, "Wrong SMS code");
         }
         if (txns.stream().anyMatch(t -> t.declines)) {
             txns.forEach(t -> t.status = ProviderStatus.FAILED);
@@ -204,13 +287,10 @@ public class FakePaymentProvider implements PaymentProvider {
 
     @Override
     public HoldOutcome hold(HoldRequest request) {
-        FakeCard card = cards.get(request.cardToken());
-        if (card == null) {
-            throw new BadRequestException("Unknown card token");
-        }
+        FakeCard card = activeCard(request.cardToken());
         String holdId = "hold-" + UUID.randomUUID();
         OffsetDateTime till = now().plusMinutes(request.durationMinutes());
-        holds.put(holdId, new FakeHold(holdId, request.splits(), till, card.declines()));
+        holds.put(holdId, new FakeHold(holdId, request.splits(), till, card.getLast4().equals(DECLINED_SUFFIX)));
         log.info("[fake-provider] hold created: holdId={} total={} till={}", holdId, request.total(), till);
         return new HoldOutcome(holdId, ProviderStatus.PENDING, till, null, null);
     }
@@ -260,6 +340,67 @@ public class FakePaymentProvider implements PaymentProvider {
 
     // ---- Helpers ----
 
+    private FakeBinding openBinding(String bindingId) {
+        return store.binding(bindingId)
+                .filter(b -> b.getConfirmedAt() == null)
+                .orElseThrow(() -> refused(AtmosCodes.BINDING_NOT_FOUND, "Unknown or already-confirmed binding"));
+    }
+
+    private FakeCard activeCard(String token) {
+        return store.inTransaction(() -> store.cardByTokenHash(sha256(token)))
+                .filter(FakeCard::isActive)
+                .orElseThrow(() -> refused(AtmosCodes.CARD_NOT_FOUND, "Карта не найдена"));
+    }
+
+    private Optional<String> currentUserPhone() {
+        if (userRepository == null) {
+            return Optional.empty();
+        }
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !(auth.getPrincipal() instanceof UUID userId)) {
+            return Optional.empty();
+        }
+        return userRepository.findById(userId).map(User::getPhone);
+    }
+
+    /** MM/YY with a real month, or null. */
+    private static YearMonth parseExpiry(String expiry) {
+        if (expiry == null || !expiry.trim().matches("\\d{2}/\\d{2}")) {
+            return null;
+        }
+        int month = Integer.parseInt(expiry.trim().substring(0, 2));
+        int year = 2000 + Integer.parseInt(expiry.trim().substring(3));
+        return month >= 1 && month <= 12 ? YearMonth.of(year, month) : null;
+    }
+
+    /** A realistic wait before answering ({@code app.payments.fake.delay-*-ms}; 0 in tests). */
+    private void pause() {
+        long min = Math.max(0, config.getDelayMinMs());
+        long max = Math.max(min, config.getDelayMaxMs());
+        if (max == 0) {
+            return;
+        }
+        try {
+            Thread.sleep(min == max ? min : ThreadLocalRandom.current().nextLong(min, max + 1));
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static PaymentProviderException refused(String code, String message) {
+        log.info("[fake-provider] refused: code={}", code);
+        return new PaymentProviderException(code, message);
+    }
+
+    static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(String.valueOf(value).getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
+    }
+
     private ChargeOutcome outcomeOf(List<FakeTransaction> txns) {
         if (txns.stream().allMatch(t -> t.status == ProviderStatus.SUCCESS)) {
             long commission = txns.stream().mapToLong(t -> t.amount * COMMISSION_BPS / 10_000).sum();
@@ -306,16 +447,8 @@ public class FakePaymentProvider implements PaymentProvider {
         return hold;
     }
 
-    /** {@code 8600 •••• 1234} — first four and last four, nothing in between. */
-    private String mask(String digits) {
-        return digits.substring(0, 4) + " •••• " + digits.substring(digits.length() - 4);
-    }
-
     private String digitsOf(String cardNumber) {
         return cardNumber == null ? "" : cardNumber.replaceAll("\\D", "");
-    }
-
-    private record FakeCard(String cardId, boolean declines) {
     }
 
     private static final class FakeTransaction {

@@ -29,6 +29,16 @@ public interface PaymentProvider {
     /** Starts binding a card. The number and expiry are passed through, never kept. */
     CardBindingStart bindCardInit(String cardNumber, String expiry);
 
+    /**
+     * Sends a binding's SMS code again. Only once the cooldown has passed
+     * ({@link AtmosCodes#OTP_RESEND_TOO_EARLY} before that).
+     *
+     * <p>TODO(ATMOS): ATMOS documents no resend for a card binding (only
+     * {@code pay/retry-otp} for a payment). Until it does, the real client answers
+     * {@link AtmosCodes#RESEND_UNSUPPORTED} and the player enters the card again.
+     */
+    CardBindingStart resendBindingCode(String bindingId);
+
     BoundCard bindCardConfirm(String bindingId, String otp);
 
     void removeCard(String cardId, String cardToken);

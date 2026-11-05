@@ -147,6 +147,30 @@ public class AppProperties {
          * A game whose hold would need longer cannot be created.
          */
         private int holdMaxMinutes = 43_200;
+
+        /** FakePaymentProvider's behaviour (dev and tests only; see "To simulate X in dev" in CLAUDE.md). */
+        private Fake fake = new Fake();
+    }
+
+    /** {@code app.payments.fake.*}: how the fake provider imitates ATMOS. */
+    @Getter
+    @Setter
+    public static class Fake {
+        /** Digits in a binding's SMS code; any code of this length is accepted except 000000 / 999999. */
+        private int otpLength = 6;
+        /** How long an SMS code stays valid, in seconds. */
+        private int otpTtlSeconds = 180;
+        /** How long before a code may be sent again, in seconds. */
+        private int resendCooldownSeconds = 60;
+        /** What every new fake card holds, in tiyin (default 10 000 000 so'm). */
+        private long startingBalance = 1_000_000_000L;
+        /** The smallest transaction ATMOS takes, per split, in tiyin (500 so'm). */
+        private long minAmount = 50_000L;
+        /** How long after a payment it may still be reversed, in months. */
+        private int refundWindowMonths = 3;
+        /** A random delay before every call, in milliseconds (0 / 0 turns it off; tests do). */
+        private long delayMinMs = 300;
+        private long delayMaxMs = 800;
     }
 
     /**

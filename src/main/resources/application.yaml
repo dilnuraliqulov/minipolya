@@ -69,6 +69,16 @@ app:
     provider: ${PAYMENTS_PROVIDER:fake}
     # The longest a team game's hold may last (30 days); a game needing longer cannot be created.
     hold-max-minutes: 43200
+    # FakePaymentProvider only (dev and tests): see "To simulate X in dev" in CLAUDE.md.
+    fake:
+      otp-length: 6
+      otp-ttl-seconds: 180
+      resend-cooldown-seconds: 60
+      starting-balance: 1000000000   # tiyin = 10 000 000 so'm per fake card
+      min-amount: 50000              # tiyin = 500 so'm per split, as ATMOS
+      refund-window-months: 3
+      delay-min-ms: 300
+      delay-max-ms: 800
   # Browser origins allowed to call the API from another origin (comma-separated, exact,
   # never *). Empty, the default, sends no CORS headers: only same-origin pages can call it.
   cors:

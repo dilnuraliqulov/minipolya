@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.AddCardRequest;
 import uz.minipolya.minipolya_backend.dto.request.ConfirmCardRequest;
+import uz.minipolya.minipolya_backend.dto.request.ResendCardCodeRequest;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.CardBindingResponse;
 import uz.minipolya.minipolya_backend.dto.response.SavedCardResponse;
@@ -35,6 +36,13 @@ public class CardController {
     public ApiResponse<CardBindingResponse> add(@AuthenticationPrincipal UUID userId,
                                                 @Valid @RequestBody AddCardRequest request) {
         return ApiResponse.ok(savedCardService.addCard(userId, request), "SMS code sent");
+    }
+
+    /** The SMS code again, after the cooldown (400 SMS_RESEND_TOO_EARLY before it). */
+    @PostMapping("/resend")
+    public ApiResponse<CardBindingResponse> resend(@AuthenticationPrincipal UUID userId,
+                                                   @Valid @RequestBody ResendCardCodeRequest request) {
+        return ApiResponse.ok(savedCardService.resendCode(userId, request), "SMS code sent");
     }
 
     @PostMapping("/confirm")

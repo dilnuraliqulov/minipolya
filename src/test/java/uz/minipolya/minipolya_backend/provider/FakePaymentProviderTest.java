@@ -1,9 +1,11 @@
 package uz.minipolya.minipolya_backend.provider;
 
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.env.MockEnvironment;
-import uz.minipolya.minipolya_backend.exception.BadRequestException;
+import uz.minipolya.minipolya_backend.config.AppProperties;
+import uz.minipolya.minipolya_backend.provider.fake.InMemoryFakeProviderStore;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -22,14 +24,22 @@ class FakePaymentProviderTest {
     private static final String UZCARD = "8600123412341234";
     private static final String HUMO = "9860123412341234";
     private static final String DECLINING = "8600123412340002";
+    /** The clock below is 2026-10-29. */
     private static final String EXPIRY = "12/29";
 
     private final MovableClock clock = new MovableClock();
+    private final AppProperties properties = new AppProperties();
     private FakePaymentProvider provider;
 
     @BeforeEach
     void setUp() {
-        provider = new FakePaymentProvider(new MockEnvironment(), clock);
+        properties.getPayments().getFake().setDelayMinMs(0);
+        properties.getPayments().getFake().setDelayMaxMs(0);
+        provider = newProvider(new MockEnvironment());
+    }
+
+    private FakePaymentProvider newProvider(MockEnvironment environment) {
+        return new FakePaymentProvider(environment, clock, properties, new InMemoryFakeProviderStore(), null);
     }
 
     private String bind(String cardNumber) {
@@ -47,43 +57,115 @@ class FakePaymentProviderTest {
                 token, UUID.randomUUID().toString(), minutes);
     }
 
-    // ---- cards ----
+    private static void refusedWith(ThrowingCallable call, String code) {
+        assertThatThrownBy(call).isInstanceOf(PaymentProviderException.class).extracting("code").isEqualTo(code);
+    }
+
+    // ---- binding ----
 
     @Test
-    void bindingNeedsTheSmsCodeAndGivesATokenAnIdAndAMaskedNumber() {
+    void anyUzcardOrHumoNumberBindsWithAnySixDigitCode() {
         CardBindingStart start = provider.bindCardInit(UZCARD, EXPIRY);
-        assertThat(start.maskedPhone()).startsWith("****");
+        assertThat(start.bindingId()).isNotBlank();
+        assertThat(start.maskedPhone()).isEqualTo("+998 ** *** ** **");
 
-        BoundCard card = provider.bindCardConfirm(start.bindingId(), "111111");
+        BoundCard card = provider.bindCardConfirm(start.bindingId(), "483920");
 
         assertThat(card.cardToken()).isNotBlank();
         assertThat(card.cardId()).isNotBlank();
-        assertThat(card.maskedPan()).isEqualTo("8600 •••• 1234");
-        assertThat(card.maskedPan()).doesNotContain("12341234");
+        assertThat(card.maskedPan()).isEqualTo("8600 •••• •••• 1234");
+        assertThat(card.expiry()).isEqualTo(EXPIRY);
+        assertThat(card.cardHolder()).isNotBlank();
         assertThat(card.toString()).doesNotContain(card.cardToken());
+
+        BoundCard humo = provider.bindCardConfirm(provider.bindCardInit(HUMO, "11/26").bindingId(), "000001");
+        assertThat(humo.maskedPan()).isEqualTo("9860 •••• •••• 1234");
+        assertThat(CardMask.type(humo.maskedPan())).isEqualTo("humo");
     }
 
     @Test
-    void aWrongSmsCodeOrAnUnknownOrReusedBindingIsRefused() {
-        CardBindingStart start = provider.bindCardInit(HUMO, EXPIRY);
-        assertThatThrownBy(() -> provider.bindCardConfirm(start.bindingId(), "000000"))
-                .isInstanceOf(BadRequestException.class);
-        assertThatThrownBy(() -> provider.bindCardConfirm("no-such-binding", "111111"))
-                .isInstanceOf(BadRequestException.class);
-        provider.bindCardConfirm(start.bindingId(), "111111");
-        assertThatThrownBy(() -> provider.bindCardConfirm(start.bindingId(), "111111"))
-                .isInstanceOf(BadRequestException.class);
+    void onlySixteenDigitUzcardAndHumoNumbersAreAccepted() {
+        refusedWith(() -> provider.bindCardInit("4111111111111111", EXPIRY), AtmosCodes.WRONG_CARD_NUMBER);
+        refusedWith(() -> provider.bindCardInit("5614681234567890", EXPIRY), AtmosCodes.WRONG_CARD_NUMBER);
+        refusedWith(() -> provider.bindCardInit("860012341234123", EXPIRY), AtmosCodes.WRONG_CARD_NUMBER);
+        // No Luhn check: any 16 digits after the prefix will do.
+        assertThat(provider.bindCardInit("8600000000000000", EXPIRY).bindingId()).isNotBlank();
     }
 
     @Test
-    void aRemovedCardCanNoLongerBeCharged() {
+    void theExpiryMustBeARealMonthThatHasNotPassed() {
+        refusedWith(() -> provider.bindCardInit(UZCARD, "13/29"), AtmosCodes.WRONG_EXPIRY);
+        refusedWith(() -> provider.bindCardInit(UZCARD, "1229"), AtmosCodes.WRONG_EXPIRY);
+        refusedWith(() -> provider.bindCardInit(UZCARD, "09/26"), AtmosCodes.CARD_EXPIRED);
+        // The current month is still valid.
+        assertThat(provider.bindCardInit(UZCARD, "10/26").bindingId()).isNotBlank();
+    }
+
+    @Test
+    void reservedCodesAreWrongOrExpiredAndLeaveTheBindingOpen() {
         CardBindingStart start = provider.bindCardInit(UZCARD, EXPIRY);
-        BoundCard card = provider.bindCardConfirm(start.bindingId(), "111111");
+
+        refusedWith(() -> provider.bindCardConfirm(start.bindingId(), FakePaymentProvider.WRONG_CODE), AtmosCodes.WRONG_OTP);
+        refusedWith(() -> provider.bindCardConfirm(start.bindingId(), FakePaymentProvider.EXPIRED_CODE), AtmosCodes.OTP_EXPIRED);
+        refusedWith(() -> provider.bindCardConfirm(start.bindingId(), "12345"), AtmosCodes.WRONG_OTP);
+        refusedWith(() -> provider.bindCardConfirm(start.bindingId(), "12a456"), AtmosCodes.WRONG_OTP);
+
+        assertThat(provider.bindCardConfirm(start.bindingId(), "123456").cardToken()).isNotBlank();
+    }
+
+    @Test
+    void theCodeLengthIsConfigurable() {
+        properties.getPayments().getFake().setOtpLength(4);
+        CardBindingStart start = provider.bindCardInit(UZCARD, EXPIRY);
+
+        refusedWith(() -> provider.bindCardConfirm(start.bindingId(), "123456"), AtmosCodes.WRONG_OTP);
+        assertThat(provider.bindCardConfirm(start.bindingId(), "1234").cardToken()).isNotBlank();
+    }
+
+    @Test
+    void aCodeExpiresAfterItsLifetime() {
+        CardBindingStart start = provider.bindCardInit(UZCARD, EXPIRY);
+        clock.advance(Duration.ofSeconds(181));
+
+        refusedWith(() -> provider.bindCardConfirm(start.bindingId(), "123456"), AtmosCodes.OTP_EXPIRED);
+    }
+
+    @Test
+    void aCodeCanBeResentOnlyAfterTheCooldownAndTheNewOneWorks() {
+        CardBindingStart start = provider.bindCardInit(UZCARD, EXPIRY);
+
+        clock.advance(Duration.ofSeconds(59));
+        refusedWith(() -> provider.resendBindingCode(start.bindingId()), AtmosCodes.OTP_RESEND_TOO_EARLY);
+
+        clock.advance(Duration.ofSeconds(1));
+        CardBindingStart again = provider.resendBindingCode(start.bindingId());
+        assertThat(again.bindingId()).isEqualTo(start.bindingId());
+        refusedWith(() -> provider.resendBindingCode(start.bindingId()), AtmosCodes.OTP_RESEND_TOO_EARLY);
+
+        // The lifetime runs from the latest code.
+        clock.advance(Duration.ofSeconds(170));
+        assertThat(provider.bindCardConfirm(start.bindingId(), "123456").cardToken()).isNotBlank();
+    }
+
+    @Test
+    void anUnknownOrAlreadyConfirmedBindingIsRefused() {
+        refusedWith(() -> provider.bindCardConfirm("no-such-binding", "123456"), AtmosCodes.BINDING_NOT_FOUND);
+        CardBindingStart start = provider.bindCardInit(UZCARD, EXPIRY);
+        provider.bindCardConfirm(start.bindingId(), "123456");
+
+        refusedWith(() -> provider.bindCardConfirm(start.bindingId(), "123456"), AtmosCodes.BINDING_NOT_FOUND);
+        refusedWith(() -> provider.resendBindingCode(start.bindingId()), AtmosCodes.BINDING_NOT_FOUND);
+    }
+
+    @Test
+    void aRemovedCardsTokenNoLongerWorks() {
+        CardBindingStart start = provider.bindCardInit(UZCARD, EXPIRY);
+        BoundCard card = provider.bindCardConfirm(start.bindingId(), "123456");
 
         provider.removeCard(card.cardId(), card.cardToken());
 
-        assertThatThrownBy(() -> provider.charge(charge(card.cardToken(), 100_000L, 1_000L)))
-                .isInstanceOf(BadRequestException.class);
+        refusedWith(() -> provider.charge(charge(card.cardToken(), 100_000L, 100_000L)), AtmosCodes.CARD_NOT_FOUND);
+        refusedWith(() -> provider.removeCard(card.cardId(), card.cardToken()), AtmosCodes.CARD_NOT_FOUND);
     }
 
     // ---- charges ----
@@ -228,14 +310,15 @@ class FakePaymentProviderTest {
     // ---- production ----
 
     @Test
-    void itRefusesToStartUnderTheProdProfile() {
+    void itRefusesToStartUnderTheProdOrAtmosProfile() {
         MockEnvironment prod = new MockEnvironment();
         prod.setActiveProfiles("prod");
+        MockEnvironment atmos = new MockEnvironment();
+        atmos.setActiveProfiles("dev", "atmos");
 
-        assertThatThrownBy(() -> new FakePaymentProvider(prod, clock).refuseInProduction())
-                .isInstanceOf(IllegalStateException.class);
-        assertThatCode(() -> new FakePaymentProvider(new MockEnvironment(), clock).refuseInProduction())
-                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> newProvider(prod).refuseInProduction()).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> newProvider(atmos).refuseInProduction()).isInstanceOf(IllegalStateException.class);
+        assertThatCode(() -> newProvider(new MockEnvironment()).refuseInProduction()).doesNotThrowAnyException();
     }
 
     /** A clock the test moves forward by hand. */

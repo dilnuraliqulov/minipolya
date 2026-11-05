@@ -19,6 +19,8 @@ import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 import uz.minipolya.minipolya_backend.config.AppProperties;
+import uz.minipolya.minipolya_backend.provider.AtmosCodes;
+import uz.minipolya.minipolya_backend.provider.CardMask;
 import uz.minipolya.minipolya_backend.provider.BoundCard;
 import uz.minipolya.minipolya_backend.provider.CardBindingStart;
 import uz.minipolya.minipolya_backend.provider.ChargeOutcome;
@@ -74,7 +76,9 @@ import java.util.Set;
 public class AtmosPaymentProvider implements PaymentProvider {
 
     static final String OK = "OK";
-    static final String TRANSACTION_CLOSED = "STPIMS-ERR-092";
+    static final String TRANSACTION_CLOSED = AtmosCodes.TRANSACTION_CLOSED;
+    /** A second reverse of the same transaction: gone either way, so "closed" as well. */
+    static final String ALREADY_REVERSED = AtmosCodes.ALREADY_REVERSED;
     static final String HOLD_CANCELLED = "STPIMS-ERR-145";
     static final String HOLD_EXPIRED = "STPIMS-ERR-144";
     /** Codes that mean the card was declined: a FAILED outcome, not an error. */
@@ -141,6 +145,16 @@ public class AtmosPaymentProvider implements PaymentProvider {
         return new CardBindingStart(answer.path("transaction_id").asString(), answer.path("phone").asString(null));
     }
 
+    /**
+     * TODO(ATMOS): no resend for a card binding is documented, and re-running
+     * {@code bind-card/init} needs the card number, which we never keep. Refused with
+     * {@link AtmosCodes#RESEND_UNSUPPORTED}: the player enters the card again.
+     */
+    @Override
+    public CardBindingStart resendBindingCode(String bindingId) {
+        throw new PaymentProviderException(AtmosCodes.RESEND_UNSUPPORTED, "ATMOS cannot resend a binding code");
+    }
+
     @Override
     public BoundCard bindCardConfirm(String bindingId, String otp) {
         ObjectNode body = withId(json.createObjectNode(), "transaction_id", bindingId).put("otp", otp);
@@ -149,7 +163,8 @@ public class AtmosPaymentProvider implements PaymentProvider {
         // TODO(ATMOS): the table nests the card under "data"; the example lists it flat. Read both.
         JsonNode card = answer.has("data") ? answer.path("data") : answer;
         return new BoundCard(card.path("card_token").asString(), card.path("card_id").asString(),
-                maskPan(card.path("pan").asString("")), fromAtmosExpiry(card.path("expiry").asString("")));
+                maskPan(card.path("pan").asString("")), fromAtmosExpiry(card.path("expiry").asString("")),
+                card.path("card_holder").asString(null));
     }
 
     @Override
@@ -404,7 +419,7 @@ public class AtmosPaymentProvider implements PaymentProvider {
         }
         log.warn("ATMOS refused {}: code={}", operation, code);
         throw switch (code) {
-            case TRANSACTION_CLOSED -> new TransactionClosedException(code);
+            case TRANSACTION_CLOSED, ALREADY_REVERSED -> new TransactionClosedException(code);
             case HOLD_CANCELLED -> new HoldCancelledException(code);
             case HOLD_EXPIRED -> new HoldExpiredException(code);
             default -> new PaymentProviderException(code, "ATMOS refused " + operation);
@@ -504,13 +519,9 @@ public class AtmosPaymentProvider implements PaymentProvider {
         return d.length() == 4 ? d.substring(2) + "/" + d.substring(0, 2) : null;
     }
 
-    /** {@code 986009******1840} → {@code 9860 •••• 1840}. */
+    /** {@code 986009******1840} → {@code 9860 •••• •••• 1840}. */
     static String maskPan(String pan) {
-        String clean = pan == null ? "" : pan.replaceAll("[^0-9*]", "");
-        if (clean.length() < 8) {
-            return "•••• " + (clean.length() >= 4 ? clean.substring(clean.length() - 4) : "");
-        }
-        return clean.substring(0, 4) + " •••• " + clean.substring(clean.length() - 4);
+        return CardMask.pan(pan);
     }
 
     private OffsetDateTime parseTime(JsonNode node) {

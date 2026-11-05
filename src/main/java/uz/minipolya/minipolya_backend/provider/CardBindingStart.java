@@ -5,7 +5,7 @@ package uz.minipolya.minipolya_backend.provider;
  * number itself is never kept.
  *
  * @param bindingId   the provider's handle, confirmed with the code
- * @param maskedPhone where the code went, e.g. {@code ********9999}
+ * @param maskedPhone where the code went, e.g. {@code +998 ** *** ** 58} (ATMOS: {@code ********9999})
  */
 public record CardBindingStart(String bindingId, String maskedPhone) {
 }
