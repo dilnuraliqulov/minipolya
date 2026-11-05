@@ -38,6 +38,7 @@ import uz.minipolya.minipolya_backend.provider.LegacyCheckoutProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProviderException;
 import uz.minipolya.minipolya_backend.provider.PendingCharge;
+import uz.minipolya.minipolya_backend.provider.ProviderStatus;
 import uz.minipolya.minipolya_backend.provider.ProviderTimeoutException;
 import uz.minipolya.minipolya_backend.provider.Split;
 import uz.minipolya.minipolya_backend.provider.TransactionClosedException;
@@ -230,6 +231,226 @@ public class PaymentService {
         return payment;
     }
 
+    // ---- Committed steps: each call is its own step, committed before the next one ----
+    //
+    // A team joining a game moves money in several provider calls. Each step below records
+    // where it got to before (or right after) talking to the provider, and the join commits
+    // after every step, so a crash half-way leaves rows the reconcile job can finish —
+    // never money that moved with no record of it.
+
+    /** How one committed step ended. */
+    public enum StepOutcome {
+        /** The provider did it. */
+        DONE,
+        /** The provider refused outright; nothing exists there. */
+        REFUSED,
+        /** The provider could not be reached; nothing exists there. */
+        UNAVAILABLE,
+        /** No answer: it may or may not have happened. The row says where it stands. */
+        UNKNOWN
+    }
+
+    /** Step 0 of a join: the joining team's {@code processing} row, written before any provider call. */
+    @Transactional
+    public Payment openJoinCharge(GameTeam joining) {
+        CardFeeSplit split = joinSplit(joining);
+        Payment row = paymentRepository.save(teamGameRow(joining, split, Payment.PaymentType.TEAM_GAME));
+        log.info("Join charge opened: gameTeamId={} paymentId={} amount={}",
+                joining.getId(), row.getId(), split.playerAmount());
+        return row;
+    }
+
+    /**
+     * Step 1: the provider creates the charge, and its transaction ids are saved — so that
+     * once the next step has taken the money, the reconcile job can always ask about it.
+     */
+    @Transactional
+    public StepOutcome createCommittedCharge(UUID paymentId, SavedCard card) {
+        Payment row = paymentRepository.findForUpdate(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        try {
+            PendingCharge pending = paymentProvider.charge(ChargeRequest.withToken(
+                    splitsOf(row), card.getProviderToken(), row.getId().toString()));
+            row.setProviderTxnId(String.join(",", pending.transactionIds()));
+            paymentRepository.save(row);
+            return StepOutcome.DONE;
+        } catch (ProviderTimeoutException ex) {
+            // Never acknowledged: the reconcile job marks a row without transaction ids failed.
+            log.warn("Charge creation for payment {} unanswered", paymentId);
+            return StepOutcome.UNKNOWN;
+        } catch (PaymentProviderException ex) {
+            row.setStatus(Payment.Status.FAILED);
+            row.setFailureReason(failureReason(ex));
+            paymentRepository.save(row);
+            log.info("Charge for payment {} refused while being created: code={}", paymentId, ex.getCode());
+            return AtmosCodes.isUnavailable(ex.getCode()) ? StepOutcome.UNAVAILABLE : StepOutcome.REFUSED;
+        }
+    }
+
+    /** Step 2: the money is taken. A lost or unclear answer leaves the row {@code processing}. */
+    @Transactional
+    public Payment confirmCommittedCharge(UUID paymentId) {
+        Payment row = paymentRepository.findForUpdate(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (row.getStatus() != Payment.Status.PROCESSING || row.getProviderTxnId() == null) {
+            return row;
+        }
+        try {
+            applyChargeOutcome(row, paymentProvider.confirmCharge(
+                    Arrays.asList(row.getProviderTxnId().split(",")), null));
+        } catch (ProviderTimeoutException ex) {
+            log.warn("Payment {} left processing: confirmation unanswered", paymentId);
+        } catch (PaymentProviderException ex) {
+            log.warn("Payment {} left processing: confirmation refused, code={}", paymentId, ex.getCode());
+        }
+        return paymentRepository.save(row);
+    }
+
+    /**
+     * Before a capture is asked for: the held row becomes {@code capture_pending}, committed,
+     * so a capture whose answer is lost is finished by the reconcile job.
+     *
+     * @return false when the row is not {@code held} (someone else is settling it)
+     */
+    @Transactional
+    public boolean markCapturePending(UUID paymentId) {
+        Payment row = paymentRepository.findForUpdate(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (row.getStatus() != Payment.Status.HELD) {
+            return false;
+        }
+        row.setStatus(Payment.Status.CAPTURE_PENDING);
+        paymentRepository.save(row);
+        return true;
+    }
+
+    /**
+     * Asks for a {@code capture_pending} hold to be captured and records a definite answer:
+     * {@code captured}; {@code released} when the hold lapsed or was cancelled; back to
+     * {@code held} (with the reason) when the provider refused with any other code — the
+     * money is still reserved and whoever undoes the join releases it. No answer, or an
+     * unreachable provider, leaves it {@code capture_pending} for the reconcile job.
+     */
+    @Transactional
+    public Payment captureCommitted(UUID paymentId) {
+        Payment row = paymentRepository.findForUpdate(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (row.getStatus() != Payment.Status.CAPTURE_PENDING) {
+            return row;
+        }
+        try {
+            HoldOutcome outcome = paymentProvider.captureHold(row.getProviderTxnId());
+            row.setStatus(Payment.Status.CAPTURED);
+            if (outcome.commission() != null) {
+                row.setProviderCommission(outcome.commission());
+            }
+            log.info("Hold captured: paymentId={} amount={}", row.getId(), row.getAmount());
+        } catch (HoldCancelledException | HoldExpiredException ex) {
+            row.setStatus(Payment.Status.RELEASED);
+            row.setFailureReason(failureReason(ex));
+            log.error("Hold of payment {} could not be captured: {}", row.getId(), ex.getCode());
+        } catch (ProviderTimeoutException ex) {
+            log.warn("Capture of payment {} unanswered; left capture_pending", row.getId());
+        } catch (PaymentProviderException ex) {
+            if (AtmosCodes.isUnavailable(ex.getCode())) {
+                log.warn("Capture of payment {} not answered (provider unavailable, {}); left capture_pending",
+                        row.getId(), ex.getCode());
+            } else {
+                row.setStatus(Payment.Status.HELD);
+                row.setFailureReason(failureReason(ex));
+                log.error("Capture of payment {} refused: {}", row.getId(), ex.getCode());
+            }
+        }
+        return paymentRepository.save(row);
+    }
+
+    /**
+     * The intent to give a payment back, committed before the provider is asked: a settled
+     * or held row becomes {@code return_pending}, which {@link #completeReturn} (or, after a
+     * crash, the reconcile job) carries out.
+     *
+     * @return true when there is something to give back
+     */
+    @Transactional
+    public boolean markReturnPending(UUID paymentId) {
+        Payment row = paymentRepository.findForUpdate(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (row.getAmount() == null || row.getAmount() <= 0 || row.getMethod() == Payment.Method.CASH) {
+            return false;
+        }
+        boolean returnable = row.getStatus() == Payment.Status.HELD
+                || row.getStatus() == Payment.Status.CAPTURE_PENDING
+                || REFUNDABLE_STATUSES.contains(row.getStatus());
+        if (!returnable) {
+            return row.getStatus() == Payment.Status.RETURN_PENDING;
+        }
+        row.setStatus(Payment.Status.RETURN_PENDING);
+        paymentRepository.save(row);
+        return true;
+    }
+
+    /**
+     * Carries out a {@code return_pending}: a hold still held is released, money that was
+     * taken is reversed in full (a reverse the provider declines becomes a failed refund for
+     * an admin). Shared with the reconcile job, so a return is finished the same way whoever
+     * gets there.
+     */
+    @Transactional
+    public void completeReturn(UUID paymentId, String reason) {
+        Payment row = paymentRepository.findForUpdate(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (row.getStatus() != Payment.Status.RETURN_PENDING) {
+            return; // done meanwhile
+        }
+        if (row.getHoldExpiresAt() != null) {
+            HoldOutcome where = paymentProvider.getHold(row.getProviderTxnId());
+            if (where.status() == ProviderStatus.CAPTURED) {
+                reverseOrRecordFailure(row, Payment.Status.CAPTURED, reason);
+                return;
+            }
+            if (where.status() == ProviderStatus.HELD) {
+                try {
+                    paymentProvider.releaseHold(row.getProviderTxnId());
+                } catch (HoldCancelledException | HoldExpiredException ex) {
+                    // already let go
+                }
+            }
+            row.setStatus(Payment.Status.RELEASED);
+            paymentRepository.save(row);
+            auditService.record(AuditEntry.system(AuditAction.PAYMENT_RELEASED)
+                    .entity(AuditEntityType.PAYMENT, row.getId(), AuditLabels.payment(row))
+                    .change("status", Payment.Status.RETURN_PENDING, row.getStatus())
+                    .created("releasedAmount", row.getAmount())
+                    .reason(reason));
+            log.info("Return of hold {}: released", row.getId());
+            return;
+        }
+        reverseOrRecordFailure(row, Payment.Status.PAID, reason);
+        log.info("Return of charge {}: {}", row.getId(), row.getStatus().getValue());
+    }
+
+    private void reverseOrRecordFailure(Payment row, Payment.Status statusBefore, String reason) {
+        try {
+            reverseInFull(row, reason);
+        } catch (PaymentProviderException ex) {
+            recordFailedRefund(row, statusBefore, reason, ex);
+            return;
+        }
+        recordRefund(row, statusBefore, reason);
+    }
+
+    /** The provider splits of a row: the owner's to the owner's recipient, the platform's to the platform. */
+    private List<Split> splitsOf(Payment row) {
+        List<Split> splits = new ArrayList<>(2);
+        if (row.getOwnerAmount() != null && row.getOwnerAmount() > 0) {
+            splits.add(Split.owner(recipientIdOf(ownerOf(row.getGameTeam())), row.getOwnerAmount()));
+        }
+        if (row.getPlatformAmount() != null && row.getPlatformAmount() > 0) {
+            splits.add(Split.platform(row.getPlatformAmount()));
+        }
+        return splits;
+    }
+
     /** What players pay for this owner price: a quote. */
     public long cardPrice(long net) {
         return cardPricing.playerAmount(net);
@@ -320,6 +541,13 @@ public class PaymentService {
     @Transactional(readOnly = true)
     public List<Payment> teamPayments(UUID gameTeamId) {
         return paymentRepository.findByGameTeamId(gameTeamId);
+    }
+
+    /** One payment as it stands now. */
+    @Transactional(readOnly = true)
+    public Payment teamPaymentById(UUID paymentId) {
+        return paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
     }
 
     /**

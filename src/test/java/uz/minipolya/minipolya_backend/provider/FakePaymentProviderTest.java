@@ -420,12 +420,28 @@ class FakePaymentProviderTest {
     }
 
     @Test
-    void aHoldTimesOutOn0091ButIsHeldWhenAskedAgain() {
-        HoldOutcome created = provider.hold(hold(bindEnding(FakePaymentProvider.TIMEOUT_THEN_SUCCESS_SUFFIX), 60));
+    void onA0091HoldTheCaptureTimesOutButWentThrough() {
+        String token = bindEnding(FakePaymentProvider.TIMEOUT_THEN_SUCCESS_SUFFIX);
+        HoldOutcome created = provider.hold(hold(token, 60));
+        // For a hold the unclear answer comes where the money is taken: the capture.
+        assertThat(provider.confirmHold(created.holdId(), null).status()).isEqualTo(ProviderStatus.HELD);
 
-        assertThatThrownBy(() -> provider.confirmHold(created.holdId(), null)).isInstanceOf(ProviderTimeoutException.class);
+        assertThatThrownBy(() -> provider.captureHold(created.holdId())).isInstanceOf(ProviderTimeoutException.class);
 
-        assertThat(provider.getHold(created.holdId()).status()).isEqualTo(ProviderStatus.HELD);
+        assertThat(provider.getHold(created.holdId()).status()).isEqualTo(ProviderStatus.CAPTURED);
+        assertThat(balanceOf(token)).isEqualTo(1_000_000_000L - 7_500_000L);
+    }
+
+    @Test
+    void onA0092HoldTheCaptureTimesOutAndTheHoldIsGone() {
+        String token = bindEnding(FakePaymentProvider.TIMEOUT_THEN_FAILED_SUFFIX);
+        HoldOutcome created = provider.hold(hold(token, 60));
+        assertThat(provider.confirmHold(created.holdId(), null).status()).isEqualTo(ProviderStatus.HELD);
+
+        assertThatThrownBy(() -> provider.captureHold(created.holdId())).isInstanceOf(ProviderTimeoutException.class);
+
+        assertThat(provider.getHold(created.holdId()).status()).isEqualTo(ProviderStatus.RELEASED);
+        assertThat(balanceOf(token)).isEqualTo(1_000_000_000L);
     }
 
     @Test
@@ -448,15 +464,17 @@ class FakePaymentProviderTest {
     }
 
     @Test
-    void ending0097HoldsButTheCaptureIsRefusedAndTheHoldCancelled() {
+    void ending0097HoldsButTheCaptureIsRefusedWithAnOrdinaryCodeAndTheHoldStays() {
         String token = bindEnding(FakePaymentProvider.CAPTURE_FAILS_SUFFIX);
         HoldOutcome created = provider.hold(hold(token, 60));
         assertThat(provider.confirmHold(created.holdId(), null).status()).isEqualTo(ProviderStatus.HELD);
 
         assertThatThrownBy(() -> provider.captureHold(created.holdId()))
-                .isInstanceOf(HoldCancelledException.class)
-                .extracting("code").isEqualTo(AtmosCodes.HOLD_CANCELLED);
-        assertThat(provider.getHold(created.holdId()).status()).isEqualTo(ProviderStatus.RELEASED);
+                .isExactlyInstanceOf(PaymentProviderException.class)
+                .extracting("code").isEqualTo(AtmosCodes.CARD_BLOCKED);
+        // Not cancelled by the refusal: whoever undoes the join has to release it.
+        assertThat(provider.getHold(created.holdId()).status()).isEqualTo(ProviderStatus.HELD);
+        assertThat(provider.releaseHold(created.holdId()).status()).isEqualTo(ProviderStatus.RELEASED);
         assertThat(balanceOf(token)).isEqualTo(1_000_000_000L);
     }
 

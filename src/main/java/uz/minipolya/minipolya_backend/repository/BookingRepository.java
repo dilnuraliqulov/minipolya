@@ -32,6 +32,9 @@ public interface BookingRepository extends JpaRepository<Booking, UUID>, JpaSpec
 
     List<Booking> findByStadiumIdAndStartsAtBetween(UUID stadiumId, OffsetDateTime from, OffsetDateTime to);
 
+    /** A game's bookings in one status — e.g. the pending one a join in progress holds the slot with. */
+    List<Booking> findByGameIdAndStatus(UUID gameId, String status);
+
     Page<Booking> findByStadiumIdAndStartsAtBetween(UUID stadiumId, OffsetDateTime from, OffsetDateTime to,
                                                     Pageable pageable);
 

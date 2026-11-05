@@ -27,6 +27,9 @@ import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
+import uz.minipolya.minipolya_backend.exception.PaymentPendingException;
+import uz.minipolya.minipolya_backend.exception.PaymentStepFailedException;
+import uz.minipolya.minipolya_backend.exception.ProviderUnavailableException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.exception.SlotAlreadyBookedException;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
@@ -105,6 +108,8 @@ public class TeamGameService {
     private final AppProperties appProperties;
     private final TeamMemberRepository teamMemberRepository;
     private final TeamRepository teamRepository;
+    /** A join commits after every step (see {@link #join}); everything else here is ordinary {@code @Transactional}. */
+    private final org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     /**
      * Puts the creating team on side A and holds its fee and advance. No
@@ -152,7 +157,6 @@ public class TeamGameService {
      *   <li>confirm the booking and the game.</li>
      * </ol>
      */
-    @Transactional(noRollbackFor = uz.minipolya.minipolya_backend.exception.PaymentStepFailedException.class)
     public GameTeam join(Game game, Team teamB, User leader, UUID cardId) {
         if (teamB == null) {
             throw new BadRequestException("teamId is required to join as team B");
@@ -170,46 +174,324 @@ public class TeamGameService {
             throw new BadRequestException(TOO_LATE_TO_JOIN);
         }
         SavedCard card = savedCardService.requireOwnedCard(leader.getId(), cardId);
-        requireWaitingHoldsInPlace(game);
 
+        // Step 0, committed before any money moves: the joining team (JOINING), the slot
+        // (a pending booking) and the joiner's processing payment row.
+        JoinStart start = step(() -> beginJoin(game.getId(), teamB, leader));
+
+        // Steps 1-2: the joiner's charge — created (its ids committed), then confirmed.
+        PaymentService.StepOutcome created = step(() -> paymentService.createCommittedCharge(start.paymentId(), card));
+        if (created != PaymentService.StepOutcome.DONE) {
+            step(() -> {
+                abandonJoin(start.gameTeamId(), "The joining team's card was not charged");
+                return null;
+            });
+            switch (created) {
+                case UNAVAILABLE -> throw new ProviderUnavailableException(
+                        "To'lov tizimi vaqtincha ishlamayapti. Birozdan so'ng qayta urinib ko'ring");
+                case UNKNOWN -> throw new PaymentStepFailedException(CHARGE_UNCONFIRMED);
+                default -> throw new BadRequestException(
+                        "Card payment was declined; the game is still looking for an opponent");
+            }
+        }
+        Payment charge = step(() -> paymentService.confirmCommittedCharge(start.paymentId()));
+        if (charge.getStatus() != Payment.Status.PAID) {
+            // Declined: nothing moved. Unanswered: the row stays processing and the
+            // reconcile job gives the money back if it was taken — the team has left by then.
+            step(() -> {
+                abandonJoin(start.gameTeamId(), "The joining team's card was not charged");
+                return null;
+            });
+            if (charge.getStatus() == Payment.Status.FAILED) {
+                throw new BadRequestException(
+                        "Card payment was declined; the game is still looking for an opponent");
+            }
+            log.warn("Joining charge unanswered: gameId={} paymentId={}; the game goes on waiting",
+                    game.getId(), charge.getId());
+            throw new PaymentStepFailedException(CHARGE_UNCONFIRMED);
+        }
+
+        // Step 3 on: capture the waiting team's hold, then confirm — or undo everything.
+        return switch (resumeJoin(start.gameTeamId())) {
+            case CONFIRMED -> gameTeamRepository.findById(start.gameTeamId()).orElseThrow();
+            case PENDING -> throw new PaymentPendingException(
+                    "To'lov tasdiqlanmoqda. O'yin tasdiqlangani yoki bekor qilingani haqida xabar beramiz");
+            default -> throw new PaymentStepFailedException(
+                    "The other team's payment could not be taken, so the game is cancelled; "
+                            + "your payment is being returned in full");
+        };
+    }
+
+    static final String CHARGE_UNCONFIRMED =
+            "The card payment could not be confirmed; the game is still looking for an opponent. "
+                    + "If the money was taken it will be returned in full";
+
+    /** What step 0 recorded. */
+    private record JoinStart(UUID gameTeamId, UUID paymentId) {
+    }
+
+    /** Where driving a join left it. */
+    public enum JoinState {
+        /** The hold was captured: the game is confirmed. */
+        CONFIRMED,
+        /** An answer is still unclear; the reconcile job carries on later. */
+        PENDING,
+        /** It could not go ahead: undone, everyone's money on its way back. */
+        UNDONE
+    }
+
+    /** Step 0: everything a join needs on record before its first provider call. */
+    private JoinStart beginJoin(UUID gameId, Team teamB, User leader) {
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new ResourceNotFoundException("Game not found"));
+        if (!STATUS_WAITING.equals(game.getStatus())) {
+            throw new BadRequestException("Game is not open for joining");
+        }
+        requireWaitingHoldsInPlace(game);
         // Not always side B. When the creating team walks out of a confirmed
         // game the team left behind is on side B, so the newcomer takes A.
         Side freeSide = freeSideOf(game);
-
         GameTeam joining;
         try {
-            joining = gameTeamRepository.saveAndFlush(
-                    teamEntry(game, teamB, leader, freeSide, splitFor(game)));
+            GameTeam entry = teamEntry(game, teamB, leader, freeSide, splitFor(game));
+            entry.setStatus(GameTeam.Status.JOINING);
+            joining = gameTeamRepository.saveAndFlush(entry);
         } catch (DataIntegrityViolationException ex) {
             throw new BadRequestException("This game already has an opponent");
         }
+        bookGameSlot(game);
+        Payment row = paymentService.openJoinCharge(joining);
+        log.info("Join started: gameId={} gameTeamId={} side={} paymentId={}",
+                gameId, joining.getId(), freeSide.getValue(), row.getId());
+        return new JoinStart(joining.getId(), row.getId());
+    }
 
-        Booking booking = bookGameSlot(game);
-        chargeJoiner(game, joining, card, booking);
-        captureWaitingTeam(game, joining, booking);
+    /**
+     * Carries a join on from wherever it stands — right after the joiner was charged, or,
+     * from the reconcile job, after a crash or an unclear answer. Every step is committed
+     * on its own and re-reads the rows, so running it twice, or after a crash, is safe:
+     *
+     * <ul>
+     *   <li>the joiner's charge still unclear → wait (the job settles the row first);</li>
+     *   <li>the joiner not charged → the join is dropped, the game goes on waiting;</li>
+     *   <li>the game ended meanwhile → undo: the joiner gets everything back;</li>
+     *   <li>otherwise capture the waiting team's hold: taken → the game is confirmed;
+     *       refused with any code → undo everything; no clear answer → wait.</li>
+     * </ul>
+     */
+    public JoinState resumeJoin(UUID gameTeamId) {
+        Payment joinerCharge = step(() -> {
+            GameTeam joining = gameTeamRepository.findById(gameTeamId).orElse(null);
+            if (joining == null || joining.getStatus() != GameTeam.Status.JOINING) {
+                return null;
+            }
+            return paymentService.teamPayments(gameTeamId).stream()
+                    .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                    .filter(p -> p.getPaymentType() == Payment.PaymentType.TEAM_GAME)
+                    .findFirst().orElse(null);
+        });
+        GameTeam joining = gameTeamRepository.findById(gameTeamId).orElse(null);
+        if (joining == null || joining.getStatus() != GameTeam.Status.JOINING) {
+            return joining != null && joining.getStatus() == GameTeam.Status.ACTIVE ? JoinState.CONFIRMED : JoinState.UNDONE;
+        }
+        if (joinerCharge != null && joinerCharge.getStatus() == Payment.Status.PROCESSING) {
+            return JoinState.PENDING;
+        }
+        if (joinerCharge == null || joinerCharge.getStatus() != Payment.Status.PAID) {
+            step(() -> {
+                abandonJoin(gameTeamId, "The joining team's card was not charged");
+                return null;
+            });
+            return JoinState.UNDONE;
+        }
+        UUID gameId = joining.getGame().getId();
+        if (!STATUS_WAITING.equals(step(() -> gameRepository.findById(gameId).orElseThrow().getStatus()))) {
+            return undoJoin(gameTeamId, "The game ended while the team was joining");
+        }
 
+        // Step 3: the waiting team's holds, each marked capture_pending (committed), then captured.
+        List<UUID> holds = step(() -> waitingHolds(gameId, gameTeamId));
+        for (UUID holdId : holds) {
+            step(() -> paymentService.markCapturePending(holdId));
+            step(() -> paymentService.captureCommitted(holdId));
+        }
+        List<Payment> settled = step(() -> holds.stream()
+                .map(id -> paymentService.teamPaymentById(id))
+                .toList());
+        if (settled.stream().anyMatch(p -> p.getStatus() == Payment.Status.CAPTURE_PENDING
+                || p.getStatus() == Payment.Status.PROCESSING)) {
+            log.warn("Join of gameTeam {} waits: the waiting team's capture has no clear answer yet", gameTeamId);
+            return JoinState.PENDING;
+        }
+        if (settled.stream().allMatch(p -> p.getStatus() == Payment.Status.CAPTURED)) {
+            step(() -> {
+                completeJoin(gameTeamId);
+                return null;
+            });
+            return JoinState.CONFIRMED;
+        }
+        String why = settled.stream().map(Payment::getFailureReason).filter(java.util.Objects::nonNull)
+                .findFirst().orElse("the hold is no longer there");
+        return undoJoin(gameTeamId, "The other team's payment could not be taken: " + why);
+    }
+
+    /** The waiting team's payments a join has to capture: held, or already on their way. */
+    private List<UUID> waitingHolds(UUID gameId, UUID joiningId) {
+        List<UUID> ids = new java.util.ArrayList<>();
+        for (GameTeam waiting : gameTeamRepository.findByGameIdAndStatus(gameId, GameTeam.Status.ACTIVE)) {
+            if (waiting.getId().equals(joiningId)) {
+                continue;
+            }
+            for (Payment p : paymentService.teamPayments(waiting.getId())) {
+                if (p.getAmount() != null && p.getAmount() > 0 && p.getHoldExpiresAt() != null
+                        && p.getStatus() != Payment.Status.FAILED) {
+                    ids.add(p.getId());
+                }
+            }
+        }
+        return ids;
+    }
+
+    /** The hold was captured: the joining team is in, the booking and the game confirmed. */
+    private void completeJoin(UUID gameTeamId) {
+        GameTeam joining = gameTeamRepository.findForUpdate(gameTeamId).orElseThrow();
+        if (joining.getStatus() != GameTeam.Status.JOINING) {
+            return; // finished meanwhile
+        }
+        Game game = joining.getGame();
+        Booking booking = bookingRepository.findByGameIdAndStatus(game.getId(), "pending").stream()
+                .findFirst().orElseThrow(() -> new IllegalStateException("Join without its booking: " + gameTeamId));
+        joining.setStatus(GameTeam.Status.ACTIVE);
+        gameTeamRepository.save(joining);
         confirmBooking(game, booking);
-        if (freeSide == Side.A) {
-            game.setTeamA(teamB);
+
+        Team team = joining.getTeam();
+        Side side = joining.getSide();
+        if (side == Side.A) {
+            game.setTeamA(team);
         } else {
-            game.setTeamB(teamB);
+            game.setTeamB(team);
         }
         String oldStatus = game.getStatus();
         game.setBookingId(booking.getId());
         game.setStatus(STATUS_CONFIRMED);
         gameRepository.save(game);
 
+        User leader = joining.getLeader();
+        if (participantRepository.findByGameIdAndUserId(game.getId(), leader.getId()).isEmpty()) {
+            participantRepository.save(GameParticipant.builder()
+                    .game(game).user(leader).side(side).status(GameParticipant.Status.JOINED).build());
+        }
+        safeNotify(() -> notificationService.notify(game.getCreator().getId(),
+                Notification.Type.GAME_PLAYER_JOINED, "Новый игрок",
+                leader.getName() + " присоединился к вашей игре.", Notification.ReferenceType.GAME, game.getId()));
         notifyConfirmed(game);
-        // The leader's own act is GAME_JOINED (GameService); the confirmation it set off is SYSTEM.
+        auditService.record(AuditEntry.player(leader.getId(), AuditAction.GAME_JOINED)
+                .entity(AuditEntityType.GAME, game.getId(), AuditLabels.game(game))
+                .created("side", side)
+                .created("team", team.getName()));
         auditService.record(AuditEntry.system(AuditAction.GAME_CONFIRMED)
                 .entity(AuditEntityType.GAME, game.getId(), AuditLabels.game(game))
                 .change("status", oldStatus, game.getStatus())
-                .created("team" + freeSide.getValue().toUpperCase(), teamB.getName())
+                .created("team" + side.getValue().toUpperCase(), team.getName())
                 .created("bookingId", booking.getId())
                 .reason("An opponent joined"));
-        log.info("Team game confirmed: gameId={} teamBId={} bookingId={}",
-                game.getId(), teamB.getId(), booking.getId());
-        return joining;
+        log.info("Team game confirmed: gameId={} joiningTeamId={} bookingId={}",
+                game.getId(), team.getId(), booking.getId());
+    }
+
+    /**
+     * A join dropped before its team paid anything: the team leaves, the pending booking
+     * goes, the game goes on waiting. Nothing to give back.
+     */
+    private void abandonJoin(UUID gameTeamId, String reason) {
+        GameTeam joining = gameTeamRepository.findForUpdate(gameTeamId).orElseThrow();
+        if (joining.getStatus() != GameTeam.Status.JOINING) {
+            return;
+        }
+        joining.setStatus(GameTeam.Status.CANCELLED);
+        joining.setLeftAt(OffsetDateTime.now(ZoneOffset.UTC));
+        gameTeamRepository.save(joining);
+        bookingRepository.findByGameIdAndStatus(joining.getGame().getId(), "pending").forEach(bookingRepository::delete);
+        log.info("Join dropped: gameTeamId={} reason={}", gameTeamId, reason);
+    }
+
+    /**
+     * The join cannot go ahead after the joiner paid: everything is undone. First the
+     * decision is committed — the game cancelled (if it was still waiting), every team out,
+     * the slot freed, and each payment to give back marked {@code return_pending}; then the
+     * money moves, each return in its own step. A crash in between leaves
+     * {@code return_pending} rows the reconcile job completes the same way.
+     */
+    private JoinState undoJoin(UUID gameTeamId, String reason) {
+        List<UUID> toReturn = step(() -> {
+            GameTeam joining = gameTeamRepository.findForUpdate(gameTeamId).orElseThrow();
+            if (joining.getStatus() != GameTeam.Status.JOINING) {
+                return List.<UUID>of();
+            }
+            Game game = joining.getGame();
+            List<UUID> ids = new java.util.ArrayList<>();
+            List<GameTeam> teams = new java.util.ArrayList<>(List.of(joining));
+            String oldStatus = game.getStatus();
+            if (STATUS_WAITING.equals(oldStatus)) {
+                // Nobody can play: the waiting team gets everything back too, as the rules say.
+                game.setStatus("cancelled_slot_taken");
+                gameRepository.save(game);
+                teams.addAll(gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE));
+                auditService.record(AuditEntry.system(AuditAction.GAME_AUTO_CANCELLED)
+                        .entity(AuditEntityType.GAME, game.getId(), AuditLabels.game(game))
+                        .change("status", oldStatus, game.getStatus())
+                        .reason(reason));
+            }
+            for (GameTeam team : teams) {
+                for (Payment p : paymentService.teamPayments(team.getId())) {
+                    if (paymentService.markReturnPending(p.getId())) {
+                        ids.add(p.getId());
+                    }
+                }
+                releaseTeam(team, OffsetDateTime.now(ZoneOffset.UTC));
+            }
+            bookingRepository.findByGameIdAndStatus(game.getId(), "pending").forEach(bookingRepository::delete);
+            log.error("Join undone: gameId={} gameTeamId={} reason={}", game.getId(), gameTeamId, reason);
+            return ids;
+        });
+        for (UUID paymentId : toReturn) {
+            try {
+                step(() -> {
+                    paymentService.completeReturn(paymentId, reason);
+                    return null;
+                });
+            } catch (RuntimeException ex) {
+                // Left return_pending: the reconcile job finishes it.
+                log.warn("Return of payment {} not finished now ({}); left for the reconcile job",
+                        paymentId, ex.toString());
+            }
+        }
+        if (!toReturn.isEmpty()) {
+            Game game = gameTeamRepository.findById(gameTeamId).orElseThrow().getGame();
+            notifyCancelled(game, "Raqib jamoaning to'lovini yechib bo'lmadi, o'yin bekor qilindi. To'lov to'liq qaytariladi.");
+        }
+        return JoinState.UNDONE;
+    }
+
+    /** The game a team entry belongs to. */
+    @Transactional(readOnly = true)
+    public UUID gameIdOf(UUID gameTeamId) {
+        return gameTeamRepository.findById(gameTeamId).orElseThrow().getGame().getId();
+    }
+
+    /** The joins left half-way for longer than a moment, for the reconcile job. */
+    @Transactional(readOnly = true)
+    public List<UUID> stuckJoins(OffsetDateTime startedBefore) {
+        return gameTeamRepository.findByStatusAndJoinedAtBefore(GameTeam.Status.JOINING, startedBefore).stream()
+                .map(GameTeam::getId)
+                .toList();
+    }
+
+    /** Runs one step of a join in its own transaction, committed when it returns. */
+    private <T> T step(java.util.function.Supplier<T> work) {
+        return new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                .execute(status -> work.get());
     }
 
     /**
@@ -602,33 +884,6 @@ public class TeamGameService {
         }
     }
 
-    /** A declined joiner costs nobody anything: the booking goes, the game waits on. */
-    /**
-     * Step 2: the joining team's charge. Anything but a confirmed charge removes the
-     * booking and leaves the game waiting. A decline moved no money, so it may roll back;
-     * an unanswered charge may have, so its row is committed and the reconcile job gives it
-     * back if it went through (its team has left the game by then).
-     */
-    private void chargeJoiner(Game game, GameTeam joining, SavedCard card, Booking booking) {
-        Payment charge = paymentService.chargeForTeamGame(joining, card, Payment.PaymentType.TEAM_GAME);
-        if (charge.getStatus() == Payment.Status.PAID) {
-            return;
-        }
-        bookingRepository.delete(booking);
-        joining.setStatus(GameTeam.Status.CANCELLED);
-        joining.setLeftAt(OffsetDateTime.now(ZoneOffset.UTC));
-        gameTeamRepository.save(joining);
-        if (charge.getStatus() == Payment.Status.FAILED) {
-            throw new BadRequestException(
-                    "Card payment was declined; the game is still looking for an opponent");
-        }
-        log.warn("Joining charge unanswered: gameId={} paymentId={}; the game goes on waiting",
-                game.getId(), charge.getId());
-        throw new uz.minipolya.minipolya_backend.exception.PaymentStepFailedException(
-                "The card payment could not be confirmed; the game is still looking for an opponent. "
-                        + "If the money was taken it will be returned in full");
-    }
-
     /** A join must not go ahead while the waiting team's hold is still unconfirmed. */
     private void requireWaitingHoldsInPlace(Game game) {
         for (GameTeam waiting : gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)) {
@@ -639,41 +894,6 @@ public class TeamGameService {
                         "The other team's payment is still being confirmed; try again in a few minutes");
             }
         }
-    }
-
-    /**
-     * The last money step, and the only one that cannot be walked back: if the
-     * waiting team's hold can no longer be captured, nobody plays, so the
-     * joining team is refunded and the game ends.
-     */
-    /**
-     * Step 3, last: take the waiting team's hold. If it lapsed, was let go, or the answer
-     * was lost, the game cannot go ahead, and everything is undone in this order: the
-     * joiner's charge is reversed and the waiting team's hold given back (endGame), the
-     * booking is deleted, the game is cancelled, both teams are told — and all of that is
-     * committed. A hold whose capture went unanswered is left return_pending, which the
-     * reconcile job reverses if it was taken or releases if it was not.
-     */
-    private void captureWaitingTeam(Game game, GameTeam joining, Booking booking) {
-        boolean captured = true;
-        for (GameTeam waiting : gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)) {
-            if (!waiting.getId().equals(joining.getId())) {
-                captured &= paymentService.captureAllHeldTeamPayments(waiting.getId());
-            }
-        }
-        if (captured) {
-            return;
-        }
-        log.error("Could not capture the waiting team's hold on game {}; cancelling it and returning both teams' money",
-                game.getId());
-        // endGame gives every team still in the game its money back — the joiner included,
-        // since its row is active by now.
-        endGame(game, "cancelled_slot_taken", "The other team's payment could not be settled", null);
-        bookingRepository.delete(booking);
-        notifyCancelled(game, "Raqib jamoaning to'lovini yechib bo'lmadi, o'yin bekor qilindi. To'lov to'liq qaytariladi.");
-        throw new uz.minipolya.minipolya_backend.exception.PaymentStepFailedException(
-                "The other team's payment could not be taken, so the game is cancelled; "
-                        + "your payment is being returned in full");
     }
 
     /** Both advances are on the pitch now, so the booking is part-paid (or paid outright). */
@@ -936,8 +1156,9 @@ public class TeamGameService {
     }
 
     private Side freeSideOf(Game game) {
-        Set<Side> taken = gameTeamRepository
-                .findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE).stream()
+        // A team still joining holds its side as firmly as one that is in.
+        Set<Side> taken = gameTeamRepository.findByGameId(game.getId()).stream()
+                .filter(t -> t.getStatus() != GameTeam.Status.CANCELLED)
                 .map(GameTeam::getSide)
                 .collect(java.util.stream.Collectors.toSet());
         if (!taken.contains(Side.A)) {

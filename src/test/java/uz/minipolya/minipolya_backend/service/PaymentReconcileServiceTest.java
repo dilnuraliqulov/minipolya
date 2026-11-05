@@ -89,6 +89,7 @@ class PaymentReconcileServiceTest {
                 .createdAt(OffsetDateTime.ofInstant(NOW, ZoneOffset.UTC).minusMinutes(minutesOld))
                 .build();
         when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
+        org.mockito.Mockito.lenient().when(paymentRepository.findForUpdate(payment.getId())).thenReturn(Optional.of(payment));
         return payment;
     }
 
@@ -318,7 +319,7 @@ class PaymentReconcileServiceTest {
         when(reconciler.due()).thenReturn(List.of(bad, good));
         doThrow(new IllegalStateException("provider down")).when(reconciler).reconcile(bad);
 
-        new PaymentReconcileJob(reconciler).reconcileStuckPayments();
+        new PaymentReconcileJob(reconciler, mock(GameService.class), java.time.Clock.systemUTC()).reconcileStuckPayments();
 
         verify(reconciler).reconcile(good);
     }

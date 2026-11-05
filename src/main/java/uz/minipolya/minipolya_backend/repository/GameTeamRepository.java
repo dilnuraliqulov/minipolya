@@ -31,4 +31,12 @@ public interface GameTeamRepository extends JpaRepository<GameTeam, UUID> {
     @Query("SELECT gt FROM GameTeam gt JOIN FETCH gt.team WHERE gt.game.id IN :gameIds AND gt.status = :status")
     List<GameTeam> findWithTeamByGameIdInAndStatus(@Param("gameIds") Collection<UUID> gameIds,
                                                    @Param("status") GameTeam.Status status);
+
+    /** Joins that started before {@code before} and never finished, for the reconcile job. */
+    List<GameTeam> findByStatusAndJoinedAtBefore(GameTeam.Status status, java.time.OffsetDateTime before);
+
+    /** The row locked, so two drivers of one join take its steps one at a time. */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT gt FROM GameTeam gt WHERE gt.id = :id")
+    Optional<GameTeam> findForUpdate(@Param("id") UUID id);
 }

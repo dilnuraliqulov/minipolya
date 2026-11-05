@@ -203,7 +203,9 @@ db/changelog/
     ├── 041-user-profile-names.sql    # users.first_name, users.last_name (set only by the user)
     ├── 042-telegram-bot.sql          # telegram_processed_updates (dedupe), telegram_bot_values (banner file_id)
     ├── 043-team-invite-code.sql      # teams.invite_code (unique, nullable) for invite links (R32)
-    └── 044-fake-payment-provider.sql # fake_payment_* tables: FakePaymentProvider's state (dev/tests only)
+    ├── 044-fake-payment-provider.sql # fake_payment_* tables: FakePaymentProvider's state (dev/tests only)
+    ├── 045-booking-status-length.sql # bookings.status VARCHAR(30): 'cancelled_opponent_left' did not fit
+    └── 046-game-team-joining.sql     # game_teams status 'joining' (a join half-way); side index covers it
 ```
 
 ### Adding New Migrations
@@ -515,22 +517,41 @@ See "Payments → Team game money → ATMOS operations" for holds, captures and 
 **HOLD** (`payments.status = held`, type `team_game`). No slot is booked. A
 declined card means no game at all.
 
-*Joining (→ CONFIRMED).* Order matters, and every failure leaves nobody paying
-for a game that will not happen:
-1. record the joining team — the partial unique index on `(game_id, side)`
-   rejects a second opponent before any card is touched;
-2. after the 3-hour point → 400 `O'yin boshlanishiga 3 soatdan kam qoldi, qo'shilib bo'lmaydi`;
-3. book the slot (pending) — if the EXCLUDE constraint rejects it the joining
-   team is **not** charged and nothing is compensated here on purpose: this
-   transaction rolls back and a provider call would not, so whoever took the
-   slot cancels this game and refunds its waiting team from their own
-   committed transaction (`cancelGamesOnSlot`), with `GameTimeoutJob` as the
-   backstop;
-4. charge the joining team — a declined card removes the booking and the game
-   goes on waiting;
-5. capture the waiting team's hold, last, being the only step that cannot be
-   undone cheaply; if it fails, both teams are made whole and the game ends;
-6. confirm the booking and the game.
+*Joining (→ CONFIRMED).* Order matters, every failure leaves nobody paying for a game
+that will not happen, and **each step commits on its own** (`TeamGameService.join`,
+deliberately not one transaction — `GameService.joinGame` is not `@Transactional`), so a
+crash or an unclear answer half-way leaves a record the reconcile job finishes, never
+money that moved with no row for it:
+1. after the 3-hour point → 400 `O'yin boshlanishiga 3 soatdan kam qoldi, qo'shilib bo'lmaydi`;
+2. **step 0, committed before any provider call**: the joining team as
+   **`joining`** (changeset 046; it holds its side — the partial unique index on
+   `(game_id, side)` covers `active` and `joining` — so a second opponent is rejected
+   before any card is touched), the slot as a pending `source = game` booking, and the
+   joiner's `processing` payment row. If the EXCLUDE constraint rejects the slot nothing
+   is committed and nobody is charged;
+3. charge the joining team: created (its transaction ids committed), then confirmed. A
+   decline drops the join (team `cancelled`, booking deleted) and the game goes on
+   waiting; no answer drops it the same way and the reconcile job gives the money back
+   if it was taken; an unreachable provider → 502;
+4. capture the waiting team's hold, last: the hold is marked `capture_pending`
+   (committed), then captured;
+   - **captured** → the team becomes `active`, the booking and game confirmed, the
+     leader's participant row, notifications and audit written;
+   - **refused, with any code** (lapsed, cancelled, or any other refusal) → **undone**:
+     the decision is committed first (game `cancelled_slot_taken`, audit reason naming
+     the provider's code, every team out, booking deleted, every payment to give back
+     `return_pending`), then the joiner is reversed and the hold released, each in its
+     own step; both teams notified; 400 "The other team's payment could not be taken, so
+     the game is cancelled; your payment is being returned in full";
+   - **no clear answer** (timeout, provider unavailable) → left `capture_pending` and
+     answered **202 `PAYMENT_PENDING`**; the reconcile job finishes it.
+
+`TeamGameService.resumeJoin` drives a join from wherever it stands, and is what the
+reconcile job runs (`GameService.resumeStuckJoins`) for every team still `joining` after
+five minutes, once that run's payments are settled: the joiner's charge unclear → wait;
+not charged → dropped; the game ended meanwhile (its 3-hour point, its leader, a booking)
+→ undone, the joiner refunded; the capture `captured` → confirmed; `released` or refused
+→ undone. Every step re-reads and locks its rows, so running it twice is safe.
 
 The joining team takes whichever side is **free**, not always B: when the
 creating team walks out of a confirmed game the team left behind is on side B,
@@ -817,11 +838,11 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
 | A declined card | card ending `0002` (`STPIMS-ERR-058`): booking stays `pending`, row `failed` |
 | Insufficient funds | ending `0051` (`-057`), or spend the 10 000 000 so'm balance (`-112`) |
 | An expired card at payment | ending `0054` (`-067`) |
-| A lost answer that did charge | ending `0091`: the payment stays `processing`; the reconcile job (or `getCharge`) finds it paid |
-| A lost answer that did not | ending `0092`: `processing`, then `failed` on reconciliation |
+| A lost answer that did charge | ending `0091`: the payment stays `processing`; the reconcile job (or `getCharge`) finds it paid. On a hold it is the **capture** that times out (and went through): a join answers 202 and the job confirms the game |
+| A lost answer that did not | ending `0092`: `processing`, then `failed` on reconciliation. On a hold the capture times out and the hold is gone: the job undoes the join |
 | The provider down | ending `0099`: every charge / hold → 502 |
 | A refund the provider refuses | ending `0098`: payments work, every reverse is refused (`-15`) → `refund_failed`, then admin retry / mark-refunded |
-| A team game whose capture fails | creator's card ending `0097`: the hold works, the capture is refused and the hold cancelled → the joiner is reversed and the game ends |
+| A team game whose capture fails | creator's card ending `0097`: the hold works, the capture is refused with an ordinary code (`STPIMS-ERR-058`) and the hold stays → the joiner is reversed, the hold released, the game ends |
 | A hold that lapses | create a team game, then let `hold_expires_at` pass (or move `games.starts_at` inside 3 h and let `GameTimeoutJob` release it) |
 | An amount ATMOS refuses | any split under 500 so'm → `STPIMS-ERR-039`, a `failed` row |
 | What happened | `GET /api/dev/fake-payments` with `X-Dev-Login-Key` |
@@ -866,15 +887,15 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
 | Owner cancels the booking / admin blocks the stadium | **reverse** | **reverse** |
 | A team's remainder in the app | **charge**; reversed with the rest of that team's money when it is given back | |
 
-Each row is tested in `TeamGameOperationMappingTest`. Joining goes in this order: (1)
-book the slot (EXCLUDE constraint), (2) charge the joiner, (3) capture the waiting
-team's hold. If (2) is declined the booking is removed and the game keeps waiting; if
-(2) goes unanswered the same, but the `processing` row is committed for reconciliation.
-If (3) fails (expired, cancelled or unanswered) the joiner's charge is reversed, the
-hold given back, the booking deleted, the game cancelled, an error logged and both
-teams notified — and that is committed (`PaymentStepFailedException`, a 400 with
-`noRollbackFor`), never rolled back over money that already moved. A join waits while
-the creating team's hold is still `processing`.
+Each row is tested in `TeamGameOperationMappingTest`. Joining (see "Joining" under
+team_vs_team, tested end to end in `TeamGameJoinPaymentTest`): (1) book the slot
+(EXCLUDE constraint), (2) charge the joiner, (3) capture the waiting team's hold, each
+step committed. If (2) is declined or unanswered the join is dropped and the game keeps
+waiting (an unanswered charge is given back by reconciliation). If (3) is refused with
+any code the joiner's charge is reversed, the hold released, the booking deleted, the
+game cancelled and both teams notified; if (3) has no clear answer it is left
+`capture_pending` (202 `PAYMENT_PENDING`) and the reconcile job confirms or undoes the
+game. A join waits while the creating team's hold is still `processing`.
 
 Ordinary bookings and friends games use **charge / reverse**: a refund (player before
 the deadline, owner at any time, admin block) reverses every split's transaction in
@@ -897,6 +918,11 @@ transaction:
   ATMOS declines becomes a failed refund (`refund_failed` + a `failed` refund row), so
   the job stops trying; a release that fails stays `return_pending` for the next run.
 - `capture_pending` → captured if still held; released with an error if it lapsed.
+- Then the **team joins** still `joining` after five minutes are resumed
+  (`GameService.resumeStuckJoins` → `TeamGameService.resumeJoin`): confirmed or undone
+  from the rows just settled. A joining team's own charge is never given back by the
+  payment pass — the join decides. `return_pending` is finished by
+  `PaymentService.completeReturn`, the same code the join's undo uses.
 
 Idempotent: settled rows are not picked up, and a reverse or release of something
 already gone counts as done. The job never touches `failed` or `refund_failed` rows —

@@ -87,6 +87,8 @@ public class GameService {
     private final PlatformSettingsService platformSettingsService;
     private final TeamGameService teamGameService;
     private final SavedCardService savedCardService;
+    /** For the joins that must not run inside one big transaction (see {@link #joinGame}). */
+    private final org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     @Transactional
     public GameDetailResponse createGame(CreateGameRequest request, UUID creatorUserId) {
@@ -167,7 +169,11 @@ public class GameService {
         return toDetail(saved);
     }
 
-    @Transactional(noRollbackFor = uz.minipolya.minipolya_backend.exception.PaymentStepFailedException.class)
+    /**
+     * Joins a game. Deliberately not {@code @Transactional}: a team game's join commits after
+     * each of its steps (see {@link TeamGameService#join}), which a surrounding transaction
+     * would undo all together; a casual join is one transaction of its own.
+     */
     public GameParticipantResponse joinGame(UUID gameId, UUID userId, String side, UUID teamId, UUID cardId) {
         Game game = requireGame(gameId);
         if (!STATUS_OPEN.equals(game.getStatus())) {
@@ -176,41 +182,80 @@ public class GameService {
         if (participantRepository.findByGameIdAndUserId(gameId, userId).isPresent()) {
             throw new BadRequestException("You have already joined this game");
         }
-
-        GameParticipant.Side assignedSide = null;
-        long playersBefore = participantRepository.findByGameId(gameId).size();
-        String joinedTeam = null;
         if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
-            // The server decides, never the client's side: only the joining team's leader
-            // joins a team game, always on the free side, and always pays. Nobody joins the
-            // other side as a plain, non-paying member.
-            Team joiningTeam = teamId == null ? null : teamRepository.findById(teamId)
-                    .orElseThrow(() -> new ResourceNotFoundException("Team not found"));
-            if (joiningTeam == null || !joiningTeam.getLeader().getId().equals(userId)) {
-                throw new ForbiddenException(ONLY_LEADERS_JOIN);
-            }
-            if (cardId == null) {
-                throw new BadRequestException("cardId is required to join a team game");
-            }
-            GameParticipant.Side free = teamGameService.freeSide(game);
-            GameParticipant.Side requested = parseSide(side);
-            // "b" stays accepted from older clients, which always sent it for the opponent.
-            if (requested != null && requested != free && requested != GameParticipant.Side.B) {
-                throw new BadRequestException("The opposing team joins as side " + free.getValue());
-            }
-            User leader = userRepository.findById(userId)
-                    .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-            assignedSide = teamGameService.join(game, joiningTeam, leader, cardId).getSide();
-            joinedTeam = joiningTeam.getName();
-            // The game has just taken the slot, so any other team still
-            // waiting on it must be cleared and refunded — the same rule an
-            // ordinary booking follows. This game is 'confirmed' by now, so
-            // it cannot cancel itself.
+            return joinTeamGame(game, userId, side, teamId, cardId);
+        }
+        return inTransaction(() -> joinCasualGame(gameId, userId));
+    }
+
+    /**
+     * The server decides, never the client's side: only the joining team's leader joins a
+     * team game, always on the free side, and always pays. Nobody joins the other side as a
+     * plain, non-paying member.
+     */
+    private GameParticipantResponse joinTeamGame(Game game, UUID userId, String side, UUID teamId, UUID cardId) {
+        Team joiningTeam = teamId == null ? null : teamRepository.findById(teamId)
+                .orElseThrow(() -> new ResourceNotFoundException("Team not found"));
+        if (joiningTeam == null || !joiningTeam.getLeader().getId().equals(userId)) {
+            throw new ForbiddenException(ONLY_LEADERS_JOIN);
+        }
+        if (cardId == null) {
+            throw new BadRequestException("cardId is required to join a team game");
+        }
+        GameParticipant.Side free = teamGameService.freeSide(game);
+        GameParticipant.Side requested = parseSide(side);
+        // "b" stays accepted from older clients, which always sent it for the opponent.
+        if (requested != null && requested != free && requested != GameParticipant.Side.B) {
+            throw new BadRequestException("The opposing team joins as side " + free.getValue());
+        }
+        User leader = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        // Books the slot, charges the team, captures the waiting team's hold and confirms
+        // the game — the leader's participant row, notifications and audit included.
+        teamGameService.join(game, joiningTeam, leader, cardId);
+        // The game has just taken the slot, so any other team still waiting on it must be
+        // cleared and refunded — the same rule an ordinary booking follows. This game is
+        // 'confirmed' by now, so it cannot cancel itself.
+        inTransaction(() -> {
             cancelGamesOnSlot(game.getStadium().getId(), game.getStartsAt(), game.getEndsAt());
-        } else {
-            if (playersBefore >= game.getMaxPlayers()) {
-                throw new BadRequestException("Game is already full");
+            return null;
+        });
+        log.info("Game joined: gameId={} userId={} team={}", game.getId(), userId, joiningTeam.getName());
+        return participantMapper.toResponse(participantRepository.findByGameIdAndUserId(game.getId(), userId)
+                .orElseThrow(() -> new IllegalStateException("Confirmed join without its participant")));
+    }
+
+    /**
+     * The reconcile job's second pass: joins left half-way (a crash, an unclear answer)
+     * since before {@code startedBefore} are carried on to confirmed or undone.
+     *
+     * @return how many were looked at
+     */
+    public int resumeStuckJoins(OffsetDateTime startedBefore) {
+        List<UUID> stuck = teamGameService.stuckJoins(startedBefore);
+        for (UUID gameTeamId : stuck) {
+            try {
+                if (teamGameService.resumeJoin(gameTeamId) == TeamGameService.JoinState.CONFIRMED) {
+                    inTransaction(() -> {
+                        Game game = gameRepository.findById(teamGameService.gameIdOf(gameTeamId)).orElseThrow();
+                        cancelGamesOnSlot(game.getStadium().getId(), game.getStartsAt(), game.getEndsAt());
+                        return null;
+                    });
+                }
+            } catch (RuntimeException ex) {
+                log.error("Could not resume join {}: {}", gameTeamId, ex.toString());
             }
+        }
+        return stuck.size();
+    }
+
+    private GameParticipantResponse joinCasualGame(UUID gameId, UUID userId) {
+        Game game = requireGame(gameId);
+        GameParticipant.Side assignedSide = null;
+        String joinedTeam = null;
+        long playersBefore = participantRepository.findByGameId(gameId).size();
+        if (playersBefore >= game.getMaxPlayers()) {
+            throw new BadRequestException("Game is already full");
         }
 
         User user = userRepository.findById(userId)
@@ -630,6 +675,11 @@ public class GameService {
     }
 
     /** Notifications are best-effort — a failure must never break the game flow. */
+    private <T> T inTransaction(java.util.function.Supplier<T> work) {
+        return new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                .execute(status -> work.get());
+    }
+
     private void safeNotify(Runnable action) {
         try {
             action.run();

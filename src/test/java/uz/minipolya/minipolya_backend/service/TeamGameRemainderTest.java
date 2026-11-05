@@ -87,7 +87,7 @@ class TeamGameRemainderTest {
                 paymentService, savedCardService, platformSettingsService,
                 mock(NotificationService.class), mock(AuditService.class),
                 new CancellationPolicy(), new AppProperties(),
-                mock(TeamMemberRepository.class), mock(TeamRepository.class));
+                mock(TeamMemberRepository.class), mock(TeamRepository.class), org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         owner = User.builder().id(OWNER_ID).name("Owner").build();
         User leaderA = User.builder().id(LEADER_A_ID).name("Leader A").build();

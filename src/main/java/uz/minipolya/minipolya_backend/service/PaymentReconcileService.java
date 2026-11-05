@@ -47,7 +47,7 @@ import java.util.UUID;
 public class PaymentReconcileService {
 
     /** A row must have been stuck this long before the job touches it. */
-    static final Duration STUCK_AFTER = Duration.ofMinutes(5);
+    public static final Duration STUCK_AFTER = Duration.ofMinutes(5);
     /** An unconfirmed charge or hold this old was abandoned: the provider never took the money. */
     static final Duration ABANDONED_AFTER = Duration.ofMinutes(30);
     static final EnumSet<Payment.Status> STUCK = EnumSet.of(
@@ -147,6 +147,11 @@ public class PaymentReconcileService {
         }
         GameTeam team = payment.getGameTeam();
         if (team != null) {
+            if (team.getStatus() == GameTeam.Status.JOINING) {
+                // A join still in progress: its driver (resumeJoin, run after this job's
+                // payment pass) carries it on from this payment's new status.
+                return;
+            }
             if (team.getStatus() == GameTeam.Status.ACTIVE && payment.getPaymentType() == Payment.PaymentType.REMAINDER) {
                 teamGameService.settleRemainderPaidLate(team);
             } else {
@@ -208,26 +213,10 @@ public class PaymentReconcileService {
 
     // ---- return_pending / capture_pending ----
 
+    /** The same way every return is finished: {@link PaymentService#completeReturn}. */
     private void finishReturn(Payment payment) {
-        if (isHold(payment)) {
-            HoldOutcome where = paymentProvider.getHold(payment.getProviderTxnId());
-            if (where.status() == ProviderStatus.CAPTURED) {
-                reverseOrRecordFailure(payment, Payment.Status.CAPTURED);
-                return;
-            }
-            if (where.status() == ProviderStatus.HELD) {
-                try {
-                    paymentProvider.releaseHold(payment.getProviderTxnId());
-                } catch (HoldCancelledException | HoldExpiredException ex) {
-                    // already let go
-                }
-            }
-            payment.setStatus(Payment.Status.RELEASED);
-            log.info("Reconciled return of hold {}: released", payment.getId());
-            return;
-        }
-        reverseOrRecordFailure(payment, Payment.Status.PAID);
-        log.info("Reconciled return of charge {}: {}", payment.getId(), payment.getStatus().getValue());
+        paymentService.completeReturn(payment.getId(), "Returned by reconciliation");
+        log.info("Reconciled return of payment {}: {}", payment.getId(), payment.getStatus().getValue());
     }
 
     /**

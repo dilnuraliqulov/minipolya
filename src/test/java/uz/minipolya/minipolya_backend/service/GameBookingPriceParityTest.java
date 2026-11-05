@@ -140,7 +140,7 @@ class GameBookingPriceParityTest {
                 mock(TeamRepository.class), priceCalculator, bookingRepository,
                 gameMapper, mock(GameParticipantMapper.class), new AppProperties(),
                 mock(PaymentService.class), mock(NotificationService.class), mock(AuditService.class),
-                windowValidator, platformSettings, mock(TeamGameService.class), savedCardService);
+                windowValidator, platformSettings, mock(TeamGameService.class), savedCardService, org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
     }
 
     @Test

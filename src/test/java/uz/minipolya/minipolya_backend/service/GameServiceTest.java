@@ -109,7 +109,7 @@ class GameServiceTest {
                 teamRepository, bookingPriceCalculator, bookingRepository,
                 gameMapper, participantMapper, new AppProperties(), paymentService, notificationService,
                 auditService, new BookingWindowValidator(closureService), platformSettingsService, teamGameService,
-                mock(SavedCardService.class));
+                mock(SavedCardService.class), org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         creator = User.builder().id(CREATOR_ID).name("Creator").build();
         stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000L)
@@ -273,7 +273,7 @@ class GameServiceTest {
                 teamRepository, bookingPriceCalculator, bookingRepository,
                 gameMapper, participantMapper, props, paymentService, notificationService,
                 auditService, new BookingWindowValidator(closureService), platformSettingsService, teamGameService,
-                mock(SavedCardService.class));
+                mock(SavedCardService.class), org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
         stubCreate();
         CreateGameRequest req = CreateGameRequest.builder()
                 .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(18, 1)).duration(1).build();
@@ -580,6 +580,10 @@ class GameServiceTest {
         when(teamGameService.join(any(), any(), any(), any())).thenReturn(
                 uz.minipolya.minipolya_backend.entity.GameTeam.builder().side(GameParticipant.Side.B).build());
         when(gameRepository.findByStadiumIdAndStatus(STADIUM_ID, "open")).thenReturn(List.of());
+        // The confirmed join leaves the leader's participant row behind (TeamGameService).
+        when(participantRepository.findByGameIdAndUserId(GAME_ID, LEADER_B_ID))
+                .thenReturn(Optional.empty(), Optional.of(GameParticipant.builder().side(GameParticipant.Side.B).build()));
+        when(participantMapper.toResponse(any())).thenReturn(new GameParticipantResponse());
 
         service.joinGame(GAME_ID, LEADER_B_ID, "b", TEAM_B_ID, UUID.randomUUID());
 

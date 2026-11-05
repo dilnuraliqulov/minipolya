@@ -85,15 +85,15 @@ public class FakePaymentProvider implements PaymentProvider {
     public static final String INSUFFICIENT_SUFFIX = "0051";
     /** Card expired ({@link AtmosCodes#CARD_EXPIRED}). */
     public static final String EXPIRED_SUFFIX = "0054";
-    /** The confirmation times out, but the money was taken: get-status says SUCCESS. */
+    /** The money-taking step (a charge's confirmation, a hold's capture) times out, but it went through: get-status says so. */
     public static final String TIMEOUT_THEN_SUCCESS_SUFFIX = "0091";
-    /** The confirmation times out and nothing was taken: get-status says FAILED. */
+    /** The money-taking step times out and nothing was taken: get-status says FAILED (a hold: RELEASED). */
     public static final String TIMEOUT_THEN_FAILED_SUFFIX = "0092";
     /** The provider is unavailable for every charge and hold ({@link AtmosCodes#SERVICE_UNAVAILABLE}). */
     public static final String UNAVAILABLE_SUFFIX = "0099";
     /** Charges work, every reverse is refused ({@link AtmosCodes#NOT_CANCELLED}). */
     public static final String REVERSE_FAILS_SUFFIX = "0098";
-    /** Holds work, a capture is refused and the hold cancelled ({@link AtmosCodes#HOLD_CANCELLED}). */
+    /** Holds work, a capture is refused with an ordinary code ({@link AtmosCodes#CARD_BLOCKED}); the hold stays. */
     public static final String CAPTURE_FAILS_SUFFIX = "0097";
 
     /** The commission taken from each split: 150 bps = 1.5%, like ATMOS. */
@@ -416,8 +416,8 @@ public class FakePaymentProvider implements PaymentProvider {
                 return Result.of(holdOutcome(hold));
             }
             String last4 = hold.getLast4();
-            boolean timesOut = last4.equals(TIMEOUT_THEN_SUCCESS_SUFFIX) || last4.equals(TIMEOUT_THEN_FAILED_SUFFIX);
-            String decline = declineCodeFor(last4);
+            // For a hold, the lost answers (0091 / 0092) come at the capture, where the money is taken.
+            String decline = last4.equals(TIMEOUT_THEN_FAILED_SUFFIX) ? null : declineCodeFor(last4);
             if (decline == null && !debit(hold)) {
                 decline = AtmosCodes.INSUFFICIENT_BALANCE;
             }
@@ -426,9 +426,7 @@ public class FakePaymentProvider implements PaymentProvider {
             hold.setUpdatedAt(now());
             store.saveOperation(hold);
             log.info("[fake-provider] hold {}: holdId={} code={}", hold.getStatus(), holdId, decline);
-            return timesOut
-                    ? Result.<HoldOutcome>thenThrow(new ProviderTimeoutException("hold/multiple/apply", null))
-                    : Result.of(holdOutcome(hold));
+            return Result.of(holdOutcome(hold));
         }).get();
     }
 
@@ -449,12 +447,17 @@ public class FakePaymentProvider implements PaymentProvider {
             if (hold.getStatus() != ProviderStatus.HELD) {
                 return Result.<HoldOutcome>thenThrow(new TransactionClosedException(TRANSACTION_CLOSED));
             }
-            if (hold.getLast4().equals(CAPTURE_FAILS_SUFFIX)) {
-                // The bank refuses and the hold is cancelled: the money is back on the card.
+            String last4 = hold.getLast4();
+            if (last4.equals(CAPTURE_FAILS_SUFFIX)) {
+                // The bank refuses with an ordinary code; the hold itself stays where it was.
+                log.info("[fake-provider] capture refused: holdId={} code={}", holdId, AtmosCodes.CARD_BLOCKED);
+                return Result.<HoldOutcome>thenThrow(new PaymentProviderException(AtmosCodes.CARD_BLOCKED, "Карта заблокирована"));
+            }
+            if (last4.equals(TIMEOUT_THEN_FAILED_SUFFIX)) {
+                // No answer, and the bank cancelled the hold: get-status says RELEASED.
                 letGo(hold, HOLD_CANCELLED);
                 store.saveOperation(hold);
-                log.info("[fake-provider] capture refused, hold cancelled: holdId={}", holdId);
-                return Result.<HoldOutcome>thenThrow(new HoldCancelledException(HOLD_CANCELLED));
+                return Result.<HoldOutcome>thenThrow(new ProviderTimeoutException("hold capture", null));
             }
             hold.setStatus(ProviderStatus.CAPTURED);
             hold.setSucceededAt(now());
@@ -462,7 +465,9 @@ public class FakePaymentProvider implements PaymentProvider {
             hold.setUpdatedAt(now());
             store.saveOperation(hold);
             log.info("[fake-provider] hold captured: holdId={}", holdId);
-            return Result.of(holdOutcome(hold));
+            return last4.equals(TIMEOUT_THEN_SUCCESS_SUFFIX)
+                    ? Result.<HoldOutcome>thenThrow(new ProviderTimeoutException("hold capture", null))
+                    : Result.of(holdOutcome(hold));
         }).get();
     }
 

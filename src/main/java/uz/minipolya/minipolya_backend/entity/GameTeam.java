@@ -121,9 +121,13 @@ public class GameTeam {
 
     // ---- Enums (stored lowercase to match the DB CHECK constraints) ----
 
-    /** {@code ACTIVE} is the team currently on this side; {@code CANCELLED} is one that left. */
+    /**
+     * {@code ACTIVE} is the team currently on this side; {@code CANCELLED} is one that left;
+     * {@code JOINING} is a team whose join has started (slot booked, its card charged) but
+     * not finished (the waiting team's hold not yet captured) — it holds its side meanwhile.
+     */
     public enum Status {
-        ACTIVE, CANCELLED;
+        ACTIVE, JOINING, CANCELLED;
 
         @JsonValue
         public String getValue() {

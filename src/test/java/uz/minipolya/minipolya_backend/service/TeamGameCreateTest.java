@@ -133,13 +133,13 @@ class TeamGameCreateTest {
                 participantRepository, bookingRepository, paymentService, savedCardService,
                 platformSettingsService, notificationService, auditService,
                 new uz.minipolya.minipolya_backend.util.CancellationPolicy(), new AppProperties(),
-                mock(TeamMemberRepository.class), teamRepository);
+                mock(TeamMemberRepository.class), teamRepository, org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, priceCalculator, bookingRepository, gameMapper, participantMapper,
                 new AppProperties(), paymentService, notificationService, auditService,
                 new BookingWindowValidator(closureService), platformSettingsService, teamGameService,
-                savedCardService);
+                savedCardService, org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
     }
 
     private CreateGameRequest request(UUID cardId) {
