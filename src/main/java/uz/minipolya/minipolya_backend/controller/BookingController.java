@@ -80,11 +80,13 @@ public class BookingController {
                 : "Payment failed — the remainder is still due");
     }
 
+    /** R29: {@code when=upcoming} (soonest first) or {@code past} (newest first); absent = all, latest first. */
     @GetMapping("/api/bookings")
     public ApiResponse<PageResponse<BookingResponse>> myBookings(@AuthenticationPrincipal UUID userId,
+                                                                 @RequestParam(required = false) String when,
                                                                  @RequestParam(defaultValue = "0") int page,
                                                                  @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(bookingService.getMyBookings(userId, page, size));
+        return ApiResponse.ok(bookingService.getMyBookings(userId, when, page, size));
     }
 
     @GetMapping("/api/bookings/{id}")

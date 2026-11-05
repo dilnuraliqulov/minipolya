@@ -6524,6 +6524,141 @@
           }
         },
         {
+          "name": "200 my upcoming bookings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('none started yet, soonest first', function () {",
+                  "    var items = pm.response.json().data.content;",
+                  "    var now = Date.now();",
+                  "    for (var i = 0; i < items.length; i++) {",
+                  "        pm.expect(Date.parse(items[i].startsAt)).to.be.at.least(now - 60000);",
+                  "        if (i > 0) pm.expect(Date.parse(items[i].startsAt)).to.be.at.least(Date.parse(items[i - 1].startsAt));",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings?when=upcoming",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings"
+              ],
+              "query": [
+                {
+                  "key": "when",
+                  "value": "upcoming"
+                }
+              ]
+            },
+            "description": "R29. upcoming = startsAt now or later, soonest first; past = started already, newest first; no `when` = all, latest start first (as before)."
+          }
+        },
+        {
+          "name": "200 my past bookings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('all started, newest first', function () {",
+                  "    var items = pm.response.json().data.content;",
+                  "    var now = Date.now();",
+                  "    for (var i = 0; i < items.length; i++) {",
+                  "        pm.expect(Date.parse(items[i].startsAt)).to.be.below(now + 60000);",
+                  "        if (i > 0) pm.expect(Date.parse(items[i].startsAt)).to.be.at.most(Date.parse(items[i - 1].startsAt));",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings?when=past",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings"
+              ],
+              "query": [
+                {
+                  "key": "when",
+                  "value": "past"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "400 my bookings, unknown when",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('says so', function () { pm.expect(pm.response.json().message).to.eql('Invalid when'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player1Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings?when=soon",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings"
+              ],
+              "query": [
+                {
+                  "key": "when",
+                  "value": "soon"
+                }
+              ]
+            }
+          }
+        },
+        {
           "name": "200 pay the remainder from a saved card",
           "event": [
             {

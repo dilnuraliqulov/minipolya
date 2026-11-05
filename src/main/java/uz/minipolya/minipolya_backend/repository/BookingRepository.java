@@ -49,6 +49,12 @@ public interface BookingRepository extends JpaRepository<Booking, UUID>, JpaSpec
 
     Page<Booking> findByUserId(UUID userId, Pageable pageable);
 
+    /** R29 upcoming: the player's bookings starting at or after {@code from}. */
+    Page<Booking> findByUserIdAndStartsAtGreaterThanEqual(UUID userId, OffsetDateTime from, Pageable pageable);
+
+    /** R29 past: the player's bookings that started before {@code before}. */
+    Page<Booking> findByUserIdAndStartsAtBefore(UUID userId, OffsetDateTime before, Pageable pageable);
+
     Page<Booking> findByStadiumId(UUID stadiumId, Pageable pageable);
 
     /** Bookings generated from a recurring series. */

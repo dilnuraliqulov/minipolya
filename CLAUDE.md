@@ -310,6 +310,10 @@ When you need to change the schema (add column, new table, alter constraint):
   - Price = the slot's price (pricing rule by local weekday/time, falling back to `stadium.price_per_hour`, `BookingPriceCalculator.hourPrice`), with the best active promotion for that hour applied — identical to what the availability endpoint shows for the slot.
   - Violations throw `BadRequestException` → HTTP 400. An overlap rejected by the DB EXCLUDE constraint reports 409 "Slot is already booked".
 - Max booking: 4 weeks ahead
+- **The player's list** (`GET /api/bookings`, paged): every booking, latest start first;
+  R29 `when=upcoming` — `startsAt` now or later, soonest first; `when=past` — `startsAt`
+  before now, newest first; any other value 400 "Invalid when". Each item carries
+  `paymentState` and `declineReason` (see "Why a card payment was refused").
 - Hold: unpaid bookings set `expires_at = now + 10 minutes`, status = `pending`
 - Expiry: `BookingExpiryJob` runs every minute, marks expired pending bookings as `expired`
 - Status flow:

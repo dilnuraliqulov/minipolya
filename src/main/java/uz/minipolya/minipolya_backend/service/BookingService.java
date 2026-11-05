@@ -482,8 +482,28 @@ public class BookingService {
 
     @Transactional(readOnly = true)
     public PageResponse<BookingResponse> getMyBookings(UUID userId, int page, int size) {
-        Pageable pageable = Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"));
-        return PageResponse.from(bookingRepository.findByUserId(userId, pageable), bookingResponseFactory::of);
+        return getMyBookings(userId, null, page, size);
+    }
+
+    /**
+     * R29: the player's bookings, all of them (latest start first, as before), or split:
+     * {@code upcoming} — starting now or later, soonest first; {@code past} — started
+     * already, newest first. Anything else is 400 "Invalid when".
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<BookingResponse> getMyBookings(UUID userId, String when, int page, int size) {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        if (when == null || when.isBlank()) {
+            Pageable pageable = Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"));
+            return PageResponse.from(bookingRepository.findByUserId(userId, pageable), bookingResponseFactory::of);
+        }
+        return switch (when) {
+            case "upcoming" -> PageResponse.from(bookingRepository.findByUserIdAndStartsAtGreaterThanEqual(userId, now,
+                    Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"))), bookingResponseFactory::of);
+            case "past" -> PageResponse.from(bookingRepository.findByUserIdAndStartsAtBefore(userId, now,
+                    Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"))), bookingResponseFactory::of);
+            default -> throw new BadRequestException("Invalid when");
+        };
     }
 
     @Transactional(readOnly = true)
