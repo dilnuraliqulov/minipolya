@@ -107,7 +107,7 @@ class TeamGameChallengesTest {
         when(teamRepository.findByLeaderId(VIEWER_ID)).thenReturn(List.of());
         when(gameTeamRepository.findByGameIdAndSideAndStatus(game.getId(), Side.A, GameTeam.Status.ACTIVE))
                 .thenReturn(Optional.of(sideA));
-        when(gameRepository.findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any()))
+        when(gameRepository.findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(game)));
     }
 
@@ -149,7 +149,7 @@ class TeamGameChallengesTest {
         ArgumentCaptor<String> format = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
         verify(gameRepository).findChallenges(from.capture(), to.capture(), anyStadium.capture(),
-                stadiumId.capture(), anyFormat.capture(), format.capture(), any(), excluded.capture(), any());
+                stadiumId.capture(), anyFormat.capture(), format.capture(), any(), excluded.capture(), any(), any());
         return new Object[]{from.getValue(), to.getValue(), anyStadium.getValue(),
                 stadiumId.getValue(), anyFormat.getValue(), format.getValue(), excluded.getValue()};
     }
@@ -216,7 +216,7 @@ class TeamGameChallengesTest {
         challenges(null, null, null);
 
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
-        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any());
+        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any(), any());
         assertThat(excluded.getValue()).contains(VIEWER_TEAM_ID);
     }
 
@@ -228,7 +228,7 @@ class TeamGameChallengesTest {
         challenges(null, null, null);
 
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
-        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any());
+        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any(), any());
         assertThat(excluded.getValue()).contains(VIEWER_TEAM_ID);
     }
 
@@ -237,7 +237,7 @@ class TeamGameChallengesTest {
         challenges(null, null, null);
 
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
-        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any());
+        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any(), any());
 
         // An empty IN (...) is not valid SQL, so the list always holds something.
         assertThat(excluded.getValue()).isNotEmpty();

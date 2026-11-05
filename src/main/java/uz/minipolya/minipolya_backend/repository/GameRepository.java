@@ -44,7 +44,8 @@ public interface GameRepository extends JpaRepository<Game, UUID>, JpaSpecificat
 
     /**
      * Waiting team games an opponent could still join: before the 3-hour point,
-     * and not one the viewer's own team is waiting on.
+     * not one the viewer's own team is waiting on, and not one another team is
+     * half-way through joining (R45: {@code joining}; it is back once that join fails).
      *
      * <p>{@code excludedTeamIds} is never empty — an empty {@code IN (...)} is
      * not valid SQL — so the caller pads it with a sentinel id.
@@ -72,6 +73,10 @@ public interface GameRepository extends JpaRepository<Game, UUID>, JpaSpecificat
                   WHERE t.game = g
                     AND t.status = :activeStatus
                     AND t.team.id IN :excludedTeamIds)
+              AND NOT EXISTS (
+                  SELECT 1 FROM GameTeam j
+                  WHERE j.game = g
+                    AND j.status = :joiningStatus)
             ORDER BY g.startsAt ASC
             """)
     Page<Game> findChallenges(@Param("from") OffsetDateTime from,
@@ -82,7 +87,8 @@ public interface GameRepository extends JpaRepository<Game, UUID>, JpaSpecificat
                               @Param("format") String format,
                               Pageable pageable,
                               @Param("excludedTeamIds") List<UUID> excludedTeamIds,
-                              @Param("activeStatus") GameTeam.Status activeStatus);
+                              @Param("activeStatus") GameTeam.Status activeStatus,
+                              @Param("joiningStatus") GameTeam.Status joiningStatus);
 
     /** True if either side of any game still references the team (blocks team deletion). */
     boolean existsByTeamAIdOrTeamBId(UUID teamAId, UUID teamBId);

@@ -476,6 +476,13 @@ public class TeamGameService {
         return JoinState.UNDONE;
     }
 
+    /** R45: true while a team is half-way through joining this game (its payment being confirmed). */
+    @Transactional(readOnly = true)
+    public boolean joinPending(UUID gameId) {
+        return gameTeamRepository.findByGameId(gameId).stream()
+                .anyMatch(t -> t.getStatus() == GameTeam.Status.JOINING);
+    }
+
     /** The game a team entry belongs to. */
     @Transactional(readOnly = true)
     public UUID gameIdOf(UUID gameTeamId) {
@@ -732,7 +739,9 @@ public class TeamGameService {
                 .findChallenges(from, to,
                         stadiumId == null, stadiumId == null ? NO_TEAM : stadiumId,
                         format == null, format == null ? "" : format,
-                        pageable, viewersTeamIds(userId), GameTeam.Status.ACTIVE)
+                        pageable, viewersTeamIds(userId), GameTeam.Status.ACTIVE,
+                        // R45: not while another team is half-way through joining it.
+                        GameTeam.Status.JOINING)
                 .map(this::toChallenge);
     }
 

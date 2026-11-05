@@ -601,6 +601,7 @@ public class GameService {
         dto.setInviteLink(inviteLink(game.getId()));
         if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
             dto.setTeams(teamGameService.teamsOf(game));
+            dto.setJoinPending(teamGameService.joinPending(game.getId()));
         } else if (game.getTotalPrice() != null) {
             dto.setPrice(cardPricing().gameShareSplit(game).playerAmount());
         }

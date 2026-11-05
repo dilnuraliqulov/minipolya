@@ -67,6 +67,8 @@ public class GameDetailResponse {
 
     /** team_vs_team only: each team's fee, advance, remainder and refund position. */
     private List<GameTeamResponse> teams;
+    /** R45, team games only: a team is half-way through joining (its payment being confirmed). */
+    private Boolean joinPending;
 
     private List<GameParticipantResponse> participants;
 

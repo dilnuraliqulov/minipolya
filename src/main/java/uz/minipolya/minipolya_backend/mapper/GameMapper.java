@@ -33,5 +33,6 @@ public interface GameMapper {
     @Mapping(target = "participants", ignore = true)
     @Mapping(target = "teams", ignore = true)
     @Mapping(target = "inviteLink", ignore = true)
+    @Mapping(target = "joinPending", ignore = true)
     GameDetailResponse toDetailResponse(Game game);
 }

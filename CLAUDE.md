@@ -631,7 +631,10 @@ forfeits, yet that same team is made whole if its *opponent* cancels.
 
 *Finding opponents.* `GET /api/games/challenges` (filters `date`, `format`,
 `stadiumId`; paged) lists WAITING team games before their 3-hour point, excluding
-any the caller's own team is waiting on (membership and leadership both count).
+any the caller's own team is waiting on (membership and leadership both count), and
+any another team is half-way through joining (R45: a `joining` team, e.g. after 202
+`PAYMENT_PENDING` — left out for everyone, the joining captain too; back on the board
+if that join fails). `GameDetailResponse.joinPending` (team games only) is true meanwhile.
 Each item carries `amountToPayNow` = `playerAmount(fee + the free side's advance)`,
 `remainderAmount` = `playerAmount(its remainder)` and `totalPrice` = what both teams
 pay altogether. A team game
