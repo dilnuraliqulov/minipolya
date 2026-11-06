@@ -32,6 +32,8 @@ public class StadiumDetailResponse {
     private String address;
     /** The Tashkent district; absent for stadiums added before it existed. */
     private String district;
+    /** "Moʻljal": a landmark near the pitch; absent when none. */
+    private String landmark;
     private BigDecimal latitude;
     private BigDecimal longitude;
     private String phone;
@@ -61,7 +63,7 @@ public class StadiumDetailResponse {
     private Long playerMinBookingAmount;
 
     private String status;
-    /** Why the stadium is rejected or blocked — for its owner and admins; absent otherwise. */
+    /** Why the stadium is rejected or blocked â for its owner and admins; absent otherwise. */
     private String statusReason;
 
     @JsonProperty("isActive")

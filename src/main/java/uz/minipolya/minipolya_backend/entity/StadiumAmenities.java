@@ -66,4 +66,22 @@ public class StadiumAmenities {
     @Builder.Default
     @Column(nullable = false)
     private boolean tribune = false;
+
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean toilet = false;
+
+    /** Covered or indoor pitch. */
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean covered = false;
+
+    /** Bibs (training vests) handed out. */
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean bibs = false;
+
+    @Builder.Default
+    @Column(name = "drinking_water", nullable = false)
+    private boolean drinkingWater = false;
 }

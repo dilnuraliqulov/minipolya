@@ -30,6 +30,7 @@ public interface StadiumMapper {
     @Mapping(target = "status", ignore = true)
     @Mapping(target = "statusReason", ignore = true)
     @Mapping(target = "active", ignore = true)
+    @Mapping(target = "landmark", ignore = true)
     @Mapping(target = "cancellationHours", ignore = true)
     @Mapping(target = "photos", ignore = true)
     @Mapping(target = "amenities", ignore = true)
@@ -66,6 +67,7 @@ public interface StadiumMapper {
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     @Mapping(source = "isActive", target = "active")
     // clearMinBookingAmount has no column: the service applies it.
+    @Mapping(target = "landmark", ignore = true) // blank clears it: the service applies it
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "owner", ignore = true)
     @Mapping(target = "status", ignore = true)

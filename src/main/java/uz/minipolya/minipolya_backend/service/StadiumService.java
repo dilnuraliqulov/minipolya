@@ -72,6 +72,7 @@ public class StadiumService {
         Stadium stadium = stadiumMapper.toEntity(request);
         stadium.setOwner(owner);
         stadium.setStatus(STATUS_PENDING);
+        stadium.setLandmark(landmark(request.getLandmark()));
         applyCancellationHours(stadium, request.getCancellationHours());
 
         StadiumAmenities amenities = request.getAmenities() != null
@@ -103,6 +104,9 @@ public class StadiumService {
 
         Map<String, Object> before = auditSnapshot(stadium);
         stadiumMapper.updateStadiumFromRequest(request, stadium);
+        if (request.getLandmark() != null) {
+            stadium.setLandmark(landmark(request.getLandmark())); // blank clears it
+        }
         if (clearMinimum) {
             stadium.setMinBookingAmount(null); // full payment only; audited like any field
         }
@@ -285,6 +289,7 @@ public class StadiumService {
         fields.put("name", stadium.getName());
         fields.put("address", stadium.getAddress());
         fields.put("district", stadium.getDistrict());
+        fields.put("landmark", stadium.getLandmark());
         fields.put("latitude", stadium.getLatitude());
         fields.put("longitude", stadium.getLongitude());
         fields.put("phone", stadium.getPhone());
@@ -308,6 +313,10 @@ public class StadiumService {
             fields.put("amenities.cafe", a.isCafe());
             fields.put("amenities.equipmentRental", a.isEquipmentRental());
             fields.put("amenities.tribune", a.isTribune());
+            fields.put("amenities.toilet", a.isToilet());
+            fields.put("amenities.covered", a.isCovered());
+            fields.put("amenities.bibs", a.isBibs());
+            fields.put("amenities.drinkingWater", a.isDrinkingWater());
         }
         return fields;
     }
@@ -369,6 +378,18 @@ public class StadiumService {
         for (String url : urls) {
             stadium.addPhoto(StadiumPhoto.builder().url(url).position(position++).build());
         }
+    }
+
+    /** Trimmed; blank is none. At most 150 characters. */
+    private static String landmark(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String trimmed = value.trim();
+        if (trimmed.length() > 150) {
+            throw new BadRequestException("landmark must be at most 150 characters");
+        }
+        return trimmed;
     }
 
     private String blankToNull(String value) {

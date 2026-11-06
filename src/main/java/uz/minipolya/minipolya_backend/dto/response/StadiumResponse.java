@@ -27,6 +27,8 @@ public class StadiumResponse {
     private String address;
     /** The Tashkent district; absent for stadiums added before it existed. */
     private String district;
+    /** "Moʻljal": a landmark near the pitch; absent when none. */
+    private String landmark;
     private BigDecimal latitude;
     private BigDecimal longitude;
     private String format;
@@ -46,14 +48,14 @@ public class StadiumResponse {
     /** Admin responses only: what ATMOS takes of one hour paid by card. */
     private Long atmosFee;
     private String status;
-    /** Why the stadium is rejected or blocked — for its owner and admins; absent otherwise. */
+    /** Why the stadium is rejected or blocked â for its owner and admins; absent otherwise. */
     private String statusReason;
     private String ownerName;
 
     @JsonProperty("isActive")
     private boolean isActive;
 
-    /** Computed from reviews — null when the stadium has no reviews yet. */
+    /** Computed from reviews â null when the stadium has no reviews yet. */
     private Double averageRating;
     private Integer reviewCount;
 

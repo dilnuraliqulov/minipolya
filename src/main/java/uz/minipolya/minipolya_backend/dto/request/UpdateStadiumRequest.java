@@ -36,6 +36,9 @@ public class UpdateStadiumRequest {
     @Size(max = 30)
     private String district;
 
+    /** Optional, at most 150 characters; trimmed, blank means none (on update: clears it). */
+    private String landmark;
+
     @DecimalMin(value = "-90.0")
     @DecimalMax(value = "90.0")
     private BigDecimal latitude;
