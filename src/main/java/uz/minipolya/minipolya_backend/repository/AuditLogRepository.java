@@ -27,7 +27,7 @@ public interface AuditLogRepository extends Repository<AuditLog, UUID>, AuditLog
                                                             Collection<String> actions);
 
     /** The latest entry of one action on one entity, e.g. a user's latest block. */
-    Optional<AuditLog> findFirstByEntityTypeAndEntityIdAndActionOrderByCreatedAtDesc(String entityType, UUID entityId,
+    Optional<AuditLog> findFirstByEntityTypeAndEntityIdAndActionOrderByCreatedAtDescIdDesc(String entityType, UUID entityId,
                                                                                     String action);
 
     /** Entries of the given actions on one kind of entity written after {@code after} — recent history. */

@@ -23,7 +23,7 @@ public class AccountBlockService {
     /** The latest block's reason and time; both fields null when no block was recorded. */
     @Transactional(readOnly = true)
     public BlockedAccountResponse details(UUID userId) {
-        return auditLogRepository.findFirstByEntityTypeAndEntityIdAndActionOrderByCreatedAtDesc(
+        return auditLogRepository.findFirstByEntityTypeAndEntityIdAndActionOrderByCreatedAtDescIdDesc(
                         AuditEntityType.USER, userId, AuditAction.USER_BLOCKED.name())
                 .map(entry -> BlockedAccountResponse.builder()
                         .reason(entry.getReason() == null || entry.getReason().isBlank() ? null : entry.getReason())

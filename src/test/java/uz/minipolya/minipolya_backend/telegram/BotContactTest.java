@@ -81,7 +81,7 @@ class BotContactTest {
         assertThat(next.text()).isEqualTo("Endi maydonni tanlang va band qiling 👇");
         assertThat(next.webAppUrl()).isEqualTo(BotFixture.MINIAPP);
 
-        AuditLog entry = auditLog.findFirstByEntityTypeAndEntityIdAndActionOrderByCreatedAtDesc(
+        AuditLog entry = auditLog.findFirstByEntityTypeAndEntityIdAndActionOrderByCreatedAtDescIdDesc(
                 AuditEntityType.USER, user().getId(), AuditAction.PHONE_SHARED_VIA_BOT.name()).orElseThrow();
         assertThat(entry.getActorType()).isEqualTo("PLAYER");
         assertThat(entry.getChanges()).contains("phoneChanged").doesNotContain(phone.substring(4));
