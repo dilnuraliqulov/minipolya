@@ -1,13 +1,8 @@
 package uz.minipolya.minipolya_backend.dto.request;
 
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.DecimalMax;
-import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.PositiveOrZero;
-import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -15,40 +10,42 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalTime;
-import java.util.List;
 
+/**
+ * A new stadium. The field rules (lengths, district, phone, location, price, hours) are
+ * checked by {@code StadiumRules}, the same code the update uses, so the messages match.
+ * Booking terms ({@code minBookingAmount}, {@code cancellationHours}) are the admin's
+ * (D2/D3) and photos come only through the upload endpoint (D8): a client still sending
+ * those fields is ignored, not refused.
+ */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class CreateStadiumRequest {
 
-    @NotBlank
-    @Size(max = 150)
+    /** Required, trimmed, 3–150 characters. */
     private String name;
 
-    @NotBlank
-    @Size(max = 300)
+    /** Required, trimmed, 5–300 characters. */
     private String address;
 
-    /** Optional: one of the twelve Tashkent districts, spelt exactly as listed in {@code Districts}. */
-    @Size(max = 30)
+    /** Required: one of the twelve Tashkent districts, spelt exactly as listed in {@code Districts}. */
     private String district;
 
-    /** Optional, at most 150 characters; trimmed, blank means none (on update: clears it). */
+    /** Optional, at most 150 characters; trimmed, blank means none. */
     private String landmark;
 
-    @DecimalMin(value = "-90.0")
-    @DecimalMax(value = "90.0")
+    /** Required, inside Uzbekistan (lat 37.1–45.6). */
     private BigDecimal latitude;
 
-    @DecimalMin(value = "-180.0")
-    @DecimalMax(value = "180.0")
+    /** Required, inside Uzbekistan (lon 55.9–73.2). */
     private BigDecimal longitude;
 
-    @Size(max = 20)
+    /** Required, {@code +998XXXXXXXXX}. */
     private String phone;
 
+    /** Optional, at most 500 characters. */
     private String description;
 
     @NotBlank
@@ -59,25 +56,14 @@ public class CreateStadiumRequest {
     @Pattern(regexp = "natural|artificial|hybrid", message = "surfaceType must be one of: natural, artificial, hybrid")
     private String surfaceType;
 
-    @NotNull
+    /** Required, on the hour, before {@code closeTime}. */
     private LocalTime openTime;
 
-    @NotNull
+    /** Required, on the hour, after {@code openTime} (no closing after midnight). */
     private LocalTime closeTime;
 
-    @NotNull
-    @PositiveOrZero
+    /** Required, tiyin, 1 000 000–500 000 000 (10 000–5 000 000 so'm): the owner's own price. */
     private Long pricePerHour;
-
-    /** Tiyin; null means the player must pay in full. At least 50 000 (500 so.m). */
-    @PositiveOrZero
-    private Long minBookingAmount;
-
-    /** Hours before kick-off up to which a player can cancel and be refunded in full. */
-    @PositiveOrZero
-    private Integer cancellationHours;
-
-    private List<@NotBlank @Size(max = 500) String> photos;
 
     @Valid
     private AmenitiesRequest amenities;

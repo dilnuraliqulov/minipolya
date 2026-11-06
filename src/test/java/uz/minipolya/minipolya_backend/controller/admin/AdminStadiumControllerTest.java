@@ -69,11 +69,23 @@ class AdminStadiumControllerTest {
                 .name(name).address("Toshkent, " + name).district(district)
                 .format("7x7").surfaceType("artificial")
                 .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0))
-                .pricePerHour(20_000_000L).minBookingAmount(10_000_000L).cancellationHours(12)
+                .pricePerHour(20_000_000L)
                 .phone("+998901112233").description("Yopiq maydon")
-                .photos(List.of("https://cdn/a.jpg", "https://cdn/b.jpg"))
+                .latitude(new java.math.BigDecimal("41.3")).longitude(new java.math.BigDecimal("69.25"))
                 .amenities(AmenitiesRequest.builder().parking(true).showers(true).build())
                 .build();
+    }
+
+    /** Created by the owner, then given two photos and booking terms as the admin and uploads would. */
+    private StadiumDetailResponse created(String name, String district) {
+        StadiumDetailResponse created = stadiumService.create(owner.getId(), request(name, district));
+        Stadium stadium = stadiumRepository.findById(created.getId()).orElseThrow();
+        stadium.addPhoto(StadiumPhoto.builder().url("https://cdn/a.jpg").position(0).build());
+        stadium.addPhoto(StadiumPhoto.builder().url("https://cdn/b.jpg").position(1).build());
+        stadium.setMinBookingAmount(10_000_000L);
+        stadium.setCancellationHours(12);
+        stadiumRepository.saveAndFlush(stadium);
+        return created;
     }
 
     // ---- Access ----
@@ -117,7 +129,9 @@ class AdminStadiumControllerTest {
     void aDistrictOutsideTheListIsRefused() {
         assertThatThrownBy(() -> stadiumService.create(owner.getId(), request("Bad", "Mirzo Ulug'bek")))
                 .isInstanceOf(BadRequestException.class).hasMessage("Invalid district");
-        StadiumDetailResponse created = stadiumService.create(owner.getId(), request("Good", null));
+        assertThatThrownBy(() -> stadiumService.create(owner.getId(), request("No District", null)))
+                .isInstanceOf(BadRequestException.class).hasMessage("district is required");
+        StadiumDetailResponse created = stadiumService.create(owner.getId(), request("Good", "Bektemir"));
         assertThatThrownBy(() -> stadiumService.update(owner.getId(), created.getId(),
                 UpdateStadiumRequest.builder().district("Samarqand").build()))
                 .isInstanceOf(BadRequestException.class).hasMessage("Invalid district");
@@ -151,8 +165,8 @@ class AdminStadiumControllerTest {
 
     @Test
     void theListFiltersByDistrictAndFormatAndShowsBothPrices() throws Exception {
-        stadiumService.create(owner.getId(), request("Chilonzor Arena", "Chilonzor"));
-        stadiumService.create(owner.getId(), request("Yunusobod Arena", "Yunusobod"));
+        created("Chilonzor Arena", "Chilonzor");
+        created("Yunusobod Arena", "Yunusobod");
         data.stadium(owner, "Old Arena"); // 5x5, no district
 
         mvc.perform(get("/api/admin/stadiums").header("Authorization", adminToken).param("district", "Chilonzor"))
@@ -186,7 +200,7 @@ class AdminStadiumControllerTest {
 
     @Test
     void aPendingStadiumCanBeReviewedInFull() throws Exception {
-        StadiumDetailResponse created = stadiumService.create(owner.getId(), request("Review Me", "Sergeli"));
+        StadiumDetailResponse created = created("Review Me", "Sergeli");
         Stadium stadium = stadiumRepository.findById(created.getId()).orElseThrow();
         pricingRuleRepository.save(PricingRule.builder().stadium(stadium).dayOfWeek(5)
                 .startTime(LocalTime.of(18, 0)).endTime(LocalTime.of(23, 0)).pricePerHour(30_000_000L).build());

@@ -32,7 +32,8 @@ class OwnerStadiumOnboardingTest {
 
     private static final String STADIUM = """
             {"name":"Newcomer Arena","address":"Yunusobod 4","format":"5x5","surfaceType":"artificial",
-             "openTime":"08:00","closeTime":"23:00","pricePerHour":15000000,"district":"Yunusobod"}
+             "openTime":"08:00","closeTime":"23:00","pricePerHour":15000000,"district":"Yunusobod",
+             "phone":"+998901234567","latitude":41.365,"longitude":69.285}
             """;
 
     @Autowired

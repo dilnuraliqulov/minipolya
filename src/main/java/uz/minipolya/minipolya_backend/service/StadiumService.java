@@ -32,6 +32,7 @@ import uz.minipolya.minipolya_backend.repository.StadiumSpecifications;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.Districts;
 import uz.minipolya.minipolya_backend.util.Pagination;
+import uz.minipolya.minipolya_backend.util.StadiumRules;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -63,8 +64,7 @@ public class StadiumService {
 
     @Transactional
     public StadiumDetailResponse create(UUID ownerId, CreateStadiumRequest request) {
-        requireValidMinBookingAmount(request.getMinBookingAmount());
-        request.setDistrict(Districts.require(request.getDistrict()));
+        StadiumRules.forCreate(request);
 
         User owner = userRepository.findById(ownerId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -72,15 +72,12 @@ public class StadiumService {
         Stadium stadium = stadiumMapper.toEntity(request);
         stadium.setOwner(owner);
         stadium.setStatus(STATUS_PENDING);
-        stadium.setLandmark(landmark(request.getLandmark()));
-        applyCancellationHours(stadium, request.getCancellationHours());
+        stadium.setLandmark(request.getLandmark());
 
         StadiumAmenities amenities = request.getAmenities() != null
                 ? stadiumMapper.toAmenities(request.getAmenities())
                 : new StadiumAmenities();
         stadium.setAmenities(amenities);
-
-        replacePhotos(stadium, request.getPhotos());
 
         Stadium saved = stadiumRepository.save(stadium);
         auditService.record(AuditEntry.owner(ownerId, AuditAction.STADIUM_CREATED)
@@ -94,21 +91,12 @@ public class StadiumService {
     public StadiumDetailResponse update(UUID ownerId, UUID stadiumId, UpdateStadiumRequest request) {
         Stadium stadium = requireOwnedStadium(ownerId, stadiumId);
 
-        boolean clearMinimum = Boolean.TRUE.equals(request.getClearMinBookingAmount());
-        if (clearMinimum && request.getMinBookingAmount() != null) {
-            throw new BadRequestException("Send either minBookingAmount or clearMinBookingAmount");
-        }
-        requireValidMinBookingAmount(request.getMinBookingAmount());
-        // Absent leaves the district as it is (the update only touches what is sent).
-        request.setDistrict(Districts.require(request.getDistrict()));
+        StadiumRules.forUpdate(request, stadium);
 
         Map<String, Object> before = auditSnapshot(stadium);
         stadiumMapper.updateStadiumFromRequest(request, stadium);
         if (request.getLandmark() != null) {
-            stadium.setLandmark(landmark(request.getLandmark())); // blank clears it
-        }
-        if (clearMinimum) {
-            stadium.setMinBookingAmount(null); // full payment only; audited like any field
+            stadium.setLandmark(StadiumRules.landmark(request.getLandmark())); // blank clears it
         }
 
         if (request.getAmenities() != null) {
@@ -117,9 +105,6 @@ public class StadiumService {
             } else {
                 stadiumMapper.updateAmenities(request.getAmenities(), stadium.getAmenities());
             }
-        }
-        if (request.getPhotos() != null) {
-            replacePhotos(stadium, request.getPhotos());
         }
 
         // The stadiums updated_at trigger sets the new timestamp in the database, so
@@ -349,47 +334,6 @@ public class StadiumService {
             }
             return response;
         }).collect(Collectors.toCollection(ArrayList::new));
-    }
-
-    /**
-     * A null minimum is fine — it means the player pays in full. A non-null one
-     * must be something ATMOS will actually accept.
-     */
-    private void requireValidMinBookingAmount(Long minBookingAmount) {
-        if (minBookingAmount != null && minBookingAmount < Stadium.MIN_BOOKING_AMOUNT_FLOOR) {
-            throw new BadRequestException("minBookingAmount must be at least "
-                    + Stadium.MIN_BOOKING_AMOUNT_FLOOR + " tiyin (500 so'm)");
-        }
-    }
-
-    /** Leaves the stadium's own default in place when the owner sends nothing. */
-    private void applyCancellationHours(Stadium stadium, Integer cancellationHours) {
-        if (cancellationHours != null) {
-            stadium.setCancellationHours(cancellationHours);
-        }
-    }
-
-    private void replacePhotos(Stadium stadium, List<String> urls) {
-        stadium.getPhotos().clear();
-        if (urls == null) {
-            return;
-        }
-        int position = 0;
-        for (String url : urls) {
-            stadium.addPhoto(StadiumPhoto.builder().url(url).position(position++).build());
-        }
-    }
-
-    /** Trimmed; blank is none. At most 150 characters. */
-    private static String landmark(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        String trimmed = value.trim();
-        if (trimmed.length() > 150) {
-            throw new BadRequestException("landmark must be at most 150 characters");
-        }
-        return trimmed;
     }
 
     private String blankToNull(String value) {
