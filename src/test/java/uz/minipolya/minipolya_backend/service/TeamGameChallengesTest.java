@@ -131,6 +131,29 @@ class TeamGameChallengesTest {
     }
 
     @Test
+    void aChallengeCarriesTheStadiumCoverPhotoAndDistrictFromOneGroupedQuery() {
+        stadium.setDistrict("Chilonzor");
+        List<Object[]> photos = new java.util.ArrayList<>();
+        photos.add(new Object[]{STADIUM_ID, "/api/uploads/stadiums/" + STADIUM_ID + "/cover.jpg"});
+        photos.add(new Object[]{STADIUM_ID, "/api/uploads/stadiums/" + STADIUM_ID + "/second.jpg"});
+        when(gameRepository.findStadiumPhotoUrls(any())).thenReturn(photos);
+
+        GameChallengeResponse card = challenges(null, null, null).getContent().getFirst();
+
+        assertThat(card.getStadiumDistrict()).isEqualTo("Chilonzor");
+        assertThat(card.getStadiumPhotoUrl()).isEqualTo("/api/uploads/stadiums/" + STADIUM_ID + "/cover.jpg");
+        org.mockito.Mockito.verify(gameRepository, org.mockito.Mockito.times(1)).findStadiumPhotoUrls(any());
+    }
+
+    @Test
+    void aStadiumWithoutPhotosHasNoPhotoUrl() {
+        GameChallengeResponse card = challenges(null, null, null).getContent().getFirst();
+
+        assertThat(card.getStadiumPhotoUrl()).isNull();
+        assertThat(card.getStadiumDistrict()).isNull();
+    }
+
+    @Test
     void aChallengeShowsWhatTheJoiningTeamPaysNow() {
         GameChallengeResponse card = challenges(null, null, null).getContent().getFirst();
 

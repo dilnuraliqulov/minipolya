@@ -735,14 +735,36 @@ public class TeamGameService {
             to = date.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime();
         }
 
-        return gameRepository
+        Page<Game> games = gameRepository
                 .findChallenges(from, to,
                         stadiumId == null, stadiumId == null ? NO_TEAM : stadiumId,
                         format == null, format == null ? "" : format,
                         pageable, viewersTeamIds(userId), GameTeam.Status.ACTIVE,
                         // R45: not while another team is half-way through joining it.
-                        GameTeam.Status.JOINING)
-                .map(this::toChallenge);
+                        GameTeam.Status.JOINING);
+        // E9: every stadium's cover photo for the whole page, in one grouped query.
+        Map<UUID, String> covers = coverPhotos(games.getContent().stream()
+                .map(g -> g.getStadium().getId()).distinct().toList());
+        return games.map(game -> {
+            GameChallengeResponse card = toChallenge(game);
+            card.setStadiumPhotoUrl(covers.get(game.getStadium().getId()));
+            return card;
+        });
+    }
+
+    /** The lowest-position photo of each stadium; a stadium with none is absent. */
+    private Map<UUID, String> coverPhotos(List<UUID> stadiumIds) {
+        Map<UUID, String> covers = new java.util.HashMap<>();
+        if (stadiumIds.isEmpty()) {
+            return covers;
+        }
+        List<Object[]> rows = gameRepository.findStadiumPhotoUrls(stadiumIds);
+        if (rows != null) {
+            for (Object[] row : rows) {
+                covers.putIfAbsent((UUID) row[0], (String) row[1]);
+            }
+        }
+        return covers;
     }
 
     /** The player price with the settings in force now; a quote never asks the payment service. */
@@ -1148,6 +1170,7 @@ public class TeamGameService {
                 .stadiumId(stadium.getId())
                 .stadiumName(stadium.getName())
                 .stadiumAddress(stadium.getAddress())
+                .stadiumDistrict(stadium.getDistrict())
                 .format(stadium.getFormat())
                 .startsAt(game.getStartsAt())
                 .endsAt(game.getEndsAt())

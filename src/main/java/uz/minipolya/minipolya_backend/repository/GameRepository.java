@@ -35,6 +35,14 @@ public interface GameRepository extends JpaRepository<Game, UUID>, JpaSpecificat
     /** Every other game type, which still times out at its start time. */
     List<Game> findByStatusAndTypeNotAndStartsAtBefore(String status, String type, OffsetDateTime time);
 
+    /**
+     * E9: the cover photo of each of several stadiums — rows {@code [stadiumId, url]}, each
+     * stadium's photos in position order (the first is the cover). One query for a page of
+     * challenges.
+     */
+    @Query("SELECT p.stadium.id, p.url FROM StadiumPhoto p WHERE p.stadium.id IN :ids ORDER BY p.position ASC")
+    List<Object[]> findStadiumPhotoUrls(@Param("ids") java.util.Collection<UUID> ids);
+
     /** Public games discoverable in the app (the "open — find players" listing). */
     List<Game> findByIsPublicTrueAndStatus(String status);
 

@@ -14,8 +14,8 @@ import java.util.UUID;
  * Everything the app's challenge card shows, including what the joining team
  * would pay on the spot. All amounts are tiyin.
  *
- * <p>{@code stadiumAddress} stands in for a district — stadiums have no
- * district column, only an address.
+ * <p>{@code stadiumDistrict} is the stadium's district and {@code stadiumAddress} its
+ * address; {@code stadiumPhotoUrl} its cover photo.
  */
 @Data
 @Builder
@@ -33,6 +33,10 @@ public class GameChallengeResponse {
     private UUID stadiumId;
     private String stadiumName;
     private String stadiumAddress;
+    /** E9: one of the twelve Tashkent districts; absent on a stadium added before districts. */
+    private String stadiumDistrict;
+    /** E9: the stadium's cover photo (lowest position); absent when it has none. */
+    private String stadiumPhotoUrl;
     private String format;
 
     private OffsetDateTime startsAt;
