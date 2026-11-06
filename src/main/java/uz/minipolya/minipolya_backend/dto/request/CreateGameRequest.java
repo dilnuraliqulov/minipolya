@@ -49,4 +49,10 @@ public class CreateGameRequest {
      * for casual games, which still pay per player afterwards.
      */
     private UUID cardId;
+
+    /**
+     * team_vs_team only (T6): {@code MINIMUM} (the default when absent) or {@code FULL} — how
+     * much the creating team puts on hold. A minimum the stadium cannot offer is taken as full.
+     */
+    private PaymentOption paymentOption;
 }

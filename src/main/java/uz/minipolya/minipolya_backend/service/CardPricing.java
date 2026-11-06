@@ -9,6 +9,8 @@ import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.PlatformSettings;
 import uz.minipolya.minipolya_backend.util.CardFeeSplit;
 import uz.minipolya.minipolya_backend.util.PriceCalculator;
+import uz.minipolya.minipolya_backend.util.TeamPaymentQuote;
+import uz.minipolya.minipolya_backend.entity.GameParticipant;
 
 import java.util.function.Supplier;
 
@@ -104,23 +106,53 @@ public class CardPricing {
      * rest is the owner's.
      */
     public CardFeeSplit joinSplit(GameTeam team) {
-        return CardFeeSplit.withPlatformFee(teamJoinPrice(team.getAdvanceAmount(), team.getFeeAmount()),
-                team.getFeeAmount(), cardFeeBps());
+        return CardFeeSplit.withPlatformFee(teamJoinPrice(team), team.getFeeAmount(), cardFeeBps());
     }
 
-    /** What a team pays on joining, from its advance and the platform fee. */
+    /**
+     * T4: what one side of a team game may pay — minimum or full — with the settings in
+     * force now, from the game's pitch price and the stadium's own minimum (null = default).
+     */
+    public TeamPaymentQuote teamQuote(long price, Long stadiumMinimum, GameParticipant.Side side) {
+        PlatformSettings s = settings.get();
+        return TeamPaymentQuote.of(price, effectiveMinimum(stadiumMinimum), s.getTeamGamePlatformFee(), side,
+                s.getCardFeeBps(), s.getPaymentRoundingStep());
+    }
+
+    /**
+     * What this team pays on joining, as players pay it: the stored {@code join_price}; on a row
+     * from before changeset 052, {@code playerAmount(advance + fee)} as it always was.
+     */
+    public long teamJoinPrice(GameTeam team) {
+        return team.getJoinPrice() != null
+                ? team.getJoinPrice()
+                : teamJoinPrice(team.getAdvanceAmount(), team.getFeeAmount());
+    }
+
+    /**
+     * This team's remainder as players pay it — the same in the app and in cash: the stored
+     * {@code remainder_price} (full player amount less what it paid on joining, never rounded
+     * on its own); on an older row {@code playerAmount(remainder)}.
+     */
+    public long teamRemainderPrice(GameTeam team) {
+        return team.getRemainderPrice() != null
+                ? team.getRemainderPrice()
+                : teamRemainderPrice(team.getRemainderAmount());
+    }
+
+    /** What a team pays on joining, from its advance and the platform fee (rows before changeset 052). */
     public long teamJoinPrice(long advance, long fee) {
         return playerAmount(advance + fee);
     }
 
-    /** A team's remainder as players see it — the same in the app and in cash. */
+    /** A team's remainder as players see it (rows before changeset 052). */
     public long teamRemainderPrice(long remainder) {
         return remainder > 0 ? playerAmount(remainder) : 0L;
     }
 
     /** A team's remainder paid in the app: all the owner's. */
     public CardFeeSplit teamRemainderSplit(GameTeam team) {
-        return toOwner(teamRemainderPrice(team.getRemainderAmount()));
+        return toOwner(teamRemainderPrice(team));
     }
 
     /**

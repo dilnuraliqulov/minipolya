@@ -218,11 +218,11 @@ class TeamGameRemainderTest {
     }
 
     @Test
-    void cashAfterTheCardLosesWith400() {
+    void cashAfterTheCardLosesWith409() {
         sideA.setRemainderStatus(GameTeam.RemainderStatus.PAID);
 
         assertThatThrownBy(() -> service.recordCashRemainder(GAME_ID, OWNER_ID, Side.A))
-                .isInstanceOf(BadRequestException.class)
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.ConflictException.class)
                 .hasMessage("Already paid");
 
         verify(paymentService, never()).recordCashTeamRemainder(any(), any());

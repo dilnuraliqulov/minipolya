@@ -33,6 +33,7 @@ public class AdminActivityController {
     private final AdminBookingService adminBookingService;
     private final AdminGameService adminGameService;
     private final BookingService bookingService;
+    private final uz.minipolya.minipolya_backend.service.GameService gameService;
 
     @GetMapping("/api/admin/bookings")
     public ApiResponse<PageResponse<AdminBookingResponse>> bookings(
@@ -83,5 +84,17 @@ public class AdminActivityController {
     @GetMapping("/api/admin/games/{id}")
     public ApiResponse<AdminGameDetailResponse> game(@PathVariable UUID id) {
         return ApiResponse.ok(adminGameService.get(id));
+    }
+
+    /**
+     * T10: an admin undoes the owner's mark on one team's remainder, at any time; "cash
+     * received" voids that cash row. 409 "This team has no remainder mark" when there is none.
+     */
+    @DeleteMapping("/api/admin/games/{id}/remainder-mark")
+    public ApiResponse<AdminGameDetailResponse> undoGameRemainderMark(@AuthenticationPrincipal UUID adminId,
+                                                                      @PathVariable UUID id,
+                                                                      @RequestParam String side) {
+        gameService.undoTeamRemainderMarkByAdmin(id, adminId, side);
+        return ApiResponse.ok(adminGameService.get(id), "Mark undone");
     }
 }

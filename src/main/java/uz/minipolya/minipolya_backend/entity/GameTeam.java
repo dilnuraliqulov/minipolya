@@ -99,6 +99,34 @@ public class GameTeam {
     @Column(name = "left_at")
     private OffsetDateTime leftAt;
 
+    /**
+     * T5: what this team chose to pay on joining — {@code MINIMUM} or {@code FULL}. Null on rows
+     * from before (changeset 052), which keep their stored amounts and behaviour.
+     */
+    @Convert(converter = PaymentOptionConverter.class)
+    @Column(name = "payment_option", length = 10)
+    private PaymentOption paymentOption;
+
+    /** What this team's card was held or charged on joining, as players pay it. Null on older rows. */
+    @Column(name = "join_price")
+    private Long joinPrice;
+
+    /** What this team still owes after joining, as players pay it (app or cash). Null on older rows. */
+    @Column(name = "remainder_price")
+    private Long remainderPrice;
+
+    /** T10: the owner's mark on this team's remainder, as on a booking. Null = no mark. */
+    @Convert(converter = Booking.RemainderMarkConverter.class)
+    @Column(name = "remainder_mark", length = 20)
+    private Booking.RemainderMark remainderMark;
+
+    /** When the mark was set (UTC): the owner may undo it until the end of that Tashkent day. */
+    @Column(name = "remainder_marked_at")
+    private OffsetDateTime remainderMarkedAt;
+
+    @Column(name = "remainder_marked_by")
+    private UUID remainderMarkedBy;
+
     @PrePersist
     void onCreate() {
         if (joinedAt == null) {
@@ -106,9 +134,29 @@ public class GameTeam {
         }
     }
 
+    /** Sets the owner's mark on the remainder. */
+    public void markRemainder(Booking.RemainderMark mark, UUID userId, OffsetDateTime at) {
+        this.remainderMark = mark;
+        this.remainderMarkedAt = at;
+        this.remainderMarkedBy = userId;
+    }
+
+    /** Clears the owner's mark. */
+    public void clearRemainderMark() {
+        this.remainderMark = null;
+        this.remainderMarkedAt = null;
+        this.remainderMarkedBy = null;
+    }
+
     /** True when this team still owes money on the pitch. */
     public boolean owesRemainder() {
-        return remainderStatus == RemainderStatus.UNPAID && remainderAmount != null && remainderAmount > 0;
+        if (remainderStatus != RemainderStatus.UNPAID) {
+            return false;
+        }
+        if (remainderPrice != null) {
+            return remainderPrice > 0;
+        }
+        return remainderAmount != null && remainderAmount > 0;
     }
 
     /** What this team has put towards the pitch price so far, tiyin (the fee is not part of it). */
@@ -149,6 +197,33 @@ public class GameTeam {
 
         public static RemainderStatus fromValue(String value) {
             return valueOf(value.trim().toUpperCase(Locale.ROOT));
+        }
+    }
+
+    /** T6: what a team pays on joining — the stadium minimum, or its whole half of the pitch. */
+    public enum PaymentOption {
+        MINIMUM, FULL;
+
+        @JsonValue
+        public String getValue() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+
+        public static PaymentOption fromValue(String value) {
+            return valueOf(value.trim().toUpperCase(Locale.ROOT));
+        }
+    }
+
+    @Converter
+    public static class PaymentOptionConverter implements AttributeConverter<PaymentOption, String> {
+        @Override
+        public String convertToDatabaseColumn(PaymentOption attribute) {
+            return attribute == null ? null : attribute.getValue();
+        }
+
+        @Override
+        public PaymentOption convertToEntityAttribute(String dbData) {
+            return dbData == null ? null : PaymentOption.fromValue(dbData);
         }
     }
 

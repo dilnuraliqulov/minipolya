@@ -564,7 +564,7 @@ public class PaymentService {
      */
     @Transactional
     public Payment recordCashTeamRemainder(GameTeam gameTeam, User owner) {
-        long amount = cardPricing.teamRemainderPrice(gameTeam.getRemainderAmount());
+        long amount = cardPricing.teamRemainderPrice(gameTeam);
         Payment payment = paymentRepository.save(Payment.builder()
                 .game(gameTeam.getGame())
                 .gameTeam(gameTeam)
@@ -581,6 +581,30 @@ public class PaymentService {
 
         log.info("Team remainder taken in cash: gameTeamId={} amount={}", gameTeam.getId(), amount);
         return payment;
+    }
+
+    /**
+     * T10: undoing a team's "cash received" mark voids the cash row it recorded — the team's
+     * latest arrived cash payment becomes {@code cancelled} (never a refund: the money never
+     * passed through the platform). Returns it, or null when there was none.
+     */
+    @Transactional
+    public Payment voidLatestTeamCashPayment(GameTeam gameTeam) {
+        Payment cash = paymentRepository.findByGameTeamId(gameTeam.getId()).stream()
+                .filter(p -> p.getMethod() == Payment.Method.CASH)
+                .filter(p -> p.getStatus() == Payment.Status.PAID)
+                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .max(java.util.Comparator.comparing(Payment::getCreatedAt,
+                                java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder()))
+                        .thenComparing(Payment::getId, java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())))
+                .orElse(null);
+        if (cash == null) {
+            return null;
+        }
+        cash.setStatus(Payment.Status.CANCELLED);
+        paymentRepository.save(cash);
+        log.info("Team cash payment voided: id={} gameTeamId={}", cash.getId(), gameTeam.getId());
+        return cash;
     }
 
     /** Every payment one team made on one game. */

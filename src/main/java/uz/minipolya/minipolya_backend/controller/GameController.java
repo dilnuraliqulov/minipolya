@@ -88,7 +88,27 @@ public class GameController {
         String side = request == null ? null : request.getSide();
         UUID teamId = request == null ? null : request.getTeamId();
         UUID cardId = request == null ? null : request.getCardId();
-        return ApiResponse.ok(gameService.joinGame(id, userId, side, teamId, cardId), "Joined game");
+        var option = request == null ? null : request.getPaymentOption();
+        return ApiResponse.ok(gameService.joinGame(id, userId, side, teamId, cardId, option), "Joined game");
+    }
+
+    /**
+     * T7: what a team creating a team game at this hour may pay — public like the rest of
+     * {@code GET /api/stadiums/**}. 400 for an hour that cannot be booked, 404 unknown stadium.
+     */
+    @GetMapping("/api/stadiums/{id}/team-game-quote")
+    public ApiResponse<uz.minipolya.minipolya_backend.dto.response.TeamGameQuoteResponse> teamGameQuote(
+            @PathVariable UUID id,
+            @RequestParam @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME) java.time.OffsetDateTime startsAt) {
+        return ApiResponse.ok(gameService.teamGameQuote(id, startsAt));
+    }
+
+    /** T7: the free side's options — minimum (when offered) and full, player amounts. */
+    @GetMapping("/api/games/{id}/join-quote")
+    public ApiResponse<uz.minipolya.minipolya_backend.dto.response.TeamGameQuoteResponse> joinQuote(
+            @PathVariable UUID id) {
+        return ApiResponse.ok(gameService.joinQuote(id));
     }
 
     /**
@@ -120,6 +140,24 @@ public class GameController {
                                                 @Valid @RequestBody GameCashRequest request) {
         gameService.recordTeamCashRemainder(id, userId, request.getSide());
         return ApiResponse.ok(gameService.getGameDetail(id, userId), "Cash recorded");
+    }
+
+    /** T10: the stadium owner marks one team's remainder as not paid ("Toʻlanmadi"). */
+    @PostMapping("/api/games/{id}/not-paid")
+    public ApiResponse<GameDetailResponse> notPaid(@AuthenticationPrincipal UUID userId,
+                                                   @PathVariable UUID id,
+                                                   @Valid @RequestBody GameCashRequest request) {
+        gameService.markTeamNotPaid(id, userId, request.getSide());
+        return ApiResponse.ok(gameService.getGameDetail(id, userId), "Marked as not paid");
+    }
+
+    /** T10: the stadium owner undoes their mark on one team's remainder, until the end of its Tashkent day. */
+    @DeleteMapping("/api/games/{id}/remainder-mark")
+    public ApiResponse<GameDetailResponse> undoRemainderMark(@AuthenticationPrincipal UUID userId,
+                                                             @PathVariable UUID id,
+                                                             @RequestParam String side) {
+        gameService.undoTeamRemainderMark(id, userId, side);
+        return ApiResponse.ok(gameService.getGameDetail(id, userId), "Mark undone");
     }
 
     @PostMapping("/api/games/{id}/leave")

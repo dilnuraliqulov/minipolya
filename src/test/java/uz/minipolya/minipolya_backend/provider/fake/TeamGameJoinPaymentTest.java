@@ -227,22 +227,54 @@ class TeamGameJoinPaymentTest extends FakeProviderFlowSupport {
         assertThat(joinerPayment(s.gameId()).getAmount()).isEqualTo(s.hold().getAmount());
         var booking = bookings.findById(game.getBookingId()).orElseThrow();
         assertThat(booking.getStatus()).isEqualTo("confirmed");
-        assertThat(booking.getPaidAmount()).isEqualTo(stadium.getMinBookingAmount());
+        // T6: both on the minimum (55 000 so'm each); the booking counts in player terms: what
+        // both pay altogether (2 × 130 000) and what they paid of it.
+        assertThat(booking.getPricingModel()).isEqualTo(uz.minipolya.minipolya_backend.entity.Booking.PricingModel.PLAYER_PRICE);
+        assertThat(booking.getCardPrice()).isEqualTo(26_000_000L);
+        assertThat(booking.getPaidAmount()).isEqualTo(11_000_000L);
+        assertThat(booking.getRemainingAmount()).isEqualTo(15_000_000L);
         assertThat(booking.getPaymentStatus()).isEqualTo(uz.minipolya.minipolya_backend.entity.Booking.PaymentStatus.PARTIALLY_PAID);
         assertThat(participants.findByGameIdAndUserId(s.gameId(), s.leaderB().getId())).isPresent();
     }
 
     @Test
-    void withoutAStadiumMinimumTheBookingIsPaidInFullOnConfirmation() throws Exception {
-        stadium.setMinBookingAmount(null);
-        stadiums.saveAndFlush(stadium);
-        Setup s = waitingGame("8600123412341114", 16);
+    void bothTeamsPayingInFullPayTheBookingInFullOnConfirmation() throws Exception {
+        User leaderA = data.user("Full A");
+        User leaderB = data.user("Full B");
+        UUID cardA = addCard(leaderA, "8600123412341114");
+        UUID cardB = addCard(leaderB, "9860123412345678");
+        String body = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/games")
+                        .header("Authorization", data.bearer(leaderA))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"stadiumId\":\"" + stadium.getId() + "\",\"type\":\"team_vs_team\",\"maxPlayers\":10,"
+                                + "\"startsAt\":\"" + slot(3, 16) + "\",\"teamAId\":\"" + team(leaderA, "Full Team A")
+                                + "\",\"cardId\":\"" + cardA + "\",\"paymentOption\":\"FULL\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.teams[0].paymentOption").value("full"))
+                .andExpect(jsonPath("$.data.teams[0].price").value(13_000_000))
+                .andExpect(jsonPath("$.data.teams[0].paidAmount").value(13_000_000))
+                .andExpect(jsonPath("$.data.teams[0].remainingAmount").value(0))
+                .andReturn().getResponse().getContentAsString();
+        UUID gameId = UUID.fromString(com.jayway.jsonpath.JsonPath.read(body, "$.data.id"));
+        assertThat(payments.findByGameId(gameId).getFirst().getAmount()).isEqualTo(13_000_000L);
 
-        join(s.leaderB(), s.gameId(), s.teamB(), s.cardB()).andExpect(status().isOk());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/games/" + gameId + "/join")
+                        .header("Authorization", data.bearer(leaderB))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"gameId\":\"" + gameId + "\",\"teamId\":\"" + team(leaderB, "Full Team B")
+                                + "\",\"cardId\":\"" + cardB + "\",\"paymentOption\":\"FULL\"}"))
+                .andExpect(status().isOk());
 
-        Game game = games.findById(s.gameId()).orElseThrow();
-        assertThat(bookings.findById(game.getBookingId()).orElseThrow().getPaymentStatus())
-                .isEqualTo(uz.minipolya.minipolya_backend.entity.Booking.PaymentStatus.PAID);
+        Game game = games.findById(gameId).orElseThrow();
+        var booking = bookings.findById(game.getBookingId()).orElseThrow();
+        assertThat(booking.getPaymentStatus()).isEqualTo(uz.minipolya.minipolya_backend.entity.Booking.PaymentStatus.PAID);
+        assertThat(booking.getPaidAmount()).isEqualTo(26_000_000L);
+        // Each card charged 130 000 so'm; the platform nets exactly its fee of each.
+        for (Payment p : payments.findByGameId(gameId)) {
+            assertThat(p.getAmount()).isEqualTo(13_000_000L);
+            assertThat(uz.minipolya.minipolya_backend.util.PriceCalculator.netAfterFee(p.getPlatformAmount(), 150))
+                    .isEqualTo(2_500_000L);
+        }
     }
 
     @Test

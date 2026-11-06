@@ -46,9 +46,15 @@ public class GameChallengeResponse {
     /** What both teams pay for this game altogether: each side's joining price and remainder. */
     private Long totalPrice;
 
-    /** What the joining team pays in the app on joining. */
+    /**
+     * What the joining team pays in the app on joining at the least: the minimum option's
+     * amount (T8), or the full one when the stadium offers no minimum for this game.
+     */
     private Long amountToPayNow;
 
-    /** What the joining team would still owe afterwards — the same in the app or in cash. */
+    /** What the joining team would still owe after {@code amountToPayNow} — the same in the app or in cash. */
     private Long remainderAmount;
+
+    /** T8: what the joining team pays when it pays in full (nothing left afterwards). */
+    private Long fullAmount;
 }

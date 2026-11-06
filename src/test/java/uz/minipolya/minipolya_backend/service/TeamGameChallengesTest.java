@@ -107,6 +107,7 @@ class TeamGameChallengesTest {
         when(teamRepository.findByLeaderId(VIEWER_ID)).thenReturn(List.of());
         when(gameTeamRepository.findByGameIdAndSideAndStatus(game.getId(), Side.A, GameTeam.Status.ACTIVE))
                 .thenReturn(Optional.of(sideA));
+        when(gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)).thenReturn(List.of(sideA));
         when(gameRepository.findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(game)));
     }
@@ -127,7 +128,9 @@ class TeamGameChallengesTest {
         assertThat(card.getStartsAt()).isEqualTo(game.getStartsAt());
         assertThat(card.getDurationHours()).isEqualTo(1);
         // What both teams pay altogether, as players see it.
-        assertThat(card.getTotalPrice()).isEqualTo(2 * (TestPrices.card(FEE + ADVANCE) + TestPrices.card(REMAINDER)));
+        // The waiting team (a row from before changeset 052) keeps its stored terms; the free
+        // side is quoted in full: P/2 + F = 125 000 -> 130 000 so'm.
+        assertThat(card.getTotalPrice()).isEqualTo(TestPrices.card(FEE + ADVANCE) + TestPrices.card(REMAINDER) + 13_000_000L);
     }
 
     @Test
@@ -157,9 +160,10 @@ class TeamGameChallengesTest {
     void aChallengeShowsWhatTheJoiningTeamPaysNow() {
         GameChallengeResponse card = challenges(null, null, null).getContent().getFirst();
 
-        // 25 000 fee + 25 000 advance, as one player price; 75 000 to come later, likewise.
-        assertThat(card.getAmountToPayNow()).isEqualTo(TestPrices.card(FEE + ADVANCE));
-        assertThat(card.getRemainderAmount()).isEqualTo(TestPrices.card(REMAINDER));
+        // T8: the minimum (M = 50 000 -> 55 000 so'm) now; the rest of the full 130 000 later.
+        assertThat(card.getAmountToPayNow()).isEqualTo(5_500_000L);
+        assertThat(card.getRemainderAmount()).isEqualTo(7_500_000L);
+        assertThat(card.getFullAmount()).isEqualTo(13_000_000L);
     }
 
     /** Every argument findChallenges was called with, in order. */

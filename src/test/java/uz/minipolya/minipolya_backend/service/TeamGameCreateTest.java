@@ -216,13 +216,31 @@ class TeamGameCreateTest {
     }
 
     @Test
-    void withoutAStadiumMinimumTheAdvanceIsHalfThePitchPrice() {
+    void withoutAStadiumMinimumThePlatformDefaultIsTheMinimum() {
+        // T1/T4: no minimum of its own → the default 50 000 so'm; absent option → minimum.
         stadium.setMinBookingAmount(null);
 
         service.createGame(request(CARD_ID), LEADER_A_ID);
 
         GameTeam sideA = savedGameTeam();
-        assertThat(sideA.getAdvanceAmount()).isEqualTo(10_000_000L);
+        assertThat(sideA.getPaymentOption()).isEqualTo(GameTeam.PaymentOption.MINIMUM);
+        assertThat(sideA.getAdvanceAmount()).isEqualTo(2_500_000L);     // M − F
+        assertThat(sideA.getJoinPrice()).isEqualTo(5_500_000L);         // 55 000 so'm held
+        assertThat(sideA.getRemainderPrice()).isEqualTo(7_500_000L);    // 130 000 − 55 000
+    }
+
+    @Test
+    void aFullPaymentHoldsTheWholeHalfAndLeavesNothingToPay() {
+        CreateGameRequest full = request(CARD_ID);
+        full.setPaymentOption(uz.minipolya.minipolya_backend.dto.request.PaymentOption.FULL);
+
+        service.createGame(full, LEADER_A_ID);
+
+        GameTeam sideA = savedGameTeam();
+        assertThat(sideA.getPaymentOption()).isEqualTo(GameTeam.PaymentOption.FULL);
+        assertThat(sideA.getAdvanceAmount()).isEqualTo(10_000_000L);    // P/2
         assertThat(sideA.getRemainderAmount()).isZero();
+        assertThat(sideA.getJoinPrice()).isEqualTo(13_000_000L);        // 130 000 so'm held
+        assertThat(sideA.getRemainderPrice()).isZero();
     }
 }

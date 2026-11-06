@@ -41,6 +41,24 @@ public class GameTeamResponse {
     /** {@code unpaid} or {@code paid}. */
     private String remainderStatus;
 
+    /** T9: {@code minimum} or {@code full}, what the team chose on joining; absent on older games. */
+    private String paymentOption;
+
+    /** T9: player money this team has put in — held on its card or arrived (card or cash). */
+    private Long paidAmount;
+
+    /** T9: what this team still owes now: its {@code remainderAmount} while unpaid, else 0. */
+    private Long remainingAmount;
+
+    /** T9/T10: the owner's mark on the remainder, {@code cash_received} / {@code not_paid}; absent when none. */
+    private String remainderMark;
+
+    /** When the mark was set (UTC). */
+    private OffsetDateTime remainderMarkedAt;
+
+    /** Owner view only: until when the owner may undo the mark (the end of its Tashkent day). */
+    private OffsetDateTime remainderMarkUndoableUntil;
+
     /** Everything this team has actually paid through the app so far. */
     private Long paidInApp;
 
@@ -53,6 +71,8 @@ public class GameTeamResponse {
 
     /** Admin view only: the platform's fixed fee in this team's payment (what it nets). */
     private Long platformFee;
+    /** Admin view only (T9): the owner's net part of this team's joining payment (M − fee, or half the price). */
+    private Long ownerPart;
     /** Admin view only: the owner's advance in this team's payment, in the owner's terms. */
     private Long ownerAdvance;
     /** Admin view only: this team's remainder in the owner's terms. */

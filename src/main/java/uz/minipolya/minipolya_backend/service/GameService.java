@@ -20,6 +20,7 @@ import uz.minipolya.minipolya_backend.dto.response.GameResponse;
 import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
+import uz.minipolya.minipolya_backend.entity.GameTeam;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.SavedCard;
@@ -153,7 +154,8 @@ public class GameService {
         // A team game is paid for as it is created: the creating team's fee and
         // advance go on hold. A declined card throws, rolling the game back.
         if (TYPE_TEAM_VS_TEAM.equals(type)) {
-            teamGameService.createWaitingGame(saved, teamA, creator, request.getCardId());
+            teamGameService.createWaitingGame(saved, teamA, creator, request.getCardId(),
+                    teamOption(request.getPaymentOption()));
         }
 
         auditService.record(AuditEntry.player(creatorUserId, AuditAction.GAME_CREATED)
@@ -176,6 +178,12 @@ public class GameService {
      * would undo all together; a casual join is one transaction of its own.
      */
     public GameParticipantResponse joinGame(UUID gameId, UUID userId, String side, UUID teamId, UUID cardId) {
+        return joinGame(gameId, userId, side, teamId, cardId, null);
+    }
+
+    /** As above, with a team's payment option (T6; null = minimum). */
+    public GameParticipantResponse joinGame(UUID gameId, UUID userId, String side, UUID teamId, UUID cardId,
+                                            uz.minipolya.minipolya_backend.dto.request.PaymentOption option) {
         Game game = requireGame(gameId);
         if (!STATUS_OPEN.equals(game.getStatus())) {
             throw new BadRequestException("Game is not open for joining");
@@ -184,7 +192,7 @@ public class GameService {
             throw new BadRequestException("You have already joined this game");
         }
         if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
-            return joinTeamGame(game, userId, side, teamId, cardId);
+            return joinTeamGame(game, userId, side, teamId, cardId, teamOption(option));
         }
         return inTransaction(() -> joinCasualGame(gameId, userId));
     }
@@ -194,7 +202,15 @@ public class GameService {
      * team game, always on the free side, and always pays. Nobody joins the other side as a
      * plain, non-paying member.
      */
-    private GameParticipantResponse joinTeamGame(Game game, UUID userId, String side, UUID teamId, UUID cardId) {
+    /** The request's option as a team stores it; absent means minimum (T6). */
+    static GameTeam.PaymentOption teamOption(uz.minipolya.minipolya_backend.dto.request.PaymentOption option) {
+        return option == uz.minipolya.minipolya_backend.dto.request.PaymentOption.FULL
+                ? GameTeam.PaymentOption.FULL
+                : GameTeam.PaymentOption.MINIMUM;
+    }
+
+    private GameParticipantResponse joinTeamGame(Game game, UUID userId, String side, UUID teamId, UUID cardId,
+                                                 GameTeam.PaymentOption option) {
         Team joiningTeam = teamId == null ? null : teamRepository.findById(teamId)
                 .orElseThrow(() -> new ResourceNotFoundException("Team not found"));
         if (joiningTeam == null || !joiningTeam.getLeader().getId().equals(userId)) {
@@ -213,7 +229,7 @@ public class GameService {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         // Books the slot, charges the team, captures the waiting team's hold and confirms
         // the game — the leader's participant row, notifications and audit included.
-        teamGameService.join(game, joiningTeam, leader, cardId);
+        teamGameService.join(game, joiningTeam, leader, cardId, option);
         // The game has just taken the slot, so any other team still waiting on it must be
         // cleared and refunded — the same rule an ordinary booking follows. This game is
         // 'confirmed' by now, so it cannot cancel itself.
@@ -295,6 +311,24 @@ public class GameService {
         teamGameService.recordCashRemainder(gameId, ownerUserId, parseSide(side));
     }
 
+    /** T10: the stadium owner marks one team's remainder as not paid. */
+    @Transactional
+    public void markTeamNotPaid(UUID gameId, UUID ownerUserId, String side) {
+        teamGameService.markNotPaid(gameId, ownerUserId, parseSide(side));
+    }
+
+    /** T10: the stadium owner undoes their mark on one team's remainder (same Tashkent day). */
+    @Transactional
+    public void undoTeamRemainderMark(UUID gameId, UUID ownerUserId, String side) {
+        teamGameService.undoRemainderMarkByOwner(gameId, ownerUserId, parseSide(side));
+    }
+
+    /** T10: an admin undoes the mark on one team's remainder, at any time. */
+    @Transactional
+    public void undoTeamRemainderMarkByAdmin(UUID gameId, UUID adminUserId, String side) {
+        teamGameService.undoRemainderMarkByAdmin(gameId, adminUserId, parseSide(side));
+    }
+
     /**
      * Casual games only — the hosted checkout. A team game is paid for when it
      * is created and when an opponent joins, from a saved card.
@@ -352,7 +386,38 @@ public class GameService {
 
     @Transactional(readOnly = true)
     public GameDetailResponse getGameDetail(UUID gameId, UUID userId) {
-        return toDetail(requireGame(gameId));
+        return toDetail(requireGame(gameId), userId);
+    }
+
+    /**
+     * T7: {@code GET /api/stadiums/{id}/team-game-quote?startsAt=} — what the creating team may
+     * pay for a team game at this hour (side A). The hour must be bookable as a game would be:
+     * on the hour, inside opening hours, no closure, free, in the future — else 400; an unknown
+     * or unavailable stadium 404.
+     */
+    @Transactional(readOnly = true)
+    public uz.minipolya.minipolya_backend.dto.response.TeamGameQuoteResponse teamGameQuote(UUID stadiumId,
+                                                                                         OffsetDateTime startsAt) {
+        Stadium stadium = stadiumRepository.findByIdAndStatus(stadiumId, STATUS_APPROVED)
+                .filter(Stadium::isActive)
+                .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
+        if (startsAt == null) {
+            throw new BadRequestException("startsAt is required");
+        }
+        if (!startsAt.isAfter(OffsetDateTime.now(java.time.ZoneOffset.UTC))) {
+            throw new BadRequestException("startsAt must be in the future");
+        }
+        bookingWindowValidator.validate(stadium, startsAt);
+        if (bookingRepository.existsActiveOverlap(stadium.getId(), startsAt, startsAt.plusHours(Booking.HOURS))) {
+            throw new BadRequestException("That time slot is already booked");
+        }
+        long price = bookingPriceCalculator.hourPrice(stadium, startsAt);
+        return teamGameService.quoteResponse(price, stadium, GameParticipant.Side.A, startsAt);
+    }
+
+    /** T7: {@code GET /api/games/{id}/join-quote} — see {@link TeamGameService#joinQuote}. */
+    public uz.minipolya.minipolya_backend.dto.response.TeamGameQuoteResponse joinQuote(UUID gameId) {
+        return teamGameService.joinQuote(gameId);
     }
 
     @Transactional(readOnly = true)
@@ -594,13 +659,18 @@ public class GameService {
     }
 
     private GameDetailResponse toDetail(Game game) {
+        return toDetail(game, null);
+    }
+
+    /** The detail as one viewer sees it (the stadium's owner gets the mark's undo deadline, T9). */
+    private GameDetailResponse toDetail(Game game, UUID viewerId) {
         GameDetailResponse dto = gameMapper.toDetailResponse(game);
         List<GameParticipant> participants = participantRepository.findByGameId(game.getId());
         dto.setParticipants(participants.stream().map(participantMapper::toResponse).toList());
         dto.setCurrentPlayers(participants.size());
         dto.setInviteLink(inviteLink(game.getId()));
         if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
-            dto.setTeams(teamGameService.teamsOf(game));
+            dto.setTeams(viewerId == null ? teamGameService.teamsOf(game) : teamGameService.teamsOf(game, viewerId));
             dto.setJoinPending(teamGameService.joinPending(game.getId()));
         } else if (game.getTotalPrice() != null) {
             dto.setPrice(cardPricing().gameShareSplit(game).playerAmount());
