@@ -4210,6 +4210,65 @@
           }
         },
         {
+          "name": "400 booking terms minimum not above the team fee (admin, T2)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('the message names the rule', function () {",
+                  "    pm.expect(pm.response.json().message).to.include('minBookingAmount must be more than the team game platform fee');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/booking-terms",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{stadiumId}}",
+                "booking-terms"
+              ]
+            },
+            "description": "null means the platform default (default_min_booking_amount).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"minBookingAmount\": 2500000,\n  \"cancellationHours\": 24\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
           "name": "403 booking terms as the owner",
           "event": [
             {
@@ -12566,7 +12625,7 @@
           }
         },
         {
-          "name": "200 create a team_vs_team game (holds fee + advance)",
+          "name": "200 create a team_vs_team game (holds the minimum)",
           "event": [
             {
               "listen": "test",
@@ -12602,6 +12661,13 @@
                   "    pm.expect(teams[0].remainderAmount, 'remainderAmount').to.be.a('number');",
                   "    pm.expect(teams[0].remainderStatus).to.eql('unpaid');",
                   "    pm.expect(teams[0]).to.not.have.any.keys('cardFee', 'feeAmount', 'advanceAmount', 'platformFee', 'ownerAdvance', 'remainderByCard', 'remainderInCash');",
+                  "});",
+                  "pm.test('team A chose the minimum and it is held', function () {",
+                  "    var t = pm.response.json().data.teams[0];",
+                  "    pm.expect(t.paymentOption).to.eql('minimum');",
+                  "    pm.expect(t.paidAmount, 'paidAmount').to.eql(t.price);",
+                  "    pm.expect(t.remainingAmount, 'remainingAmount').to.eql(t.remainderAmount);",
+                  "    pm.expect(t).to.not.have.any.keys('ownerPart', 'remainderMarkUndoableUntil');",
                   "});"
                 ]
               }
@@ -12629,16 +12695,160 @@
                 "games"
               ]
             },
-            "description": "Team A's fee + advance go on HOLD. No slot is booked: the game is WAITING and the pitch is still free for everyone.",
+            "description": "Team A's chosen amount goes on HOLD (T6): paymentOption MINIMUM (the default when absent) holds playerAmount(M); FULL holds playerAmount(P/2 + fee). No slot is booked: the game is WAITING and the pitch is still free for everyone.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"type\": \"team_vs_team\",\n  \"title\": \"Alpha vs Beta\",\n  \"maxPlayers\": 10,\n  \"startsAt\": \"{{tvtStartsAt}}\",\n  \"teamAId\": \"{{teamAId}}\",\n  \"cardId\": \"{{tvtCardAId}}\"\n}",
+              "raw": "{\n  \"stadiumId\": \"{{stadiumId}}\",\n  \"type\": \"team_vs_team\",\n  \"title\": \"Alpha vs Beta\",\n  \"maxPlayers\": 10,\n  \"startsAt\": \"{{tvtStartsAt}}\",\n  \"teamAId\": \"{{teamAId}}\",\n  \"cardId\": \"{{tvtCardAId}}\",\n  \"paymentOption\": \"MINIMUM\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             }
+          }
+        },
+        {
+          "name": "200 team game quote for creating (T7)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('minimum and full options, full last with nothing left', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    var full = d.options[d.options.length - 1];",
+                  "    pm.expect(full.option).to.eql('full');",
+                  "    pm.expect(full.remainderAmount).to.eql(0);",
+                  "    if (d.options.length === 2) {",
+                  "        pm.expect(d.options[0].option).to.eql('minimum');",
+                  "        pm.expect(d.options[0].amount + d.options[0].remainderAmount).to.eql(full.amount);",
+                  "    }",
+                  "    pm.expect(d.cancellationDeadline).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/stadiums/{{stadiumId}}/team-game-quote?startsAt={{tvtStartsAt}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "stadiums",
+                "{{stadiumId}}",
+                "team-game-quote"
+              ],
+              "query": [
+                {
+                  "key": "startsAt",
+                  "value": "{{tvtStartsAt}}"
+                }
+              ]
+            },
+            "description": "Public. Player amounts only. 400 for an hour that cannot be booked (off the hour, past, outside opening hours, closed, taken); 404 unknown stadium."
+          }
+        },
+        {
+          "name": "400 team game quote off the hour (T7)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/stadiums/{{stadiumId}}/team-game-quote?startsAt=2030-01-01T10:30:00+05:00",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "stadiums",
+                "{{stadiumId}}",
+                "team-game-quote"
+              ],
+              "query": [
+                {
+                  "key": "startsAt",
+                  "value": "2030-01-01T10:30:00+05:00"
+                }
+              ]
+            },
+            "description": "A non-bookable hour."
+          }
+        },
+        {
+          "name": "200 join quote for the free side (T7)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('the free side options', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.options).to.be.an('array').that.is.not.empty;",
+                  "    pm.expect(d.options[d.options.length - 1].option).to.eql('full');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{teamLeaderBToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/games/{{tvtGameId}}/join-quote",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "games",
+                "{{tvtGameId}}",
+                "join-quote"
+              ]
+            },
+            "description": "404 unknown game; 400 not a team game, not waiting, or past the 3-hour point."
           }
         },
         {
@@ -12672,6 +12882,12 @@
                   "    pm.expect(mine.remainderAmount).to.be.a('number');",
                   "    pm.expect(mine).to.not.have.any.keys('cardFee', 'feeAmount', 'advanceAmount');",
                   "    pm.expect(mine.waitingTeamName, 'waitingTeamName').to.be.a('string');",
+                  "});",
+                  "pm.test('T8: amountToPayNow is the minimum, fullAmount the full amount', function () {",
+                  "    pm.response.json().data.content.forEach(function (c) {",
+                  "        pm.expect(c.fullAmount, 'fullAmount').to.be.a('number');",
+                  "        pm.expect(c.amountToPayNow + c.remainderAmount).to.eql(c.fullAmount);",
+                  "    });",
                   "});"
                 ]
               }
@@ -13275,7 +13491,7 @@
             "description": "Books the slot, charges team B, captures team A's hold, then confirms both the booking and the game.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"gameId\": \"{{tvtGameId}}\",\n  \"side\": \"b\",\n  \"teamId\": \"{{teamBId}}\",\n  \"cardId\": \"{{tvtCardBId}}\"\n}",
+              "raw": "{\n  \"gameId\": \"{{tvtGameId}}\",\n  \"side\": \"b\",\n  \"teamId\": \"{{teamBId}}\",\n  \"cardId\": \"{{tvtCardBId}}\",\n  \"paymentOption\": \"MINIMUM\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -13818,6 +14034,12 @@
                   "    pm.response.json().data.teams.forEach(function (t) {",
                   "        pm.expect(t.remainderStatus).to.eql('paid');",
                   "    });",
+                  "});",
+                  "pm.test('team B carries the cash_received mark and the owner may undo it today', function () {",
+                  "    var b = pm.response.json().data.teams.filter(function (t) { return t.side === 'b'; })[0];",
+                  "    pm.expect(b.remainderMark).to.eql('cash_received');",
+                  "    pm.expect(b.remainderMarkUndoableUntil).to.be.a('string');",
+                  "    pm.expect(b.remainingAmount).to.eql(0);",
                   "});"
                 ]
               }
@@ -13860,14 +14082,14 @@
           }
         },
         {
-          "name": "400 the owner marks the same team again",
+          "name": "409 the owner marks the same team again",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('status is 409', function () { pm.response.to.have.status(409); });",
                   "pm.test('uses the ApiResponse envelope', function () {",
                   "    var b = pm.response.json();",
                   "    pm.expect(b).to.have.property('success');",
@@ -13907,6 +14129,179 @@
                 "cash"
               ]
             },
+            "description": "Nothing left to pay: 409 \"Already paid\" (T10; was 400).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"side\": \"b\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "200 the owner undoes team B's cash mark (T10)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('Mark undone, the rest owed again', function () {",
+                  "    pm.expect(pm.response.json().message).to.eql('Mark undone');",
+                  "    var b = pm.response.json().data.teams.filter(function (t) { return t.side === 'b'; })[0];",
+                  "    pm.expect(b).to.not.have.property('remainderMark');",
+                  "    pm.expect(b.remainingAmount).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/games/{{tvtGameId}}/remainder-mark?side=b",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "games",
+                "{{tvtGameId}}",
+                "remainder-mark"
+              ],
+              "query": [
+                {
+                  "key": "side",
+                  "value": "b"
+                }
+              ]
+            },
+            "description": "Until the end of the Tashkent day the mark was set; later 409 \"Only an admin can change this mark\". Undoing cash voids that cash row (status cancelled). 409 \"This team has no remainder mark\"; 403 not the owner."
+          }
+        },
+        {
+          "name": "200 the owner marks team B as not paid (T10)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('Marked as not paid', function () {",
+                  "    pm.expect(pm.response.json().message).to.eql('Marked as not paid');",
+                  "    var b = pm.response.json().data.teams.filter(function (t) { return t.side === 'b'; })[0];",
+                  "    pm.expect(b.remainderMark).to.eql('not_paid');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/games/{{tvtGameId}}/not-paid",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "games",
+                "{{tvtGameId}}",
+                "not-paid"
+              ]
+            },
+            "description": "No charge, no penalty; paying in the app clears it, cash replaces it. 409 cancelled / not confirmed game or nothing left; 403 not the owner.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"side\": \"b\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "200 cash replaces not paid (T10)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('cash_received again', function () {",
+                  "    var b = pm.response.json().data.teams.filter(function (t) { return t.side === 'b'; })[0];",
+                  "    pm.expect(b.remainderMark).to.eql('cash_received');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/games/{{tvtGameId}}/cash",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "games",
+                "{{tvtGameId}}",
+                "cash"
+              ]
+            },
             "description": "",
             "body": {
               "mode": "raw",
@@ -13917,6 +14312,56 @@
                 }
               }
             }
+          }
+        },
+        {
+          "name": "409 admin undoes a team mark when there is none (T10)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('no mark', function () { pm.expect(pm.response.json().message).to.eql('This team has no remainder mark'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/games/{{tvtGameId}}/remainder-mark?side=a",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "games",
+                "{{tvtGameId}}",
+                "remainder-mark"
+              ],
+              "query": [
+                {
+                  "key": "side",
+                  "value": "a"
+                }
+              ]
+            },
+            "description": "Team A paid in the app: no mark. An admin may undo a mark at any time (answers the admin game detail, \"Mark undone\")."
           }
         },
         {
@@ -17087,6 +17532,63 @@
               ]
             },
             "description": "Partial update: only the supplied fields change. Each change is written to the audit log with its old and new value."
+          }
+        },
+        {
+          "name": "400 default minimum at the team fee (T2)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('the message names the rule', function () {",
+                  "    pm.expect(pm.response.json().message).to.include('defaultMinBookingAmount must be more than the team game platform fee');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "settings"
+              ]
+            },
+            "description": "The default minimum must stay above the team fee (the fee is 30 000 so'm after the previous request); and the fee below the default minimum.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"defaultMinBookingAmount\": 3000000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {
