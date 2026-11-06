@@ -57,6 +57,28 @@ public class CardPricing {
         return settings.get().getCardFeeBps();
     }
 
+    /** The rounding step of player prices, tiyin. */
+    public long roundingStep() {
+        return settings.get().getPaymentRoundingStep();
+    }
+
+    /** The per-team platform fee on a team game, tiyin. */
+    public long teamGameFee() {
+        return settings.get().getTeamGamePlatformFee();
+    }
+
+    /**
+     * T1: the minimum booking amount in force for a stadium, owner's terms (tiyin): its own
+     * {@code min_booking_amount}, or the platform's {@code default_min_booking_amount} when it
+     * has none — or has one not above the team-game fee, which is ignored rather than rewritten.
+     */
+    public long effectiveMinimum(Long stadiumMinimum) {
+        PlatformSettings s = settings.get();
+        return stadiumMinimum != null && stadiumMinimum > s.getTeamGamePlatformFee()
+                ? stadiumMinimum
+                : s.getDefaultMinBookingAmount();
+    }
+
     /** What players see and pay for this owner price. */
     public long playerAmount(long ownerPrice) {
         PlatformSettings s = settings.get();

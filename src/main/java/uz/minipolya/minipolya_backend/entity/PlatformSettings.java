@@ -50,6 +50,12 @@ public class PlatformSettings {
     /** The largest rounding step an admin may set: 1 000 000 tiyin = 10 000 so'm. */
     public static final long MAX_PAYMENT_ROUNDING_STEP = 1_000_000L;
 
+    /**
+     * Default minimum booking amount (T1, changeset 051): 5 000 000 tiyin = 50 000 so'm, used by
+     * every stadium without a minimum of its own (or with one not above the team-game fee).
+     */
+    public static final long DEFAULT_MIN_BOOKING_AMOUNT = 5_000_000L;
+
     @Id
     @UuidGenerator(style = UuidGenerator.Style.VERSION_7)
     private UUID id;
@@ -76,6 +82,11 @@ public class PlatformSettings {
     @Builder.Default
     @Column(name = "payment_rounding_step", nullable = false)
     private long paymentRoundingStep = DEFAULT_PAYMENT_ROUNDING_STEP;
+
+    /** The minimum booking amount of a stadium that has none of its own, tiyin (owner's terms). */
+    @Builder.Default
+    @Column(name = "default_min_booking_amount", nullable = false)
+    private long defaultMinBookingAmount = DEFAULT_MIN_BOOKING_AMOUNT;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

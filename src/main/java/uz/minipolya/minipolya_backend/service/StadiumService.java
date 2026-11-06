@@ -248,8 +248,9 @@ public class StadiumService {
         if (r != null && r.getPricePerHour() != null) {
             r.setPricePerHour(cardPricing.playerAmount(r.getPricePerHour()));
         }
-        if (r != null && r.getMinBookingAmount() != null) {
-            r.setMinBookingAmount(cardPricing.playerAmount(r.getMinBookingAmount()));
+        if (r != null) {
+            // T1: every stadium has a minimum — its own or the platform default.
+            r.setMinBookingAmount(cardPricing.playerAmount(cardPricing.effectiveMinimum(r.getMinBookingAmount())));
         }
         return r;
     }
@@ -259,8 +260,10 @@ public class StadiumService {
         if (r != null && r.getPricePerHour() != null) {
             r.setPlayerPrice(cardPricing.playerAmount(r.getPricePerHour()));
         }
-        if (r != null && r.getMinBookingAmount() != null) {
-            r.setPlayerMinBookingAmount(cardPricing.playerAmount(r.getMinBookingAmount()));
+        if (r != null) {
+            // minBookingAmount stays as set (null = the platform default); the player figure
+            // is the effective minimum's.
+            r.setPlayerMinBookingAmount(cardPricing.playerAmount(cardPricing.effectiveMinimum(r.getMinBookingAmount())));
         }
         return r;
     }

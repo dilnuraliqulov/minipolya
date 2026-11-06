@@ -93,19 +93,30 @@ class AdminStadiumBookingTermsTest {
     }
 
     @Test
-    void aNullMinimumMeansFullPayment() throws Exception {
-        stadium.setMinBookingAmount(5_000_000L);
+    void aNullMinimumMeansThePlatformDefault() throws Exception {
+        stadium.setMinBookingAmount(7_000_000L);
         stadiumRepository.saveAndFlush(stadium);
 
+        // T2: null = use the platform default (5 000 000 tiyin): the stored value is cleared,
+        // the player figure is the default's (50 000 -> 55 000 so'm).
         terms("{\"minBookingAmount\":null,\"cancellationHours\":24}")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.minBookingAmount").doesNotExist())
-                .andExpect(jsonPath("$.data.playerMinBookingAmount").doesNotExist());
+                .andExpect(jsonPath("$.data.playerMinBookingAmount").value(5_500_000));
         assertThat(stadiumRepository.findById(stadium.getId()).orElseThrow().getMinBookingAmount()).isNull();
         // Absent is the same as null: the body states the whole terms.
         stadium = stadiumRepository.findById(stadium.getId()).orElseThrow();
         terms("{\"cancellationHours\":6}").andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.minBookingAmount").doesNotExist());
+    }
+
+    @Test
+    void aMinimumNotAboveTheTeamFeeIsRefused() throws Exception {
+        expect400("{\"minBookingAmount\":2500000,\"cancellationHours\":24}",
+                "minBookingAmount must be more than the team game platform fee (25 000 so'm)");
+        expect400("{\"minBookingAmount\":100000,\"cancellationHours\":24}",
+                "minBookingAmount must be more than the team game platform fee (25 000 so'm)");
+        terms("{\"minBookingAmount\":2500001,\"cancellationHours\":24}").andExpect(status().isOk());
     }
 
     @Test
@@ -123,7 +134,7 @@ class AdminStadiumBookingTermsTest {
         expect400("{\"minBookingAmount\":5000000}", "cancellationHours is required");
         expect400("{\"cancellationHours\":-1}", "cancellationHours must be between 0 and 168");
         expect400("{\"cancellationHours\":169}", "cancellationHours must be between 0 and 168");
-        terms("{\"minBookingAmount\":50000,\"cancellationHours\":0}").andExpect(status().isOk());
+        terms("{\"minBookingAmount\":2600000,\"cancellationHours\":0}").andExpect(status().isOk());
         terms("{\"minBookingAmount\":20000000,\"cancellationHours\":168}").andExpect(status().isOk());
 
         Stadium stored = stadiumRepository.findById(stadium.getId()).orElseThrow();
@@ -139,7 +150,7 @@ class AdminStadiumBookingTermsTest {
     void anyStatus() throws Exception {
         for (String status : List.of("approved", "rejected", "blocked")) {
             Stadium s = data.stadium(owner, "Terms " + status, status);
-            terms(s.getId(), "{\"minBookingAmount\":100000,\"cancellationHours\":3}", adminToken)
+            terms(s.getId(), "{\"minBookingAmount\":3000000,\"cancellationHours\":3}", adminToken)
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.status").value(status));
         }

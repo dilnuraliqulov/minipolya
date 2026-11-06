@@ -25,5 +25,7 @@ public class PlatformSettingsResponse {
     private int cardFeeBps;
     /** Tiyin. */
     private long paymentRoundingStep;
+    /** Tiyin (owner's terms): the minimum booking amount of every stadium without its own. */
+    private long defaultMinBookingAmount;
     private OffsetDateTime updatedAt;
 }

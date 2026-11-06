@@ -160,19 +160,16 @@ public class BookingService {
     /**
      * What the card is charged now, in player terms: FULL is the player price D (the sum of
      * the slots' player prices); MINIMUM is the deposit
-     * {@code d = min(playerAmount(min_booking_amount), D)} — nothing else. The rest,
+     * {@code d = min(playerAmount(M), D)}, M the stadium's effective minimum (its own or the
+     * platform default) — nothing else. The rest,
      * {@code D - d}, is the same whether paid later in the app or in cash.
      */
     private long amountDueNow(Stadium stadium, long playerPrice, PaymentOption option) {
         if (option == PaymentOption.FULL) {
             return playerPrice;
         }
-        Long minimum = stadium.getMinBookingAmount();
-        if (minimum == null) {
-            throw new BadRequestException(
-                    "This stadium requires full payment; it has no minimum booking amount");
-        }
-        return cardPricing.deposit(minimum, playerPrice);
+        // T1/T3: every stadium has a minimum now — its own, or the platform default.
+        return cardPricing.deposit(cardPricing.effectiveMinimum(stadium.getMinBookingAmount()), playerPrice);
     }
 
     /** A payment of a booking that is on its way or arrived: no other attempt may start. */

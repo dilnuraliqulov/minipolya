@@ -29,4 +29,10 @@ public class UpdatePlatformSettingsRequest {
 
     /** Tiyin, 1..1 000 000 (10 000 = 100 so'm). */
     private Long paymentRoundingStep;
+
+    /**
+     * Tiyin: the minimum booking amount of every stadium without its own (T1). Must be more
+     * than the team-game platform fee.
+     */
+    private Long defaultMinBookingAmount;
 }

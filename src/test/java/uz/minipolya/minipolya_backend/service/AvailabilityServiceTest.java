@@ -357,12 +357,13 @@ class AvailabilityServiceTest {
     }
 
     @Test
-    void noQuoteWithoutAMinimumOrWhenTheDepositCoversTheSlot() {
+    void withoutItsOwnMinimumTheDefaultIsQuotedButNoneWhenTheDepositCoversTheSlot() {
         stadium.setPricePerHour(15_000_000L);
         stubStadium();
-        TimeSlot fullOnly = slotAt(service.getAvailability(STADIUM_ID, date), LocalTime.of(18, 0));
-        assertThat(fullOnly.getDepositAmount()).isNull();
-        assertThat(fullOnly.getRemainderAmount()).isNull();
+        // T3: no minimum of its own → the platform default (50 000 so'm → 55 000).
+        TimeSlot byDefault = slotAt(service.getAvailability(STADIUM_ID, date), LocalTime.of(18, 0));
+        assertThat(byDefault.getDepositAmount()).isEqualTo(5_500_000L);
+        assertThat(byDefault.getRemainderAmount()).isEqualTo(byDefault.getPricePerHour() - 5_500_000L);
 
         // A minimum equal to the price: the deposit is the whole price, nothing to choose.
         stadium.setMinBookingAmount(15_000_000L);

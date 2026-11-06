@@ -139,12 +139,12 @@ public class AvailabilityService {
             long playerPrice = cardPricing.playerAmount(net);
             slot.pricePerHour(playerPrice);
             // E3: the deposit and remainder a MINIMUM booking of this hour would charge, by the
-            // same CardPricing.deposit that POST /api/bookings uses. Absent: full payment only.
-            if (stadium.getMinBookingAmount() != null) {
-                long deposit = cardPricing.deposit(stadium.getMinBookingAmount(), playerPrice);
-                if (deposit < playerPrice) {
-                    slot.depositAmount(deposit).remainderAmount(playerPrice - deposit);
-                }
+            // same CardPricing.deposit that POST /api/bookings uses, from the stadium's effective
+            // minimum (T3: its own or the platform default). Absent only when the deposit would
+            // cover the whole hour: then it is full payment only.
+            long deposit = cardPricing.deposit(cardPricing.effectiveMinimum(stadium.getMinBookingAmount()), playerPrice);
+            if (deposit < playerPrice) {
+                slot.depositAmount(deposit).remainderAmount(playerPrice - deposit);
             }
             if (promo.isPresent()) {
                 slot.originalPrice(cardPricing.playerAmount(base))

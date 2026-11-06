@@ -137,15 +137,15 @@ class BookingPaymentTest {
     }
 
     @Test
-    void minimumIsRejectedWhenTheStadiumHasNoMinimum() {
+    void withoutItsOwnMinimumTheStadiumUsesThePlatformDefault() {
+        // T1/T3: every stadium has a minimum now — the platform default of 50 000 so'm here.
         stadium.setMinBookingAmount(null);
 
-        assertThatThrownBy(() -> service.createBooking(USER_ID, request(PaymentOption.MINIMUM)))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("full payment");
+        service.createBooking(USER_ID, request(PaymentOption.MINIMUM));
 
-        verify(bookingRepository, never()).saveAndFlush(any());
-        verify(paymentService, never()).chargeForBooking(any(), any(), any(CardFeeSplit.class));
+        verify(paymentService).chargeForBooking(any(Booking.class), eq(card),
+                argThat(split -> split != null && split.playerAmount()
+                        == Math.min(TestPrices.card(5_000_000L), TestPrices.card(PRICE))));
     }
 
     @Test

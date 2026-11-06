@@ -114,7 +114,8 @@ public class AdminStadiumService {
 
     /**
      * D3: the deposit and the cancellation window, agreed with the owner by phone. Any status.
-     * {@code minBookingAmount} null is full payment, else at least
+     * {@code minBookingAmount} null is the platform default ({@code default_min_booking_amount}, T2),
+     * else more than the team-game fee, at least
      * {@link Stadium#MIN_BOOKING_AMOUNT_FLOOR} and at most the hour's price; {@code cancellationHours}
      * 0–{@value #MAX_CANCELLATION_HOURS}. Audited {@code STADIUM_BOOKING_TERMS_CHANGED} with old → new,
      * nothing when nothing changed. Answers the admin detail, as {@link #get} does.
@@ -132,6 +133,12 @@ public class AdminStadiumService {
         }
         if (minimum != null && stadium.getPricePerHour() != null && minimum > stadium.getPricePerHour()) {
             throw new BadRequestException("minBookingAmount must not be more than pricePerHour");
+        }
+        long teamFee = cardPricing.teamGameFee();
+        if (minimum != null && minimum <= teamFee) {
+            // T2: a team's minimum payment is the fee plus the owner's part of it.
+            throw new BadRequestException("minBookingAmount must be more than the team game platform fee ("
+                    + uz.minipolya.minipolya_backend.util.Soum.of(teamFee) + ")");
         }
         if (hours == null) {
             throw new BadRequestException("cancellationHours is required");
