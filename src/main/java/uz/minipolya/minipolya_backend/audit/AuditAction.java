@@ -27,6 +27,8 @@ public enum AuditAction {
     REFUND_MARKED_MANUAL,
     OWNER_LEGAL_DETAILS_CHANGED,
     STADIUM_NOTE_ADDED,
+    /** The deposit and cancellation window, agreed with the owner by phone (D3). */
+    STADIUM_BOOKING_TERMS_CHANGED,
     SETTINGS_CHANGED,
 
     // ---- Owner ----
