@@ -54,6 +54,11 @@ public class SecurityConfig {
                         // makes them an owner) and see their own. Exactly these two, no sub-paths.
                         .requestMatchers(HttpMethod.POST, "/api/owner/stadiums").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/owner/stadiums").authenticated()
+                        // D6: and upload, delete and reorder that stadium's photos in the wizard, before
+                        // any owner role. The service still checks ownership (404 / 403).
+                        .requestMatchers(HttpMethod.POST, "/api/owner/stadiums/*/photos").authenticated()
+                        .requestMatchers(HttpMethod.DELETE, "/api/owner/stadiums/*/photos/*").authenticated()
+                        .requestMatchers(HttpMethod.PUT, "/api/owner/stadiums/*/photos/order").authenticated()
                         .requestMatchers("/api/owner/**").hasRole("OWNER")
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated()

@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.support.DatabaseTest;
 import uz.minipolya.minipolya_backend.support.TestData;
+import uz.minipolya.minipolya_backend.support.TestImages;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,9 +41,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @DatabaseTest
 class StadiumPhotoTest {
 
-    private static final byte[] JPEG = {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 0, 16, 'J', 'F', 'I', 'F'};
-    private static final byte[] PNG = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n', 0, 0, 0, 13};
-    private static final byte[] WEBP = {'R', 'I', 'F', 'F', 4, 0, 0, 0, 'W', 'E', 'B', 'P', 'V', 'P', '8', ' '};
+    // Real images: every upload is decoded and re-encoded (D5).
+    private static final byte[] JPEG = TestImages.jpeg(64, 48);
+    private static final byte[] PNG = TestImages.pngWithAlpha(64, 48);
+    private static final byte[] WEBP = TestImages.resource("lossy-1x1.webp");
 
     @Autowired
     private MockMvc mvc;
@@ -96,21 +98,27 @@ class StadiumPhotoTest {
         String jpegUrl = JsonPath.read(body, "$.data.url");
         assertThat(jpegUrl).doesNotContain("evil");
 
-        // The content type the client claims does not matter: the bytes say PNG.
+        // The content type the client claims does not matter: the bytes say PNG. Every photo
+        // is re-encoded and stored as a JPEG (D5).
         upload(stadium, PNG, "image/jpeg", ownerToken)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.position").value(1))
-                .andExpect(jsonPath("$.data.url").value(containsString(".png")));
+                .andExpect(jsonPath("$.data.url").value(matchesPattern(".*/[0-9a-f-]{36}\\.jpg")));
         upload(stadium, WEBP, "application/octet-stream", ownerToken)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.position").value(2))
-                .andExpect(jsonPath("$.data.url").value(containsString(".webp")));
+                .andExpect(jsonPath("$.data.url").value(matchesPattern(".*/[0-9a-f-]{36}\\.jpg")));
 
         mvc.perform(get(jpegUrl))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Type", "image/jpeg"))
                 .andExpect(header().string("Cache-Control", containsString("max-age=31536000")))
-                .andExpect(content().bytes(JPEG));
+                .andExpect(result -> {
+                    byte[] served = result.getResponse().getContentAsByteArray();
+                    assertThat(served).isEqualTo(Files.readAllBytes(fileOf(jpegUrl)));
+                    assertThat(uz.minipolya.minipolya_backend.util.ImageType.detect(served))
+                            .contains(uz.minipolya.minipolya_backend.util.ImageType.JPEG);
+                });
 
         // The first photo is the cover.
         mvc.perform(get("/api/owner/stadiums").header("Authorization", ownerToken))
@@ -131,15 +139,45 @@ class StadiumPhotoTest {
         upload(stadium, new byte[0], "image/png", ownerToken)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Unsupported image type"));
+        // The right magic bytes, then garbage: the decoder decides.
+        upload(stadium, Arrays.copyOf(JPEG, 40), "image/jpeg", ownerToken)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Unsupported image type"));
+        upload(stadium, Arrays.copyOf(TestImages.png(50, 50), 60), "image/png", ownerToken)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Unsupported image type"));
+        assertThat(stadiumRepository.findById(stadium.getId()).orElseThrow().getPhotos()).isEmpty();
     }
 
     @Test
-    void overTenMegabytesIs413() throws Exception {
-        byte[] big = Arrays.copyOf(JPEG, 10 * 1024 * 1024 + 1);
+    void overFortyMegapixelsIsRefusedFromTheHeader() throws Exception {
+        upload(stadium, TestImages.pngHeaderOnly(8000, 5001), "image/png", ownerToken)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Image is too large"));
+    }
+
+    @Test
+    void exifNeverReachesTheDiskAndBigPhotosAreScaledDown() throws Exception {
+        String body = upload(stadium, TestImages.jpegWithExif(64, 48), "image/jpeg", ownerToken)
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        byte[] stored = Files.readAllBytes(fileOf(JsonPath.read(body, "$.data.url")));
+        assertThat(TestImages.contains(stored, "Exif")).isFalse();
+        assertThat(TestImages.contains(stored, "SECRET")).isFalse();
+
+        body = upload(stadium, TestImages.jpeg(4000, 3000), "image/jpeg", ownerToken)
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        var image = TestImages.read(Files.readAllBytes(fileOf(JsonPath.read(body, "$.data.url"))));
+        assertThat(image.getWidth()).isEqualTo(2000);
+        assertThat(image.getHeight()).isEqualTo(1500);
+    }
+
+    @Test
+    void overFiveMegabytesIs413() throws Exception {
+        byte[] big = Arrays.copyOf(JPEG, 5 * 1024 * 1024 + 1);
         upload(stadium, big, "image/jpeg", ownerToken)
                 .andExpect(status().isPayloadTooLarge())
                 .andExpect(jsonPath("$.message").value("File too large"));
-        byte[] exactly = Arrays.copyOf(JPEG, 10 * 1024 * 1024);
+        byte[] exactly = Arrays.copyOf(JPEG, 5 * 1024 * 1024); // a JPEG padded after its end
         upload(stadium, exactly, "image/jpeg", ownerToken).andExpect(status().isOk());
     }
 
@@ -212,6 +250,9 @@ class StadiumPhotoTest {
         String b = uploadedId(PNG);
         String c = uploadedId(WEBP);
 
+        String cUrl = stadiumRepository.findById(stadium.getId()).orElseThrow().getPhotos().stream()
+                .filter(p -> p.getId().toString().equals(c)).findFirst().orElseThrow().getUrl();
+
         reorder("[\"" + c + "\",\"" + a + "\",\"" + b + "\"]")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("Photos reordered"))
@@ -223,7 +264,7 @@ class StadiumPhotoTest {
                 .andExpect(jsonPath("$.data[2].position").value(2));
 
         mvc.perform(get("/api/owner/stadiums").header("Authorization", ownerToken))
-                .andExpect(jsonPath("$.data[0].coverPhotoUrl").value(containsString(".webp")));
+                .andExpect(jsonPath("$.data[0].coverPhotoUrl").value(cUrl));
 
         String message = "photoIds must list every photo of the stadium exactly once";
         reorder("[\"" + c + "\",\"" + a + "\"]").andExpect(status().isBadRequest())
@@ -289,14 +330,48 @@ class StadiumPhotoTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.message").value("Stadium not found"));
 
+        // A player (no owner role) passes security (D6) but still does not own this stadium.
         upload(stadium, JPEG, "image/jpeg", data.bearer(data.user("Plain Player")))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("You do not own this stadium"));
         upload(stadium, JPEG, "image/jpeg", null).andExpect(status().isUnauthorized());
         mvc.perform(delete("/api/owner/stadiums/" + stadium.getId() + "/photos/" + photo))
                 .andExpect(status().isUnauthorized());
         mvc.perform(put("/api/owner/stadiums/" + stadium.getId() + "/photos/order")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"photoIds\":[]}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    /** D6: a player adding their first stadium uploads its photos in the wizard, before any owner role. */
+    @Test
+    void aPlayerManagesThePhotosOfTheirOwnPendingStadium() throws Exception {
+        User player = data.user("First Stadium Player");
+        String playerToken = data.bearer(player);
+        Stadium own = data.stadium(player, "First Pitch", "pending");
+
+        String body = upload(own, JPEG, "image/jpeg", playerToken)
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String first = JsonPath.read(body, "$.data.id");
+        body = upload(own, PNG, "image/png", playerToken).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String second = JsonPath.read(body, "$.data.id");
+
+        mvc.perform(put("/api/owner/stadiums/" + own.getId() + "/photos/order")
+                        .header("Authorization", playerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"photoIds\":[\"" + second + "\",\"" + first + "\"]}"))
+                .andExpect(status().isOk());
+        mvc.perform(delete("/api/owner/stadiums/" + own.getId() + "/photos/" + first)
+                        .header("Authorization", playerToken))
+                .andExpect(status().isOk());
+
+        // Someone else's stadium is still 403, and the rest of /api/owner/** still needs the role.
+        upload(stadium, JPEG, "image/jpeg", playerToken)
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("You do not own this stadium"));
+        mvc.perform(get("/api/owner/stadiums/" + own.getId() + "/pricing").header("Authorization", playerToken))
+                .andExpect(status().isForbidden());
     }
 
     @Test

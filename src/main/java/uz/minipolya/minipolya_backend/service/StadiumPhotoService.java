@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.exception.PayloadTooLargeException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.StadiumMapper;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
+import uz.minipolya.minipolya_backend.util.ImageReencoder;
 import uz.minipolya.minipolya_backend.util.ImageType;
 
 import java.io.IOException;
@@ -30,7 +31,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * R36: an owner's stadium photos — upload, delete, reorder — in any stadium status. The
+ * R36: an owner's stadium photos — upload, delete, reorder — in any stadium status. Every
+ * upload is checked by its magic bytes, then re-encoded to a JPEG ({@link ImageReencoder}). The
  * lowest position is the cover ({@code coverPhotoUrl}). Each change is audited as
  * {@code STADIUM_UPDATED} with the photo URLs before and after, like any other stadium edit.
  */
@@ -40,7 +42,7 @@ import java.util.stream.Collectors;
 public class StadiumPhotoService {
 
     public static final int MAX_PHOTOS = 10;
-    public static final long MAX_BYTES = 10L * 1024 * 1024;
+    public static final long MAX_BYTES = 5L * 1024 * 1024;
 
     private final StadiumService stadiumService;
     private final StadiumRepository stadiumRepository;
@@ -58,15 +60,18 @@ public class StadiumPhotoService {
             throw new PayloadTooLargeException("File too large");
         }
         byte[] bytes = readBytes(file);
-        ImageType type = ImageType.detect(bytes)
-                .orElseThrow(() -> new BadRequestException("Unsupported image type"));
+        if (ImageType.detect(bytes).isEmpty()) {
+            throw new BadRequestException("Unsupported image type");
+        }
         if (stadium.getPhotos().size() >= MAX_PHOTOS) {
             throw new BadRequestException("A stadium can have at most " + MAX_PHOTOS + " photos");
         }
+        // D5: decoded and written again as a JPEG, at most 2000 px, without EXIF.
+        byte[] jpeg = ImageReencoder.toJpeg(bytes);
 
         Map<String, Object> before = StadiumService.auditSnapshot(stadium);
         int position = stadium.getPhotos().stream().mapToInt(StadiumPhoto::getPosition).max().orElse(-1) + 1;
-        String url = storage.store(stadiumId, bytes, type);
+        String url = storage.store(stadiumId, jpeg, ImageType.JPEG);
         StadiumPhoto photo = StadiumPhoto.builder().url(url).position(position).build();
         stadium.addPhoto(photo);
         stadiumRepository.flush(); // the stadium is managed: flushing cascades the photo rows
