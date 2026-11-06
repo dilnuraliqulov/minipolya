@@ -8696,14 +8696,14 @@
           }
         },
         {
-          "name": "400 cash on a booking with nothing to complete (R37)",
+          "name": "409 cash on a booking with nothing to complete (R37, E7)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('status is 409', function () { pm.response.to.have.status(409); });",
                   "pm.test('uses the ApiResponse envelope', function () {",
                   "    var b = pm.response.json();",
                   "    pm.expect(b).to.have.property('success');",
@@ -8739,7 +8739,242 @@
                 "cash"
               ]
             },
-            "description": "R37: POST /api/owner/bookings/{id}/cash records remainingAmount in cash. The manual booking here was paid in cash when it was added, so: 400 \"Already paid\"."
+            "description": "R37/E5: POST /api/owner/bookings/{id}/cash records remainingAmount in cash and sets remainderMark = cash_received. The manual booking here was paid in cash when it was added, so: 409 \"Already paid\" (E7: these answers were 400 before)."
+          }
+        },
+        {
+          "name": "409 not-paid on a booking with nothing left (E5, E7)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql(\"Already paid\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/bookings/{{manualBookingId}}/not-paid",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "bookings",
+                "{{manualBookingId}}",
+                "not-paid"
+              ]
+            },
+            "description": "E5: POST /api/owner/bookings/{id}/not-paid marks the remainder as not paid by the player (no charge, no penalty; the player can still pay it in the app, which clears the mark; cash later replaces it). Answers the owner BookingResponse with remainderMark = not_paid, \"Marked as not paid\". Same rules as /cash: not the owner 403; cancelled/expired/pending/game booking 409 \"This booking has no part payment to complete\"; nothing left 409 \"Already paid\" (as here: the manual booking was paid in cash when added)."
+          }
+        },
+        {
+          "name": "403 not-paid on a stadium I do not own (E5)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql(\"You do not own this stadium\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{owner2Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/bookings/{{manualBookingId}}/not-paid",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "bookings",
+                "{{manualBookingId}}",
+                "not-paid"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "409 undo a remainder mark when there is none (E6)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql(\"This booking has no remainder mark\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/bookings/{{manualBookingId}}/remainder-mark",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "bookings",
+                "{{manualBookingId}}",
+                "remainder-mark"
+              ]
+            },
+            "description": "E6: DELETE /api/owner/bookings/{id}/remainder-mark undoes the owner's mark until the end of the Tashkent day it was set (remainderMarkUndoableUntil); later 409 \"Only an admin can change this mark\". Undoing cash_received voids that cash row (status cancelled, never a refund) and recomputes paidAmount / paymentStatus; undoing not_paid only clears the mark. Answers the owner BookingResponse, \"Mark undone\". The manual booking here was paid in cash on creation, which sets no mark: 409."
+          }
+        },
+        {
+          "name": "403 undo a remainder mark on a stadium I do not own (E6)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql(\"You do not own this stadium\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{owner2Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/bookings/{{manualBookingId}}/remainder-mark",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "bookings",
+                "{{manualBookingId}}",
+                "remainder-mark"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "409 admin undoes a remainder mark when there is none (E6)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql(\"This booking has no remainder mark\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/bookings/{{manualBookingId}}/remainder-mark",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "bookings",
+                "{{manualBookingId}}",
+                "remainder-mark"
+              ]
+            },
+            "description": "E6: DELETE /api/admin/bookings/{id}/remainder-mark — an admin undoes a booking's remainder mark at any time (audited REMAINDER_MARK_UNDONE, ADMIN). Answers the AdminBookingResponse, \"Mark undone\". With no mark: 409."
           }
         },
         {

@@ -207,7 +207,9 @@ db/changelog/
     ├── 045-booking-status-length.sql # bookings.status VARCHAR(30): 'cancelled_opponent_left' did not fit
     ├── 046-game-team-joining.sql     # game_teams status 'joining' (a join half-way); side index covers it
     ├── 047-payment-decline-reason.sql # payments.decline_reason (R44)
-    └── 048-stadium-wizard-fields.sql  # stadiums.landmark; stadium_amenities toilet, covered, bibs, drinking_water
+    ├── 048-stadium-wizard-fields.sql  # stadiums.landmark; stadium_amenities toilet, covered, bibs, drinking_water
+    ├── 049-rounding-5000.sql         # payment_rounding_step 10 000 → 500 000 tiyin (5 000 so'm) where still default; column default too
+    └── 050-remainder-marks.sql       # bookings.remainder_mark / _marked_at / _marked_by; payments status 'cancelled' (voided cash)
 ```
 
 ### Adding New Migrations
@@ -411,20 +413,51 @@ settled two ways, and whichever lands first wins:
   the whole remainder to a saved card, at any time, **before or after the game**.
   Paying after the game leaves the booking `completed`; it is never dragged back
   to `confirmed`.
-- `POST /api/owner/bookings/{id}/cash` (R37, no body) — the owner marks the same money as
-  received in cash (it takes `remainingAmount`, not the full price), through
-  `PaymentService.recordCashPayment`; answers the owner's `BookingResponse`, "Cash recorded".
-  It applies to a `confirmed`/`completed` booking that is `partially_paid`, or a manual
-  booking still `unpaid`; anything else (pending, cancelled, expired, a game booking —
-  its teams' remainders go through `POST /api/games/{id}/cash`) is **400 "This booking has
-  no part payment to complete"**. A card payment of the booking still `processing` /
-  `capture_pending` (outcome unknown) is **409 "A payment for this booking is being
-  processed"**. 403 "You do not own this stadium", 404 "Booking not found".
+- `POST /api/owner/bookings/{id}/cash` (R37, no body; "Naqd olindi") — the owner marks the
+  same money as received in cash (it takes `remainingAmount`, not the full price), through
+  `PaymentService.recordCashPayment`, and the booking gets `remainder_mark = cash_received`
+  (E5); answers the owner's `BookingResponse`, "Cash recorded". See "Owner marks" below
+  for who may and the 403 / 409 answers.
 
 Both lock the booking row (`BookingRepository.findForUpdate`), so they settle one at a
-time. Once `payment_status` is `paid`, the other one answers **400 "Already paid"**.
-The remainder is charged as a `remainder` payment row, and a declined card
-leaves the booking `partially_paid` with a `failed` row.
+time. Once `payment_status` is `paid`, the player's pay-remainder answers **400 "Already
+paid"** and the owner's cash **409 "Already paid"**. The remainder is charged as a
+`remainder` payment row, and a declined card leaves the booking `partially_paid` with a
+`failed` row.
+
+**Owner marks on the remainder (E5–E7, changeset 050).** `bookings.remainder_mark` is
+`cash_received` ("Naqd olindi"), `not_paid` ("Toʻlanmadi") or null, with
+`remainder_marked_at` / `remainder_marked_by`:
+
+- `POST /api/owner/bookings/{id}/cash` sets `cash_received` (and records the cash, above).
+- `POST /api/owner/bookings/{id}/not-paid` sets `not_paid`: no charge, no penalty, the
+  remainder stands. "Marked as not paid"; marking again changes nothing. The player can
+  still pay it in the app — that **clears** `not_paid` (`applySuccessfulBookingPayment`) —
+  and the owner can still take cash later, which **replaces** it.
+- `DELETE /api/owner/bookings/{id}/remainder-mark` undoes it, "Mark undone": allowed until
+  the **end of the Tashkent day** of `remainder_marked_at`
+  (`BookingService.markUndoableUntil`, shown as `remainderMarkUndoableUntil`); later
+  **409 "Only an admin can change this mark"**. Undoing `cash_received` voids the cash row
+  (`PaymentService.voidLatestCashPayment`: status **`cancelled`**, never a platform
+  refund) and recomputes `paid_amount` / `payment_status` (the booking's own status stays);
+  undoing `not_paid` only clears the mark. No mark: **409 "This booking has no remainder
+  mark"**.
+- `DELETE /api/admin/bookings/{id}/remainder-mark` — an admin, any time, same effect;
+  answers the `AdminBookingResponse`.
+- Both marks apply to a `confirmed`/`completed` booking that is `partially_paid`, or a
+  manual (walk-in) booking still `unpaid`. Otherwise **409**: a pending, cancelled, expired
+  or game booking (its teams' remainders go through `POST /api/games/{id}/cash`) — "This
+  booking has no part payment to complete"; nothing left (paid in full) — "Already paid".
+  These were 400 on the cash endpoint before. Cash also answers 409 "A payment for this
+  booking is being processed" while a card payment is `processing` / `capture_pending`.
+  Not the stadium's owner **403 "You do not own this stadium"**; 404 "Booking not found".
+- A walk-in paid in cash when it is added gets no mark (nothing to undo).
+- Audited: `CASH_RECEIVED` (with `remainderMark`), `REMAINDER_NOT_PAID` (OWNER),
+  `REMAINDER_MARK_UNDONE` (OWNER, or ADMIN for the admin's undo; `remainderMark`,
+  `paidAmount`, `paymentStatus`, `cashPaymentStatus`). Paying the rest in the app records
+  the cleared mark in `BOOKING_REMAINDER_PAID`.
+- A voided cash row counts nowhere: not in `paidInCash`, `cashReceived`, `ownerReceives`,
+  the owner stats' `…PaidInCash`, nor revenue; the booking is back on the unpaid list.
 
 - **`PaymentService.applySuccessfulBookingPayment` is the only path from "money
   arrived" to "booking confirmed"** — the synchronous charge uses it today and a
@@ -707,7 +740,9 @@ any another team is half-way through joining (R45: a `joining` team, e.g. after 
 if that join fails). `GameDetailResponse.joinPending` (team games only) is true meanwhile.
 Each item carries `amountToPayNow` = `playerAmount(fee + the free side's advance)`,
 `remainderAmount` = `playerAmount(its remainder)` and `totalPrice` = what both teams
-pay altogether. A team game
+pay altogether, plus `stadiumDistrict` and `stadiumPhotoUrl` (E9: the cover photo, absent
+when none; the page's covers in one grouped query, `GameRepository.findStadiumPhotoUrls`).
+A team game
 stays `is_public = false`; this endpoint queries by type and status instead.
 Availability and the owner's schedule mark a slot where a team is looking for an
 opponent — **only** team_vs_team, never casual.
@@ -747,7 +782,7 @@ config. Admins read and change them at `GET` / `PUT /api/admin/settings`.
 | `team_game_platform_fee` | 2 500 000 tiyin (25 000 so'm) | Charged per team on a team game — the platform's only money |
 | `casual_game_service_fee` | 0 | Charged per player on a casual game |
 | `card_fee_bps` | 150 (1.5%) | The fee ATMOS takes; player prices are grossed up by it (0–1000) |
-| `payment_rounding_step` | 10 000 tiyin (100 so'm) | Player prices are rounded up to a multiple of it (1–1 000 000) |
+| `payment_rounding_step` | 500 000 tiyin (5 000 so'm; changeset 049 — 10 000 before) | Player prices are rounded up to a multiple of it (1–1 000 000) |
 
 - There is **no booking commission**: the platform takes nothing from ordinary
   bookings. `booking_commission_percent` was dropped in changeset 040; old payments
@@ -810,7 +845,12 @@ Every amount a player sees is the final amount they pay.
   player's own bookings, games and payments): `pricePerHour` (a slot's `originalPrice`
   too) and a stadium's `minBookingAmount` are player prices; a booking's `price` is D,
   `paidAmount` what was paid of it, `remainingAmount` what is left;
-  `refundIfCancelledNow` is everything paid by card. Games: `totalPrice` is what the
+  `refundIfCancelledNow` is everything paid by card; `paidInCash` the cash the owner took
+  that still counts, and `remainderMark` the owner's mark (`cash_received` / `not_paid`,
+  absent when none). A free availability slot of a stadium with a minimum carries
+  `depositAmount` (`CardPricing.deposit`, exactly what a MINIMUM booking charges) and
+  `remainderAmount` (`pricePerHour − depositAmount`), absent when only full payment
+  applies (no minimum, or the deposit is the whole price). Games: `totalPrice` is what the
   players pay altogether, a friends game's `price` one share, a team's `price` its
   joining payment and `remainderAmount` its remainder; the challenge board's
   `amountToPayNow` / `remainderAmount` likewise. No breakdown field exists in these
@@ -819,7 +859,9 @@ Every amount a player sees is the final amount they pay.
   with `playerPrice` / `playerMinBookingAmount` alongside. A booking shows `price` (what
   the player pays), `paidAmount` and `remainingAmount` (the remainder to collect in cash)
   **exactly as the player sees them**, plus `ownerPrice`, `paidInApp` and `ownerReceives`
-  (card splits after ATMOS, plus cash).
+  (card splits after ATMOS, plus cash), `paidInCash`, `remainderMark`, `remainderMarkedAt`
+  and `remainderMarkUndoableUntil` (the end of the mark's Tashkent day; the admin view
+  has the mark fields but not this one).
 - In the player, owner and admin booking views alike, **`paidAmount + remainingAmount =
   price` for every booking**: a `net` booking (made before changeset 040, and every game
   booking) keeps its stored owner's-terms amounts, and `BookingResponseFactory` converts
@@ -970,7 +1012,8 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   ATMOS declines leaves the original `refund_failed` and its refund row `failed` (with
   `failure_reason`) until an admin retries it or marks it refunded by hand
   (`refunded_manually`, `manual_refund_reason`, `manual_refund_by`); both rows then end
-  `refunded`.
+  `refunded`. A **cash** row voided by undoing the owner's "cash received" mark becomes
+  `cancelled` (changeset 050) — not a refund, no money moved through the platform.
 - `provider_txn_id`: the charge's transaction ids (comma-separated, one per split) or the
   hold id. `provider_success_txn_ids`: what a reverse needs. `hold_expires_at`: when an
   unsettled hold lapses.
@@ -1091,6 +1134,8 @@ Every opening hour of the date is listed, each with a `status`:
 6. For each free slot, calculate price from `pricing_rules` (match day_of_week + time range)
 7. Mark slots that have a WAITING **team_vs_team** game (show "a team is looking for an opponent" in UI). Casual games are private to whoever was invited and are never marked
 8. Apply any active promotion discount
+9. With a stadium minimum whose deposit is below the slot's player price, add
+   `depositAmount` / `remainderAmount` (E3; see "Payments → API fields")
 
 ## Audit log
 
@@ -1164,7 +1209,7 @@ number is not logged either; their name is part of the booking label.
 | Area | Actions |
 |---|---|
 | Admin | `ADMIN_LOGIN_SUCCEEDED`, `ADMIN_LOGIN_FAILED`, `APPLICATION_APPROVED`, `APPLICATION_REJECTED`, `STADIUM_APPROVED`, `STADIUM_REJECTED` (pending → rejected; before changeset 038, pending → blocked), `STADIUM_BLOCKED`, `STADIUM_UNBLOCKED` (blocked → approved), `STADIUM_STATUS_CHANGED` (back to pending) — each with `status` and `statusReason` changes, `STADIUM_NOTE_ADDED` (the note's id, never its text), `STADIUM_BOOKING_TERMS_CHANGED` (`minBookingAmount`, `cancellationHours`), `USER_BLOCKED`, `USER_UNBLOCKED`, `USER_ROLE_CHANGED`, `OWNER_LEGAL_DETAILS_CHANGED`, `REFUND_RETRIED`, `REFUND_MARKED_MANUAL`, `SETTINGS_CHANGED` |
-| Owner | `STADIUM_CREATED`, `STADIUM_UPDATED` (incl. `pricePerHour`, `landmark`, photos, amenities — the four of changeset 048 too; rows from before the rework may carry `minBookingAmount` / `cancellationHours`), `PRICING_RULE_CREATED` / `_UPDATED` / `_DELETED`, `CLOSURE_CREATED` / `_DELETED`, `PROMOTION_CREATED` / `_DEACTIVATED`, `MANUAL_BOOKING_CREATED`, `CASH_RECEIVED` (a booking, or one team's game remainder), `BOOKING_CANCELLED_BY_OWNER` |
+| Owner | `STADIUM_CREATED`, `STADIUM_UPDATED` (incl. `pricePerHour`, `landmark`, photos, amenities — the four of changeset 048 too; rows from before the rework may carry `minBookingAmount` / `cancellationHours`), `PRICING_RULE_CREATED` / `_UPDATED` / `_DELETED`, `CLOSURE_CREATED` / `_DELETED`, `PROMOTION_CREATED` / `_DEACTIVATED`, `MANUAL_BOOKING_CREATED`, `CASH_RECEIVED` (a booking — with `remainderMark` — or one team's game remainder), `REMAINDER_NOT_PAID`, `REMAINDER_MARK_UNDONE` (also ADMIN, for the admin's undo), `BOOKING_CANCELLED_BY_OWNER` |
 | Player | `BOOKING_CREATED`, `BOOKING_CANCELLED_BY_USER`, `BOOKING_REMAINDER_PAID`, `BOOKING_PAYMENT_RETRIED`, `BOOKING_SERIES_CREATED` / `_CANCELLED`, `GAME_CREATED`, `GAME_JOINED`, `GAME_LEFT`, `GAME_CANCELLED`, `GAME_OPPONENT_LEFT`, `GAME_REMAINDER_PAID`, `PROFILE_UPDATED` (also a language picked in the bot), `PHONE_SHARED_VIA_BOT` (`phoneChanged`, never the number) |
 | System | `BOOKING_CONFIRMED` (a payment confirmed it), `BOOKING_EXPIRED`, `BOOKING_COMPLETED`, `BOOKING_CANCELLED_BY_OWNER` (by a stadium block), `GAME_CONFIRMED`, `GAME_AUTO_CANCELLED`, `PAYMENT_COMPLETED`, `PAYMENT_RELEASED`, `REFUND_CREATED`, `REFUND_FAILED` (ATMOS declined; the reason is its error), `PROMOTION_EXPIRED` |
 
@@ -1227,7 +1272,8 @@ Conventions every list follows:
 
 | Endpoint | What |
 |---|---|
-| `GET /api/admin/bookings` · `/{id}` | every booking, newest `startsAt` first. Filters `search` (booking user or walk-in client), `stadiumId`, `status`, `from`/`to` (on `startsAt`), `userId`. `AdminBookingResponse` = the admin `BookingResponse` (`price` the player pays, `ownerPrice`, `paidInApp` (card money kept), `ownerReceives`, `atmosFee`, …) + `userName`, `userPhone`, `cashReceived`, `cashReceivedAt` |
+| `GET /api/admin/bookings` · `/{id}` | every booking, newest `startsAt` first. Filters `search` (booking user or walk-in client), `stadiumId`, `status`, `from`/`to` (on `startsAt`), `userId`. `AdminBookingResponse` = the admin `BookingResponse` (`price` the player pays, `ownerPrice`, `paidInApp` (card money kept), `ownerReceives`, `atmosFee`, `paidInCash`, `remainderMark`, `remainderMarkedAt`, …) + `userName`, `userPhone`, `cashReceived`, `cashReceivedAt` |
+| `DELETE /api/admin/bookings/{id}/remainder-mark` | undo the owner's remainder mark at any time (E6; "cash received" voids that cash row); the `AdminBookingResponse`, "Mark undone"; no mark 409 "This booking has no remainder mark" — see "Paying for a booking → Owner marks" |
 | `GET /api/admin/games` · `/{id}` | every game, newest `startsAt` first. Filters `search` (creator or any team's name), `stadiumId`, `status`, `from`/`to`, `userId` (created, played in, or led a team in). Detail: team games get `teams` (the `GameTeamResponse` money + `players`), casual games `participants` and `serviceFeePerPerson`. `cancelledAt` / `cancellationReason` come from the audit entry that cancelled the game |
 | `GET /api/admin/payments` · `/{id}` | every payment and refund, newest first (`type=refund`: failed refunds first). Filters `search` (payer name/phone, `providerTxnId`), `type`, `status`, `method`, `stadiumId` (booking's or game's), `from`/`to` (on `createdAt`). Each has its split, `atmosFee` (`card_fee_expected`), `providerCommission`, `failureReason`, `refundedManually`, `manualRefundReason`; the detail adds `linkedPayments` (a refund's original, or an original's refunds) |
 | `GET /api/admin/payments/summary?from=&to=` | both required. `appRevenue`, `cardFees`, `ownerPayouts`, `platformRevenue`, `refunded`, `held` — see "Revenue" |
@@ -1329,7 +1375,9 @@ alongside (`playerPrice`, `playerMinBookingAmount`).
 | `GET /api/owner/dashboard/stadiums/{id}/revenue?days=` | `{ stadiumId, dailyRevenue: [{ date, revenue, bookingCount }] }`: `days` 7 or 30 (default 30, anything else 400 "days must be 7 or 30"); **every** Tashkent day of the window, oldest first, ending today, `0` / `0` on a day without payments (R43). Revenue as before: completed `booking` payments, by `created_at` |
 | `GET /api/owner/dashboard/stadiums/{id}/bookings?unpaid=true` | (R38) only **live** bookings (`pending`, `confirmed`, `completed` — not cancelled or expired) with `remainingAmount > 0`, soonest `startsAt` first, paged, owner-view `BookingResponse`; `from`/`to` still apply. Filtered in the query (`BookingSpecifications.ownerUnpaid`, remaining computed in SQL as `Booking.getRemainingAmount` does) |
 | `GET /api/owner/dashboard/stadiums/{id}/stats` | the counts and revenue as before, plus (R38, tiyin) `todayPaidInApp`, `todayPaidInCash`, `todayOutstanding`, `weekPaidInApp`, `weekPaidInCash`, `weekOutstanding`, `monthPaidInApp`, `monthPaidInCash`, `monthOutstanding`. PaidInApp / PaidInCash: payments of the stadium's bookings whose money arrived (`paid`, `captured`, `completed`), by method `card` / `cash`, counted by the payment's `created_at` in the Tashkent period — one grouped query for all three periods. Outstanding: the sum of `remainingAmount` (`BookingResponseFactory.remainingAmount`, what the responses show) of live bookings **starting** in the period — one query. Periods: today, this Monday–Sunday week, this calendar month |
-| `POST /api/owner/bookings/{id}/cash` | the rest of a booking taken in cash (R37) — see "Paying for a booking" |
+| `POST /api/owner/bookings/{id}/cash` | the rest of a booking taken in cash (R37), mark `cash_received` (E5) — see "Paying for a booking → Owner marks" |
+| `POST /api/owner/bookings/{id}/not-paid` | mark the rest as not paid (E5): no charge, no penalty; "Marked as not paid" |
+| `DELETE /api/owner/bookings/{id}/remainder-mark` | undo the mark until the end of its Tashkent day (E6), else 409 "Only an admin can change this mark"; "Mark undone" |
 | `PUT /api/owner/stadiums/{id}/photos/order` | `{ photoIds: UUID[] }` = every photo exactly once, else 400 "photoIds must list every photo of the stadium exactly once" → `PhotoResponse[]` in order, "Photos reordered" — any signed-in user (D6) |
 
 ### Stadium photos
