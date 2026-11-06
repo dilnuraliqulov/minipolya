@@ -1845,7 +1845,8 @@
                   "        pm.expect(raw.toLowerCase()).to.not.include(bad.toLowerCase());",
                   "    });",
                   "});",
-                  "pm.test('starts pending', function () { pm.expect(pm.response.json().data.status).to.eql('pending'); });"
+                  "pm.test('starts pending', function () { pm.expect(pm.response.json().data.status).to.eql('pending'); });",
+                  "pm.test('landmark and the new amenities', function () { var d = pm.response.json().data; pm.expect(d.landmark).to.eql('Chilonzor metro yonida'); pm.expect(d.amenities.drinkingWater).to.eql(true); });"
                 ]
               }
             }
@@ -1873,10 +1874,10 @@
                 "stadiums"
               ]
             },
-            "description": "",
+            "description": "Required: name (3-150), address (5-300), district (one of 12), phone (+998XXXXXXXXX), latitude/longitude (inside Uzbekistan), format, surfaceType, openTime/closeTime (on the hour, close after open), pricePerHour (1 000 000-500 000 000 tiyin). Optional: landmark (<=150), description (<=500), amenities. minBookingAmount / cancellationHours / photos are no longer accepted here (ignored if sent): the admin sets the booking terms, photos are uploaded after creation.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Chilonzor Arena\",\n  \"address\": \"Chilonzor 12, Tashkent\",\n  \"latitude\": 41.2756,\n  \"longitude\": 69.2034,\n  \"phone\": \"+998901112233\",\n  \"description\": \"Covered pitch\",\n  \"format\": \"5x5\",\n  \"surfaceType\": \"artificial\",\n  \"openTime\": \"08:00\",\n  \"closeTime\": \"23:00\",\n  \"pricePerHour\": 13000000,\n  \"photos\": [\n    \"https://cdn.example.com/a.jpg\"\n  ],\n  \"amenities\": {\n    \"parking\": true,\n    \"lighting\": true,\n    \"showers\": true,\n    \"lockerRoom\": true,\n    \"wifi\": false,\n    \"cafe\": false,\n    \"equipmentRental\": true,\n    \"tribune\": false\n  },\n  \"cancellationHours\": 24,\n  \"district\": \"Chilonzor\"\n}",
+              "raw": "{\n  \"name\": \"Chilonzor Arena\",\n  \"address\": \"Chilonzor 12, Tashkent\",\n  \"district\": \"Chilonzor\",\n  \"landmark\": \"Chilonzor metro yonida\",\n  \"latitude\": 41.2756,\n  \"longitude\": 69.2034,\n  \"phone\": \"+998901112233\",\n  \"description\": \"Covered pitch\",\n  \"format\": \"5x5\",\n  \"surfaceType\": \"artificial\",\n  \"openTime\": \"08:00\",\n  \"closeTime\": \"23:00\",\n  \"pricePerHour\": 13000000,\n  \"amenities\": {\n    \"parking\": true,\n    \"lighting\": true,\n    \"showers\": true,\n    \"lockerRoom\": true,\n    \"wifi\": false,\n    \"cafe\": false,\n    \"equipmentRental\": true,\n    \"tribune\": false,\n    \"toilet\": true,\n    \"covered\": true,\n    \"bibs\": true,\n    \"drinkingWater\": true\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2547,6 +2548,177 @@
           ]
         },
         {
+          "name": "200 upload photo 1 of 3 before approval (D7)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('captured approvalPhoto1Id', function () { pm.environment.set('approvalPhoto1Id', pm.response.json().data.id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/stadiums/{{stadiumId}}/photos",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "stadiums",
+                "{{stadiumId}}",
+                "photos"
+              ]
+            },
+            "description": "Multipart field \"file\": JPEG, PNG or WebP (told by its bytes), up to 5 MB (413 \"File too large\"); re-encoded by the server to a JPEG (long side <= 2000 px, no EXIF), stored as .jpg; over 40 megapixels 400 \"Image is too large\"; undecodable 400 \"Unsupported image type\"; at most 10 photos. Any signed-in user may call it for their own stadium (D6). Pick a real image file for \"file\" before running (Postman resolves src against its working directory).",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "photo.jpg"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "200 upload photo 2 of 3 before approval (D7)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('captured approvalPhoto2Id', function () { pm.environment.set('approvalPhoto2Id', pm.response.json().data.id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/stadiums/{{stadiumId}}/photos",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "stadiums",
+                "{{stadiumId}}",
+                "photos"
+              ]
+            },
+            "description": "Multipart field \"file\": JPEG, PNG or WebP (told by its bytes), up to 5 MB (413 \"File too large\"); re-encoded by the server to a JPEG (long side <= 2000 px, no EXIF), stored as .jpg; over 40 megapixels 400 \"Image is too large\"; undecodable 400 \"Unsupported image type\"; at most 10 photos. Any signed-in user may call it for their own stadium (D6). Pick a real image file for \"file\" before running (Postman resolves src against its working directory).",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "photo.jpg"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "200 upload photo 3 of 3 before approval (D7)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('captured approvalPhoto3Id', function () { pm.environment.set('approvalPhoto3Id', pm.response.json().data.id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/stadiums/{{stadiumId}}/photos",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "stadiums",
+                "{{stadiumId}}",
+                "photos"
+              ]
+            },
+            "description": "Multipart field \"file\": JPEG, PNG or WebP (told by its bytes), up to 5 MB (413 \"File too large\"); re-encoded by the server to a JPEG (long side <= 2000 px, no EXIF), stored as .jpg; over 40 megapixels 400 \"Image is too large\"; undecodable 400 \"Unsupported image type\"; at most 10 photos. Any signed-in user may call it for their own stadium (D6). Pick a real image file for \"file\" before running (Postman resolves src against its working directory).",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "photo.jpg"
+                }
+              ]
+            }
+          }
+        },
+        {
           "name": "200 approve the stadium",
           "event": [
             {
@@ -2594,7 +2766,7 @@
                 "status"
               ]
             },
-            "description": "",
+            "description": "Approval needs the owner's signed ATMOS contract, then at least 3 photos (400 \"A stadium needs at least 3 photos to be approved\").",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"status\": \"approved\",\n  \"note\": \"Looks good\"\n}",
@@ -3368,7 +3540,7 @@
                 "photos"
               ]
             },
-            "description": "R36: multipart field \"file\", a JPEG/PNG/WebP (checked by its bytes) up to 10 MB; at most 10 photos. Pick a real image file for \"file\" before running (Postman resolves src against its working directory).",
+            "description": "Multipart field \"file\": JPEG, PNG or WebP (told by its bytes), up to 5 MB (413 \"File too large\"); re-encoded by the server to a JPEG (long side <= 2000 px, no EXIF), stored as .jpg; over 40 megapixels 400 \"Image is too large\"; undecodable 400 \"Unsupported image type\"; at most 10 photos. Any signed-in user may call it for their own stadium (D6). Pick a real image file for \"file\" before running (Postman resolves src against its working directory).",
             "body": {
               "mode": "formdata",
               "formdata": [
@@ -3571,7 +3743,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"photoIds\": [\"{{photoId}}\"]\n}",
+              "raw": "{\n  \"photoIds\": [\"{{photoId}}\", \"{{approvalPhoto1Id}}\", \"{{approvalPhoto2Id}}\", \"{{approvalPhoto3Id}}\"]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3799,66 +3971,7 @@
           }
         },
         {
-          "name": "400 set and clear the minimum at once (R41)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
-                  "pm.test('uses the ApiResponse envelope', function () {",
-                  "    var b = pm.response.json();",
-                  "    pm.expect(b).to.have.property('success');",
-                  "    pm.expect(b).to.have.property('data');",
-                  "    pm.expect(b).to.have.property('message');",
-                  "});",
-                  "pm.test('success is false', function () {",
-                  "    pm.expect(pm.response.json().success).to.eql(false);",
-                  "});",
-                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql('Send either minBookingAmount or clearMinBookingAmount'); });"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{ownerToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/owner/stadiums/{{stadiumId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "owner",
-                "stadiums",
-                "{{stadiumId}}"
-              ]
-            },
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"minBookingAmount\": 5000000,\n  \"clearMinBookingAmount\": true\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          }
-        },
-        {
-          "name": "200 clear the minimum: full payment only (R41)",
+          "name": "200 booking terms sent by the owner are ignored",
           "event": [
             {
               "listen": "test",
@@ -3875,7 +3988,7 @@
                   "pm.test('success is true', function () {",
                   "    pm.expect(pm.response.json().success).to.eql(true);",
                   "});",
-                  "pm.test('no minimum', function () { pm.expect(pm.response.json().data).to.not.have.property('minBookingAmount'); });"
+                  "pm.test('cancellationHours unchanged', function () { pm.expect(pm.response.json().data.cancellationPolicy.cancellationHours).to.not.eql(1); });"
                 ]
               }
             }
@@ -3904,10 +4017,240 @@
                 "{{stadiumId}}"
               ]
             },
-            "description": "R41: sets minBookingAmount to null (players pay in full). A plain null in minBookingAmount means leave it as is.",
+            "description": "minBookingAmount, cancellationHours, clearMinBookingAmount and photos are no longer owner fields: ignored, not 400.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"clearMinBookingAmount\": true\n}",
+              "raw": "{\n  \"minBookingAmount\": 5000000,\n  \"cancellationHours\": 1,\n  \"clearMinBookingAmount\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "200 set booking terms (admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('terms set', function () { var d = pm.response.json().data; pm.expect(d.minBookingAmount).to.eql(5000000); pm.expect(d.cancellationPolicy.cancellationHours).to.eql(12); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/booking-terms",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{stadiumId}}",
+                "booking-terms"
+              ]
+            },
+            "description": "D3: the deposit and the cancellation window, agreed with the owner by phone. minBookingAmount null = full payment, else >= 50 000 tiyin and <= pricePerHour; cancellationHours required, 0-168. Any status. Audited STADIUM_BOOKING_TERMS_CHANGED. Answers the admin stadium detail.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"minBookingAmount\": 5000000,\n  \"cancellationHours\": 12\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "200 full payment only: minBookingAmount null (admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});",
+                  "pm.test('no minimum', function () { pm.expect(pm.response.json().data.minBookingAmount).to.be.undefined; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/booking-terms",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{stadiumId}}",
+                "booking-terms"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"minBookingAmount\": null,\n  \"cancellationHours\": 24\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "400 booking terms without cancellationHours (admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('success is false', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "});",
+                  "pm.test('message', function () { pm.expect(pm.response.json().message).to.eql('cancellationHours is required'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/booking-terms",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{stadiumId}}",
+                "booking-terms"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"minBookingAmount\": 5000000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "403 booking terms as the owner",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/booking-terms",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{stadiumId}}",
+                "booking-terms"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"minBookingAmount\": null,\n  \"cancellationHours\": 24\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -19100,7 +19443,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"name\": \"Chilonzor Arena\",\n        \"address\": \"Toshkent, Chilonzor 12\",\n        \"district\": \"Chilonzor\",\n        \"photoUrl\": \"https://cdn.minipolya.uz/s/1.jpg\",\n        \"pricePerHour\": 20000000,\n        \"playerPrice\": 20310000,\n        \"ownerReceives\": 20005350,\n        \"atmosFee\": 304650,\n        \"ownerContractStatus\": \"signed\",\n        \"ownerName\": \"Owner One\",\n        \"ownerId\": \"0190a1b2-0000-7000-8000-00000000000c\",\n        \"status\": \"approved\",\n        \"format\": \"5x5\",\n        \"surfaceType\": \"artificial\",\n        \"averageRating\": 4.5,\n        \"reviewCount\": 2,\n        \"totalBookings\": 40,\n        \"totalRevenue\": 812400000,\n        \"createdAt\": \"2026-10-01T08:00:00Z\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"name\": \"Chilonzor Arena\",\n        \"address\": \"Toshkent, Chilonzor 12\",\n        \"district\": \"Chilonzor\",\n        \"landmark\": \"Chilonzor metro yonida\",\n        \"photoUrl\": \"https://cdn.minipolya.uz/s/1.jpg\",\n        \"pricePerHour\": 20000000,\n        \"playerPrice\": 20310000,\n        \"ownerReceives\": 20005350,\n        \"atmosFee\": 304650,\n        \"ownerContractStatus\": \"signed\",\n        \"ownerName\": \"Owner One\",\n        \"ownerId\": \"0190a1b2-0000-7000-8000-00000000000c\",\n        \"status\": \"approved\",\n        \"format\": \"5x5\",\n        \"surfaceType\": \"artificial\",\n        \"averageRating\": 4.5,\n        \"reviewCount\": 2,\n        \"totalBookings\": 40,\n        \"totalRevenue\": 812400000,\n        \"createdAt\": \"2026-10-01T08:00:00Z\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 20,\n    \"totalElements\": 1,\n    \"totalPages\": 1\n  },\n  \"message\": null\n}"
             }
           ]
         },
@@ -19257,7 +19600,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"ownerId\": \"0190a1b2-0000-7000-8000-00000000000c\",\n    \"ownerName\": \"Owner One\",\n    \"ownerPhone\": \"998901112233\",\n    \"name\": \"Chilonzor Arena\",\n    \"address\": \"Toshkent, Chilonzor 12\",\n    \"district\": \"Chilonzor\",\n    \"latitude\": 41.2856,\n    \"longitude\": 69.2034,\n    \"phone\": \"+998901112233\",\n    \"description\": \"Yopiq maydon\",\n    \"format\": \"5x5\",\n    \"surfaceType\": \"artificial\",\n    \"openTime\": \"08:00:00\",\n    \"closeTime\": \"23:00:00\",\n    \"pricePerHour\": 20000000,\n    \"playerPrice\": 20310000,\n    \"ownerReceives\": 20005350,\n    \"atmosFee\": 304650,\n    \"minBookingAmount\": 10000000,\n    \"playerMinBookingAmount\": 10160000,\n    \"status\": \"pending\",\n    \"isActive\": true,\n    \"cancellationPolicy\": {\n      \"cancellationHours\": 24\n    },\n    \"photos\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000d\",\n        \"url\": \"https://cdn.minipolya.uz/s/1.jpg\",\n        \"position\": 0\n      }\n    ],\n    \"amenities\": {\n      \"parking\": true,\n      \"lighting\": true,\n      \"showers\": false,\n      \"lockerRoom\": true,\n      \"wifi\": false,\n      \"cafe\": false,\n      \"equipmentRental\": true,\n      \"tribune\": false\n    },\n    \"createdAt\": \"2026-10-01T08:00:00Z\",\n    \"updatedAt\": \"2026-10-01T08:00:00Z\",\n    \"photoUrl\": \"https://cdn.minipolya.uz/s/1.jpg\",\n    \"ownerContractStatus\": \"signed\",\n    \"cancellationHours\": 24,\n    \"averageRating\": 0,\n    \"reviewCount\": 0,\n    \"totalBookings\": 0,\n    \"totalRevenue\": 0,\n    \"pricingRules\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000e\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"dayOfWeek\": 5,\n        \"startTime\": \"18:00:00\",\n        \"endTime\": \"23:00:00\",\n        \"pricePerHour\": 30000000,\n        \"playerPrice\": 30460000,\n        \"ownerReceives\": 30003100,\n        \"atmosFee\": 456900,\n        \"isActive\": true,\n        \"createdAt\": \"2026-10-01T08:00:00Z\"\n      }\n    ]\n  },\n  \"message\": null\n}"
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"0190a1b2-0000-7000-8000-000000000002\",\n    \"ownerId\": \"0190a1b2-0000-7000-8000-00000000000c\",\n    \"ownerName\": \"Owner One\",\n    \"ownerPhone\": \"998901112233\",\n    \"name\": \"Chilonzor Arena\",\n    \"address\": \"Toshkent, Chilonzor 12\",\n    \"district\": \"Chilonzor\",\n    \"landmark\": \"Chilonzor metro yonida\",\n    \"latitude\": 41.2856,\n    \"longitude\": 69.2034,\n    \"phone\": \"+998901112233\",\n    \"description\": \"Yopiq maydon\",\n    \"format\": \"5x5\",\n    \"surfaceType\": \"artificial\",\n    \"openTime\": \"08:00:00\",\n    \"closeTime\": \"23:00:00\",\n    \"pricePerHour\": 20000000,\n    \"playerPrice\": 20310000,\n    \"ownerReceives\": 20005350,\n    \"atmosFee\": 304650,\n    \"minBookingAmount\": 10000000,\n    \"playerMinBookingAmount\": 10160000,\n    \"status\": \"pending\",\n    \"isActive\": true,\n    \"cancellationPolicy\": {\n      \"cancellationHours\": 24\n    },\n    \"photos\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000d\",\n        \"url\": \"https://cdn.minipolya.uz/s/1.jpg\",\n        \"position\": 0\n      }\n    ],\n    \"amenities\": {\n      \"parking\": true,\n      \"lighting\": true,\n      \"showers\": false,\n      \"lockerRoom\": true,\n      \"wifi\": false,\n      \"cafe\": false,\n      \"equipmentRental\": true,\n      \"tribune\": false,\n      \"toilet\": false,\n      \"covered\": false,\n      \"bibs\": false,\n      \"drinkingWater\": false\n    },\n    \"createdAt\": \"2026-10-01T08:00:00Z\",\n    \"updatedAt\": \"2026-10-01T08:00:00Z\",\n    \"photoUrl\": \"https://cdn.minipolya.uz/s/1.jpg\",\n    \"ownerContractStatus\": \"signed\",\n    \"cancellationHours\": 24,\n    \"averageRating\": 0,\n    \"reviewCount\": 0,\n    \"totalBookings\": 0,\n    \"totalRevenue\": 0,\n    \"pricingRules\": [\n      {\n        \"id\": \"0190a1b2-0000-7000-8000-00000000000e\",\n        \"stadiumId\": \"0190a1b2-0000-7000-8000-000000000002\",\n        \"dayOfWeek\": 5,\n        \"startTime\": \"18:00:00\",\n        \"endTime\": \"23:00:00\",\n        \"pricePerHour\": 30000000,\n        \"playerPrice\": 30460000,\n        \"ownerReceives\": 30003100,\n        \"atmosFee\": 456900,\n        \"isActive\": true,\n        \"createdAt\": \"2026-10-01T08:00:00Z\"\n      }\n    ]\n  },\n  \"message\": null\n}"
             }
           ]
         },

@@ -206,7 +206,8 @@ db/changelog/
     ├── 044-fake-payment-provider.sql # fake_payment_* tables: FakePaymentProvider's state (dev/tests only)
     ├── 045-booking-status-length.sql # bookings.status VARCHAR(30): 'cancelled_opponent_left' did not fit
     ├── 046-game-team-joining.sql     # game_teams status 'joining' (a join half-way); side index covers it
-    └── 047-payment-decline-reason.sql # payments.decline_reason (R44)
+    ├── 047-payment-decline-reason.sql # payments.decline_reason (R44)
+    └── 048-stadium-wizard-fields.sql  # stadiums.landmark; stadium_amenities toilet, covered, bibs, drinking_water
 ```
 
 ### Adding New Migrations
@@ -282,13 +283,51 @@ When you need to change the schema (add column, new table, alter constraint):
   status) → approves or rejects.
 - **Approval needs the owner's ATMOS contract signed** (`owner_legal_details`, see
   "Owner legal details"): otherwise `PUT /api/admin/stadiums/{id}/status` answers 400
-  "The owner's ATMOS contract is not signed". On approval: status → approved,
-  user.is_owner → true.
-- `district`: optional, one of the twelve Tashkent districts — `Bektemir`, `Chilonzor`,
+  "The owner's ATMOS contract is not signed". **Then at least 3 photos** (checked after
+  the contract): otherwise 400 "A stadium needs at least 3 photos to be approved"
+  (`AdminService.MIN_PHOTOS_TO_APPROVE`; at most 10 as before). Both apply to every move
+  into `approved` (from pending, rejected or blocked), not to re-sending `approved`. On
+  approval: status → approved, user.is_owner → true.
+- **What an owner sends** (`POST` / `PUT /api/owner/stadiums`), checked by **one helper,
+  `util/StadiumRules`**, so create and update agree — every message is a 400 in the
+  envelope. On create every required field must be there; on update only what is sent is
+  checked (old stadiums that break a rule can still be edited elsewhere):
+  - `name` trimmed 3–150 ("name is required" / "name must be between 3 and 150
+    characters"); `address` trimmed 5–300 (same wording);
+  - `district` **required on create** ("district is required"), see below;
+  - `phone` **required on create** ("phone is required"), `^\+998\d{9}$` — "phone must
+    be in the format +998XXXXXXXXX" (the profile's rule);
+  - `description` ≤ 500 ("description must be at most 500 characters");
+  - `landmark` ("Moʻljal", changeset 048) optional, trimmed, ≤ 150 ("landmark must be at
+    most 150 characters"); blank is none, and on update clears it;
+  - `latitude` / `longitude` **required on create** ("latitude and longitude are
+    required"), on update both or neither ("Send both latitude and longitude"); inside
+    Uzbekistan's box, lat 37.1–45.6, lon 55.9–73.2 — "Location must be inside Uzbekistan";
+  - `pricePerHour` 1 000 000–500 000 000 tiyin — "pricePerHour must be between 10 000 and
+    5 000 000 so'm" ("pricePerHour is required" on create);
+  - `openTime` / `closeTime` on the hour ("openTime and closeTime must be on the hour")
+    and `closeTime` after `openTime` — **closing after midnight is not supported**
+    ("closeTime must be after openTime; closing after midnight is not supported"), since
+    availability walks open → close within one day and bookings start on the hour. On
+    update the pair that would result (sent value, else the current one) is checked.
+  - **Not the owner's**: `minBookingAmount` / `cancellationHours` are the admin's
+    (`PUT /api/admin/stadiums/{id}/booking-terms`), and photos come only through the
+    upload endpoint. Those fields (and `clearMinBookingAmount`, `photos`) are gone from
+    `CreateStadiumRequest` / `UpdateStadiumRequest`; an older client still sending them is
+    **ignored, not refused** (unknown JSON properties are ignored).
+- **Amenities** (`amenities` on create/update, all booleans, any omitted one false — the
+  block replaces the old one when sent): `parking`, `lighting`, `showers`, `lockerRoom`,
+  `wifi`, `cafe`, `equipmentRental`, `tribune`, and since changeset 048 `toilet`,
+  `covered`, `bibs`, `drinkingWater`. `AmenitiesRequest` keeps its all-args constructor
+  private so Jackson binds through the setters (otherwise a block missing a flag is a 400).
+- `landmark` and `amenities` are in every stadium detail (player, owner, admin);
+  `landmark` also in the list cards (`StadiumResponse`), absent when none.
+- `district`: one of the twelve Tashkent districts — `Bektemir`, `Chilonzor`,
   `Mirobod`, `Mirzo Ulugʻbek` (with U+02BB, not an apostrophe), `Olmazor`, `Sergeli`,
   `Shayxontohur`, `Uchtepa`, `Yakkasaroy`, `Yangihayot`, `Yashnobod`, `Yunusobod`
-  (`util/Districts`, CHECK `chk_stadiums_district`). The owner sends it on create/update;
-  anything else is 400 "Invalid district". Null on stadiums added before it existed.
+  (`util/Districts`, CHECK `chk_stadiums_district`). Required when the owner creates a
+  stadium, optional on update; anything else is 400 "Invalid district". Null on stadiums
+  added before it existed.
 
 ### Bookings
 
@@ -337,8 +376,9 @@ the same amount whether the player pays it in the app or the owner takes it in c
 
 There are no other amounts. `min_booking_amount` is nullable — null means full
 payment is required — and when set must be at least 50 000 tiyin (500 so'm, the
-smallest payment ATMOS takes). The owner removes it with `"clearMinBookingAmount": true`
-on `PUT /api/owner/stadiums/{id}` (R41; a plain null is "leave as is").
+smallest payment ATMOS takes), and at most the hour's own price. **Only an admin sets
+it**, agreed with the owner by phone: `PUT /api/admin/stadiums/{id}/booking-terms` (see
+"Cancellation Policy"); the owner sees it read-only (R41's `clearMinBookingAmount` is gone).
 
 - `bookings.payment_status` is `unpaid` / `partially_paid` / `paid`.
   `bookings.pricing_model` (changeset 040) says how the money is counted:
@@ -436,7 +476,20 @@ else                 → the booking is still cancelled, but nothing is refunded
   `{ "cancellationHours": 24 }`.
 - The default of **24 lives in exactly two places that agree**: the
   `stadiums.cancellation_hours` column default and the `Stadium` entity field.
-  There is no `app.cancellation.*` config — don't reintroduce one.
+  There is no `app.cancellation.*` config — don't reintroduce one (nor a
+  `platform_settings` column: "platform defaults" are exactly these, 24 h and no minimum).
+- **Who sets the booking terms**: the owner never does (since the add-stadium rework).
+  `cancellation_hours` and `min_booking_amount` are agreed with the platform by phone and
+  set by an admin: `PUT /api/admin/stadiums/{id}/booking-terms`
+  `{ minBookingAmount: Long|null, cancellationHours: Integer }` — the whole terms each
+  time: `minBookingAmount` null (or absent) = full payment, else ≥ 50 000 tiyin
+  ("minBookingAmount must be at least 50000 tiyin (500 so'm)") and ≤ `pricePerHour`
+  ("minBookingAmount must not be more than pricePerHour"); `cancellationHours` required
+  ("cancellationHours is required"), 0–168 ("cancellationHours must be between 0 and
+  168"). Any stadium status; the row is locked. Audited `STADIUM_BOOKING_TERMS_CHANGED`
+  (ADMIN, `minBookingAmount` / `cancellationHours` old → new, nothing when unchanged);
+  answers the admin stadium detail, "Booking terms updated"
+  (`AdminStadiumService.updateBookingTerms`, `AdminStadiumBookingTermsTest`).
 
 Players MUST see the stadium's cancellation policy before confirming a booking.
 
@@ -1110,8 +1163,8 @@ number is not logged either; their name is part of the booking label.
 
 | Area | Actions |
 |---|---|
-| Admin | `ADMIN_LOGIN_SUCCEEDED`, `ADMIN_LOGIN_FAILED`, `APPLICATION_APPROVED`, `APPLICATION_REJECTED`, `STADIUM_APPROVED`, `STADIUM_REJECTED` (pending → rejected; before changeset 038, pending → blocked), `STADIUM_BLOCKED`, `STADIUM_UNBLOCKED` (blocked → approved), `STADIUM_STATUS_CHANGED` (back to pending) — each with `status` and `statusReason` changes, `STADIUM_NOTE_ADDED` (the note's id, never its text), `USER_BLOCKED`, `USER_UNBLOCKED`, `USER_ROLE_CHANGED`, `OWNER_LEGAL_DETAILS_CHANGED`, `REFUND_RETRIED`, `REFUND_MARKED_MANUAL`, `SETTINGS_CHANGED` |
-| Owner | `STADIUM_CREATED`, `STADIUM_UPDATED` (incl. `pricePerHour`, `minBookingAmount`, `cancellationHours`, photos, amenities), `PRICING_RULE_CREATED` / `_UPDATED` / `_DELETED`, `CLOSURE_CREATED` / `_DELETED`, `PROMOTION_CREATED` / `_DEACTIVATED`, `MANUAL_BOOKING_CREATED`, `CASH_RECEIVED` (a booking, or one team's game remainder), `BOOKING_CANCELLED_BY_OWNER` |
+| Admin | `ADMIN_LOGIN_SUCCEEDED`, `ADMIN_LOGIN_FAILED`, `APPLICATION_APPROVED`, `APPLICATION_REJECTED`, `STADIUM_APPROVED`, `STADIUM_REJECTED` (pending → rejected; before changeset 038, pending → blocked), `STADIUM_BLOCKED`, `STADIUM_UNBLOCKED` (blocked → approved), `STADIUM_STATUS_CHANGED` (back to pending) — each with `status` and `statusReason` changes, `STADIUM_NOTE_ADDED` (the note's id, never its text), `STADIUM_BOOKING_TERMS_CHANGED` (`minBookingAmount`, `cancellationHours`), `USER_BLOCKED`, `USER_UNBLOCKED`, `USER_ROLE_CHANGED`, `OWNER_LEGAL_DETAILS_CHANGED`, `REFUND_RETRIED`, `REFUND_MARKED_MANUAL`, `SETTINGS_CHANGED` |
+| Owner | `STADIUM_CREATED`, `STADIUM_UPDATED` (incl. `pricePerHour`, `landmark`, photos, amenities — the four of changeset 048 too; rows from before the rework may carry `minBookingAmount` / `cancellationHours`), `PRICING_RULE_CREATED` / `_UPDATED` / `_DELETED`, `CLOSURE_CREATED` / `_DELETED`, `PROMOTION_CREATED` / `_DEACTIVATED`, `MANUAL_BOOKING_CREATED`, `CASH_RECEIVED` (a booking, or one team's game remainder), `BOOKING_CANCELLED_BY_OWNER` |
 | Player | `BOOKING_CREATED`, `BOOKING_CANCELLED_BY_USER`, `BOOKING_REMAINDER_PAID`, `BOOKING_PAYMENT_RETRIED`, `BOOKING_SERIES_CREATED` / `_CANCELLED`, `GAME_CREATED`, `GAME_JOINED`, `GAME_LEFT`, `GAME_CANCELLED`, `GAME_OPPONENT_LEFT`, `GAME_REMAINDER_PAID`, `PROFILE_UPDATED` (also a language picked in the bot), `PHONE_SHARED_VIA_BOT` (`phoneChanged`, never the number) |
 | System | `BOOKING_CONFIRMED` (a payment confirmed it), `BOOKING_EXPIRED`, `BOOKING_COMPLETED`, `BOOKING_CANCELLED_BY_OWNER` (by a stadium block), `GAME_CONFIRMED`, `GAME_AUTO_CANCELLED`, `PAYMENT_COMPLETED`, `PAYMENT_RELEASED`, `REFUND_CREATED`, `REFUND_FAILED` (ATMOS declined; the reason is its error), `PROMOTION_EXPIRED` |
 
@@ -1182,7 +1235,8 @@ Conventions every list follows:
 | `POST /api/admin/payments/{id}/mark-refunded` | `{ reason }` 10–500 chars: a `failed` refund returned outside the platform |
 | `GET /api/admin/stadiums` | every status. Filters `status` (incl. `rejected`), `search`, `district`, `format`, `ownerId`. Rows add `photoUrl`, `district`, `pricePerHour` (the owner's), `playerPrice`, `ownerReceives`, `atmosFee`, `ownerContractStatus`, `statusReason` |
 | `GET /api/admin/stadiums/{id}` | the public detail mapping for **any** status, in the owner's prices (`pricePerHour`, `minBookingAmount`) with `playerPrice`, `playerMinBookingAmount`, `ownerReceives`, `atmosFee` + `pricingRules` (the same) + the list's figures |
-| `PUT /api/admin/stadiums/{id}/status` | `approved` (needs the owner's signed ATMOS contract), `rejected` (only from pending, reason required), `blocked` (reason required), `pending` |
+| `PUT /api/admin/stadiums/{id}/status` | `approved` (needs the owner's signed ATMOS contract, then ≥ 3 photos), `rejected` (only from pending, reason required), `blocked` (reason required), `pending` |
+| `PUT /api/admin/stadiums/{id}/booking-terms` | `{ minBookingAmount: Long\|null, cancellationHours: Integer }` — see "Cancellation Policy"; any status; answers the same detail as `GET /api/admin/stadiums/{id}` (which carries `landmark`, `amenities`, `photos`, `latitude` / `longitude`, `cancellationPolicy`, `cancellationHours`, `minBookingAmount`) |
 | `GET` / `POST /api/admin/stadiums/{id}/notes` | admins' internal notes, newest first; `{ text }` 1–1000 chars. Never shown to owners or players |
 | `GET /api/admin/users` | filters `search`, `role` (`player` = neither owner nor admin, `owner`, `admin`), `status` (`active`, `blocked`) |
 | `GET` / `PUT /api/admin/users/{id}/legal-details` | see "Owner legal details"; GET answers `data: null` before anything is entered |
@@ -1258,8 +1312,8 @@ such an owner: both statuses `none`, no `legalType` (the admin's own
 
 ## Owner API
 
-Owner endpoints live under `/api/owner/**` (owner role; see "Endpoint Security" for the two
-exceptions). Every per-stadium endpoint checks ownership the same way, in any stadium status:
+Owner endpoints live under `/api/owner/**` (owner role; see "Endpoint Security" for the
+exceptions: adding and listing stadiums, and their photos). Every per-stadium endpoint checks ownership the same way, in any stadium status:
 **404 "Stadium not found"**, then **403 "You do not own this stadium"**
 (`StadiumService.requireOwnedStadium`). Prices are the owner's own, with the player price
 alongside (`playerPrice`, `playerMinBookingAmount`).
@@ -1268,34 +1322,49 @@ alongside (`playerPrice`, `playerMinBookingAmount`).
 |---|---|
 | `POST /api/owner/stadiums` · `GET /api/owner/stadiums` | add a stadium (starts `pending`) · the caller's stadiums with `status` / `statusReason` — any signed-in user (R42) |
 | `GET /api/owner/stadiums/{id}` | one of the caller's stadiums, any status: the `StadiumDetailResponse` that `PUT` returns, built by the same code (R35) |
-| `PUT /api/owner/stadiums/{id}` | partial update (only non-null fields); audited `STADIUM_UPDATED`. `"clearMinBookingAmount": true` sets `minBookingAmount` to null — full payment only (R41); sent with a non-null `minBookingAmount` it is 400 "Send either minBookingAmount or clearMinBookingAmount" |
-| `POST /api/owner/stadiums/{id}/photos` | multipart field `file` → `PhotoResponse {id,url,position}`, "Photo uploaded" (R36, see "Stadium photos") |
-| `DELETE /api/owner/stadiums/{id}/photos/{photoId}` | `data: null`, "Photo deleted"; the rest renumbered 0..n-1; 404 "Photo not found" if not this stadium's |
+| `PUT /api/owner/stadiums/{id}` | partial update (only non-null fields, each checked as on create — see "Stadiums"); audited `STADIUM_UPDATED`. No booking terms or photo URLs: `minBookingAmount`, `cancellationHours`, `clearMinBookingAmount`, `photos` are ignored if sent (the admin's booking-terms endpoint; the photo upload) |
+| `POST /api/owner/stadiums/{id}/photos` | multipart field `file` → `PhotoResponse {id,url,position}`, "Photo uploaded" (R36, see "Stadium photos") — any signed-in user (D6) |
+| `DELETE /api/owner/stadiums/{id}/photos/{photoId}` | `data: null`, "Photo deleted"; the rest renumbered 0..n-1; 404 "Photo not found" if not this stadium's — any signed-in user (D6) |
 | `GET /api/owner/legal-details` | the caller's own `{ legalType?, atmosContractStatus, ownerContractStatus }` (R39), read-only; see "Owner legal details" |
 | `GET /api/owner/dashboard/stadiums/{id}/revenue?days=` | `{ stadiumId, dailyRevenue: [{ date, revenue, bookingCount }] }`: `days` 7 or 30 (default 30, anything else 400 "days must be 7 or 30"); **every** Tashkent day of the window, oldest first, ending today, `0` / `0` on a day without payments (R43). Revenue as before: completed `booking` payments, by `created_at` |
 | `GET /api/owner/dashboard/stadiums/{id}/bookings?unpaid=true` | (R38) only **live** bookings (`pending`, `confirmed`, `completed` — not cancelled or expired) with `remainingAmount > 0`, soonest `startsAt` first, paged, owner-view `BookingResponse`; `from`/`to` still apply. Filtered in the query (`BookingSpecifications.ownerUnpaid`, remaining computed in SQL as `Booking.getRemainingAmount` does) |
 | `GET /api/owner/dashboard/stadiums/{id}/stats` | the counts and revenue as before, plus (R38, tiyin) `todayPaidInApp`, `todayPaidInCash`, `todayOutstanding`, `weekPaidInApp`, `weekPaidInCash`, `weekOutstanding`, `monthPaidInApp`, `monthPaidInCash`, `monthOutstanding`. PaidInApp / PaidInCash: payments of the stadium's bookings whose money arrived (`paid`, `captured`, `completed`), by method `card` / `cash`, counted by the payment's `created_at` in the Tashkent period — one grouped query for all three periods. Outstanding: the sum of `remainingAmount` (`BookingResponseFactory.remainingAmount`, what the responses show) of live bookings **starting** in the period — one query. Periods: today, this Monday–Sunday week, this calendar month |
 | `POST /api/owner/bookings/{id}/cash` | the rest of a booking taken in cash (R37) — see "Paying for a booking" |
-| `PUT /api/owner/stadiums/{id}/photos/order` | `{ photoIds: UUID[] }` = every photo exactly once, else 400 "photoIds must list every photo of the stadium exactly once" → `PhotoResponse[]` in order, "Photos reordered" |
+| `PUT /api/owner/stadiums/{id}/photos/order` | `{ photoIds: UUID[] }` = every photo exactly once, else 400 "photoIds must list every photo of the stadium exactly once" → `PhotoResponse[]` in order, "Photos reordered" — any signed-in user (D6) |
 
 ### Stadium photos
 
-`StadiumPhotoService` / `StadiumPhotoStorage` (R36). Any stadium status, owner only.
+`StadiumPhotoService` / `StadiumPhotoStorage` (R36). Any stadium status. **Any signed-in
+user** may call the three photo endpoints (D6: a player's add-stadium wizard uploads the
+photos of their still-pending stadium before they have the owner role); ownership is
+still checked, 404 / 403, as on every owner endpoint.
 
 - **Upload:** JPEG, PNG or WebP, told by the **magic bytes** (`util/ImageType`), never the
-  client's content type or file name → otherwise 400 "Unsupported image type". Over 10 MB
+  client's content type or file name → otherwise 400 "Unsupported image type". Over 5 MB
   → **413 "File too large"** (the service checks it, and Spring's multipart limit —
-  `spring.servlet.multipart.max-file-size: 10MB` — maps `MaxUploadSizeExceededException`
-  to the same 413). At most 10 photos → 400 "A stadium can have at most 10 photos". A
-  missing `file` part is 400 "file is required"; a non-multipart body 415.
+  `spring.servlet.multipart.max-file-size: 5MB`, `max-request-size: 6MB` — maps
+  `MaxUploadSizeExceededException` to the same 413). At most 10 photos → 400 "A stadium
+  can have at most 10 photos". A missing `file` part is 400 "file is required"; a
+  non-multipart body 415.
+- **Every photo is re-encoded** (`util/ImageReencoder`, D5): the size is read from the
+  header first — over 40 megapixels is 400 **"Image is too large"** before anything is
+  decoded (a decompression bomb; very large ones are read subsampled); then decoded (WebP
+  through `com.twelvemonkeys.imageio:imageio-webp`) — anything that does not decode
+  (truncated, garbage after the magic bytes, a CMYK JPEG) is 400 "Unsupported image type";
+  transparency flattened onto white; scaled so the long side is **≤ 2000 px** (bilinear
+  halving, then one bicubic step); written as **JPEG quality 0.85 with no metadata**, so
+  EXIF (GPS, camera) never reaches the disk. EXIF orientation is not applied — the Mini
+  App bakes it in before uploading. Tests: `ImageReencoderTest` (the WebP samples are
+  checked-in 1×1 files in `src/test/resources/images`, `TestImages` makes the rest).
 - Stored on the local filesystem under `app.uploads.dir` (`UPLOADS_DIR`, default
-  `./uploads`, git-ignored) as `stadiums/<stadiumId>/<random uuid>.<jpg|png|webp>`; the
+  `./uploads`, git-ignored) as `stadiums/<stadiumId>/<random uuid>.jpg` (photos stored
+  before the re-encoding may still be `.png` / `.webp`, and are still served); the
   stored `url` is `/api/uploads/stadiums/<stadiumId>/<file>`. A new photo goes last
   (`max(position) + 1`); the lowest position is the cover (`coverPhotoUrl`). The stadium
   row is locked for each change, so concurrent uploads cannot pass the limit.
 - Files follow the database: a written file is removed if the transaction rolls back; a
-  deleted photo's file goes after the deletion commits. URLs that are not ours (photos sent
-  as URLs on create/update) are never touched on disk.
+  deleted photo's file goes after the deletion commits. URLs that are not ours (photos
+  sent as URLs on create/update before that was removed) are never touched on disk.
 - **Serving:** `GET /api/uploads/stadiums/{stadiumId}/{file}` is public (`permitAll` on
   `GET /api/uploads/**`), with the image's Content-Type, `Cache-Control: max-age=31536000,
   public, immutable` and `nosniff`. Only a `<uuid>.<jpg|png|webp>` name under a stadium id
@@ -1432,7 +1501,10 @@ WHERE LOWER(username) = LOWER('dilnur');
 - `/api/bookings/**` → authenticated
 - `/api/owner/**` → authenticated + isOwner check, except exactly `POST /api/owner/stadiums`
   and `GET /api/owner/stadiums` (no sub-paths): any signed-in user, so a player can add
-  their first stadium and follow its review (R42)
+  their first stadium and follow its review (R42); and its photos —
+  `POST /api/owner/stadiums/*/photos`, `DELETE /api/owner/stadiums/*/photos/*`,
+  `PUT /api/owner/stadiums/*/photos/order` — also any signed-in user (D6), the service
+  checking ownership (404 / 403)
 - `/api/admin/**` → authenticated + isAdmin check
 - `/api/games/**` → authenticated
 - `/api/teams/**` → authenticated
@@ -1802,6 +1874,7 @@ Required beyond Spring Initializr defaults:
 - `org.mapstruct:mapstruct:1.6.3` — MapStruct annotations
 - `org.mapstruct:mapstruct-processor:1.6.3` — annotation processor (in `maven-compiler-plugin` `<annotationProcessorPaths>`)
 - `org.projectlombok:lombok-mapstruct-binding:0.2.0` — required when using Lombok + MapStruct together
+- `com.twelvemonkeys.imageio:imageio-webp:3.15.3` — a read-only ImageIO plugin for WebP stadium photos (see "Stadium photos")
 
 ### MapStruct + Lombok Maven Config
 
