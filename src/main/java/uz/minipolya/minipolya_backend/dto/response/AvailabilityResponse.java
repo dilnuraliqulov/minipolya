@@ -53,6 +53,15 @@ public class AvailabilityResponse {
         private Long originalPrice;     // the player price before the discount; null if no promotion
         private Integer discountPercent; // null if no promotion
         private String promotionName;    // null if no promotion
+        /**
+         * E3: the deposit a MINIMUM booking of this hour charges now (player tiyin), computed
+         * exactly as {@code POST /api/bookings} charges it ({@code CardPricing.deposit}).
+         * Present only on a free slot of a stadium with a minimum whose deposit is below the
+         * slot's price; absent means full payment only.
+         */
+        private Long depositAmount;
+        /** E3: what is left after the deposit ({@code pricePerHour - depositAmount}); absent with it. */
+        private Long remainderAmount;
         private boolean hasWaitingGame;
         private UUID waitingGameId;
         private String waitingGameType;

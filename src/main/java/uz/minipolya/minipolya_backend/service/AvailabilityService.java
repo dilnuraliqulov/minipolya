@@ -136,7 +136,16 @@ public class AvailabilityService {
             // The same owner price per hour a booking is priced from, shown as the player
             // price, so the slots a player picks add up to exactly what the booking charges.
             long net = promo.map(p -> BookingPriceCalculator.applyDiscount(base, p.getDiscountPercent())).orElse(base);
-            slot.pricePerHour(cardPricing.playerAmount(net));
+            long playerPrice = cardPricing.playerAmount(net);
+            slot.pricePerHour(playerPrice);
+            // E3: the deposit and remainder a MINIMUM booking of this hour would charge, by the
+            // same CardPricing.deposit that POST /api/bookings uses. Absent: full payment only.
+            if (stadium.getMinBookingAmount() != null) {
+                long deposit = cardPricing.deposit(stadium.getMinBookingAmount(), playerPrice);
+                if (deposit < playerPrice) {
+                    slot.depositAmount(deposit).remainderAmount(playerPrice - deposit);
+                }
+            }
             if (promo.isPresent()) {
                 slot.originalPrice(cardPricing.playerAmount(base))
                         .discountPercent(promo.get().getDiscountPercent())

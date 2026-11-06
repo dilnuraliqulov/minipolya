@@ -338,4 +338,50 @@ class AvailabilityServiceTest {
         assertThatThrownBy(() -> service.getAvailability(STADIUM_ID, date))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
+
+    // ---- E3: each free slot quotes the deposit and remainder the booking would charge ----
+
+    @Test
+    void aFreeSlotQuotesTheDepositAndRemainderWhenTheStadiumHasAMinimum() {
+        stadium.setPricePerHour(15_000_000L);       // 150 000 so'm -> 155 000 for the player
+        stadium.setMinBookingAmount(5_000_000L);    // 50 000 so'm -> 55 000 deposit
+        stubStadium();
+
+        TimeSlot slot = slotAt(service.getAvailability(STADIUM_ID, date), LocalTime.of(18, 0));
+
+        assertThat(slot.getPricePerHour()).isEqualTo(15_500_000L);
+        assertThat(slot.getDepositAmount()).isEqualTo(5_500_000L);
+        assertThat(slot.getRemainderAmount()).isEqualTo(10_000_000L);
+        assertThat(slot.getDepositAmount()).isEqualTo(
+                CardPricing.withDefaults().deposit(5_000_000L, slot.getPricePerHour()));
+    }
+
+    @Test
+    void noQuoteWithoutAMinimumOrWhenTheDepositCoversTheSlot() {
+        stadium.setPricePerHour(15_000_000L);
+        stubStadium();
+        TimeSlot fullOnly = slotAt(service.getAvailability(STADIUM_ID, date), LocalTime.of(18, 0));
+        assertThat(fullOnly.getDepositAmount()).isNull();
+        assertThat(fullOnly.getRemainderAmount()).isNull();
+
+        // A minimum equal to the price: the deposit is the whole price, nothing to choose.
+        stadium.setMinBookingAmount(15_000_000L);
+        TimeSlot covered = slotAt(service.getAvailability(STADIUM_ID, date), LocalTime.of(18, 0));
+        assertThat(covered.getDepositAmount()).isNull();
+        assertThat(covered.getRemainderAmount()).isNull();
+    }
+
+    @Test
+    void aBookedSlotHasNoQuote() {
+        stadium.setPricePerHour(15_000_000L);
+        stadium.setMinBookingAmount(5_000_000L);
+        stubStadium();
+        Booking taken = Booking.builder().startsAt(at(LocalTime.of(18, 0))).endsAt(at(LocalTime.of(19, 0))).build();
+        when(bookingRepository.findActiveForStadiumBetween(eq(STADIUM_ID), any(), any())).thenReturn(List.of(taken));
+
+        TimeSlot slot = slotAt(service.getAvailability(STADIUM_ID, date), LocalTime.of(18, 0));
+
+        assertThat(slot.getDepositAmount()).isNull();
+        assertThat(slot.getRemainderAmount()).isNull();
+    }
 }
