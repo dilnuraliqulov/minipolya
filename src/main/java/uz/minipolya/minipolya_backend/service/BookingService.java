@@ -265,6 +265,7 @@ public class BookingService {
         SavedCard card = savedCardService.requireOwnedCard(userId, cardId);
         long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
         Booking.PaymentStatus statusBefore = booking.getPaymentStatus();
+        Booking.RemainderMark markBefore = booking.getRemainderMark();
         paymentService.chargeForBooking(booking, card, remainderCharge(booking, remainder),
                 Payment.PaymentType.REMAINDER);
 
@@ -273,7 +274,9 @@ public class BookingService {
             auditService.record(AuditEntry.player(userId, AuditAction.BOOKING_REMAINDER_PAID)
                     .entity(AuditEntityType.BOOKING, bookingId, AuditLabels.booking(booking))
                     .change("paidAmount", paidBefore, booking.getPaidAmount())
-                    .change("paymentStatus", statusBefore, booking.getPaymentStatus()));
+                    .change("paymentStatus", statusBefore, booking.getPaymentStatus())
+                    // E7: paying the rest in the app clears a "not paid" mark.
+                    .change("remainderMark", markBefore, booking.getRemainderMark()));
         }
         log.info("Booking remainder charged: id={} userId={} amount={} status={}",
                 bookingId, userId, remainder, booking.getPaymentStatus().getValue());
@@ -293,40 +296,150 @@ public class BookingService {
         return new CardFeeSplit(playerAmount, playerAmount, 0L, playerAmount - booking.getRemainingAmount());
     }
 
+    /** E7: nothing is left to collect on this booking. */
+    static final String ALREADY_PAID = "Already paid";
+    /** E7: a pending, cancelled, expired or game booking has no remainder for the owner to mark. */
+    static final String NO_PART_PAYMENT = "This booking has no part payment to complete";
+    /** E6: the owner's same-day undo window has passed. */
+    static final String ONLY_ADMIN_CAN_CHANGE = "Only an admin can change this mark";
+    /** E6: there is nothing to undo. */
+    static final String NO_MARK = "This booking has no remainder mark";
+
     /**
-     * R37: the owner took what is still owed on a booking in cash. The same money the player
-     * would pay with {@link #payRemainder} — {@code remainingAmount} — recorded by
-     * {@link PaymentService#recordCashPayment}; whichever lands first wins.
+     * R37 / E5: the owner took what is still owed on a booking in cash ("Naqd olindi"). The
+     * same money the player would pay with {@link #payRemainder} — {@code remainingAmount} —
+     * recorded by {@link PaymentService#recordCashPayment}; whichever lands first wins. The
+     * booking gets the {@code cash_received} mark (replacing a {@code not_paid} one).
      *
      * <p>Applies to a live (confirmed or completed) booking that is partially paid, or a
-     * manual booking still unpaid. A game booking's remainders belong to its teams
-     * ({@code POST /api/games/{id}/cash}), and a pending, cancelled or expired booking has
-     * nothing to complete: 400 "This booking has no part payment to complete". Nothing left:
-     * 400 "Already paid". A card payment of the booking still being confirmed: 409.
+     * manual booking still unpaid. Otherwise 409 (E7): a game booking (its remainders belong
+     * to its teams, {@code POST /api/games/{id}/cash}), a pending, cancelled or expired one —
+     * "This booking has no part payment to complete"; nothing left — "Already paid"; a card
+     * payment of the booking still being confirmed — "A payment for this booking is being
+     * processed".
      */
     @Transactional
     public BookingResponse recordCashByOwner(UUID ownerId, UUID bookingId) {
-        Booking booking = requireBookingForUpdate(bookingId);
-        if (!booking.getStadium().getOwner().getId().equals(ownerId)) {
-            throw new ForbiddenException("You do not own this stadium");
-        }
-        if (booking.getPaymentStatus() == Booking.PaymentStatus.PAID) {
-            throw new BadRequestException("Already paid");
-        }
-        boolean live = "confirmed".equals(booking.getStatus()) || "completed".equals(booking.getStatus());
-        boolean owed = booking.getPaymentStatus() == Booking.PaymentStatus.PARTIALLY_PAID
-                || (booking.getPaymentStatus() == Booking.PaymentStatus.UNPAID && "manual".equals(booking.getSource()));
-        if (!live || !owed || "game".equals(booking.getSource())) {
-            throw new BadRequestException("This booking has no part payment to complete");
-        }
+        Booking booking = requireMarkableByOwner(ownerId, bookingId);
         if (paymentService.hasPaymentInFlight(bookingId)) {
             throw new ConflictException("A payment for this booking is being processed");
         }
 
-        paymentService.recordCashPayment(bookingId, ownerId);
+        paymentService.recordCashPayment(bookingId, ownerId, true);
         log.info("Cash recorded by owner: bookingId={} ownerId={} paymentStatus={}",
                 bookingId, ownerId, booking.getPaymentStatus().getValue());
         return bookingResponseFactory.forOwner(booking);
+    }
+
+    /**
+     * E5: the owner says the player did not pay the rest ("Toʻlanmadi"). No charge, no
+     * penalty: the remainder stands and the player can still pay it in the app (which
+     * clears the mark), or the owner can still take it in cash (which replaces it). Same
+     * rules and 403 / 409 answers as {@link #recordCashByOwner}. Marking it again changes
+     * nothing. Audited {@code REMAINDER_NOT_PAID}.
+     */
+    @Transactional
+    public BookingResponse markNotPaidByOwner(UUID ownerId, UUID bookingId) {
+        Booking booking = requireMarkableByOwner(ownerId, bookingId);
+        if (booking.getRemainderMark() != Booking.RemainderMark.NOT_PAID) {
+            Booking.RemainderMark before = booking.getRemainderMark();
+            booking.markRemainder(Booking.RemainderMark.NOT_PAID, ownerId, OffsetDateTime.now(ZoneOffset.UTC));
+            bookingRepository.save(booking);
+            auditService.record(AuditEntry.owner(ownerId, AuditAction.REMAINDER_NOT_PAID)
+                    .entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
+                    .change("remainderMark", before, booking.getRemainderMark())
+                    .created("remainingAmount", cardPricing.remainingForPlayer(booking)));
+            log.info("Remainder marked not paid: bookingId={} ownerId={}", bookingId, ownerId);
+        }
+        return bookingResponseFactory.forOwner(booking);
+    }
+
+    /**
+     * E6: the owner undoes their mark, until the end of the Tashkent day it was set
+     * ({@link #markUndoableUntil}); later 409 "Only an admin can change this mark". Undoing
+     * {@code cash_received} voids the cash row ({@code cancelled}, never a platform refund)
+     * and recomputes the paid amount and payment status; undoing {@code not_paid} only clears
+     * the mark. No mark: 409 "This booking has no remainder mark". Audited
+     * {@code REMAINDER_MARK_UNDONE} (OWNER).
+     */
+    @Transactional
+    public BookingResponse undoRemainderMarkByOwner(UUID ownerId, UUID bookingId) {
+        Booking booking = requireBookingForUpdate(bookingId);
+        if (!booking.getStadium().getOwner().getId().equals(ownerId)) {
+            throw new ForbiddenException("You do not own this stadium");
+        }
+        if (booking.getRemainderMark() == null) {
+            throw new ConflictException(NO_MARK);
+        }
+        if (!OffsetDateTime.now(ZoneOffset.UTC).isBefore(markUndoableUntil(booking.getRemainderMarkedAt()))) {
+            throw new ConflictException(ONLY_ADMIN_CAN_CHANGE);
+        }
+        undoMark(booking, AuditEntry.owner(ownerId, AuditAction.REMAINDER_MARK_UNDONE));
+        return bookingResponseFactory.forOwner(booking);
+    }
+
+    /** E6: an admin undoes a remainder mark, at any time. Audited {@code REMAINDER_MARK_UNDONE} (ADMIN). */
+    @Transactional
+    public void undoRemainderMarkByAdmin(UUID adminId, UUID bookingId) {
+        Booking booking = requireBookingForUpdate(bookingId);
+        if (booking.getRemainderMark() == null) {
+            throw new ConflictException(NO_MARK);
+        }
+        undoMark(booking, AuditEntry.admin(adminId, AuditAction.REMAINDER_MARK_UNDONE));
+    }
+
+    /** The end of the Tashkent day a mark was set: the owner may undo it until then. */
+    public static OffsetDateTime markUndoableUntil(OffsetDateTime markedAt) {
+        if (markedAt == null) {
+            return null;
+        }
+        return markedAt.atZoneSameInstant(TASHKENT).toLocalDate().plusDays(1)
+                .atStartOfDay(TASHKENT).toOffsetDateTime().withOffsetSameInstant(ZoneOffset.UTC);
+    }
+
+    private void undoMark(Booking booking, AuditEntry entry) {
+        Booking.RemainderMark mark = booking.getRemainderMark();
+        long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
+        Booking.PaymentStatus statusBefore = booking.getPaymentStatus();
+        Payment voided = mark == Booking.RemainderMark.CASH_RECEIVED
+                ? paymentService.voidLatestCashPayment(booking)
+                : null;
+        booking.clearRemainderMark();
+        bookingRepository.save(booking);
+        entry.entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
+                .change("remainderMark", mark, null)
+                .change("paidAmount", paidBefore, booking.getPaidAmount())
+                .change("paymentStatus", statusBefore, booking.getPaymentStatus());
+        if (voided != null) {
+            entry.change("cashPaymentStatus", Payment.Status.PAID, voided.getStatus());
+        }
+        auditService.record(entry);
+        log.info("Remainder mark undone: bookingId={} mark={} cashVoided={}",
+                booking.getId(), mark.getValue(), voided != null);
+    }
+
+    /**
+     * The booking, locked, if its owner may mark its remainder: 404, 403 "You do not own
+     * this stadium", then 409 (E7) when there is nothing for the owner to collect.
+     */
+    private Booking requireMarkableByOwner(UUID ownerId, UUID bookingId) {
+        Booking booking = requireBookingForUpdate(bookingId);
+        if (!booking.getStadium().getOwner().getId().equals(ownerId)) {
+            throw new ForbiddenException("You do not own this stadium");
+        }
+        boolean live = "confirmed".equals(booking.getStatus()) || "completed".equals(booking.getStatus());
+        if (!live || "game".equals(booking.getSource())) {
+            throw new ConflictException(NO_PART_PAYMENT);
+        }
+        if (booking.getPaymentStatus() == Booking.PaymentStatus.PAID) {
+            throw new ConflictException(ALREADY_PAID);
+        }
+        boolean owed = booking.getPaymentStatus() == Booking.PaymentStatus.PARTIALLY_PAID
+                || (booking.getPaymentStatus() == Booking.PaymentStatus.UNPAID && "manual".equals(booking.getSource()));
+        if (!owed) {
+            throw new ConflictException(NO_PART_PAYMENT);
+        }
+        return booking;
     }
 
     /** Owner adds a walk-in/phone booking: confirmed immediately, no hold. */

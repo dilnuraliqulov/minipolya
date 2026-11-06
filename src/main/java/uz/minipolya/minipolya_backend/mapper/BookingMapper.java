@@ -24,5 +24,8 @@ public interface BookingMapper {
     @Mapping(target = "refundAmount", ignore = true)
     @Mapping(target = "cancellationDeadline", ignore = true)
     @Mapping(target = "refundIfCancelledNow", ignore = true)
+    @Mapping(target = "paidInCash", ignore = true)
+    @Mapping(target = "remainderMarkedAt", ignore = true)
+    @Mapping(target = "remainderMarkUndoableUntil", ignore = true)
     BookingResponse toResponse(Booking booking);
 }

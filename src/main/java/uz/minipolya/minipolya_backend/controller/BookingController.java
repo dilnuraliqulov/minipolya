@@ -131,6 +131,23 @@ public class BookingController {
         return ApiResponse.ok(bookingService.recordCashByOwner(ownerId, bookingId), "Cash recorded");
     }
 
+    /** E5: the owner marks the rest as not paid by the player (no charge, no penalty). */
+    @PostMapping("/api/owner/bookings/{bookingId}/not-paid")
+    public ApiResponse<BookingResponse> markNotPaid(@AuthenticationPrincipal UUID ownerId,
+                                                    @PathVariable UUID bookingId) {
+        return ApiResponse.ok(bookingService.markNotPaidByOwner(ownerId, bookingId), "Marked as not paid");
+    }
+
+    /**
+     * E6: the owner undoes their remainder mark the same Tashkent day; later 409 "Only an
+     * admin can change this mark". Undoing "cash received" voids that cash row.
+     */
+    @DeleteMapping("/api/owner/bookings/{bookingId}/remainder-mark")
+    public ApiResponse<BookingResponse> undoRemainderMark(@AuthenticationPrincipal UUID ownerId,
+                                                          @PathVariable UUID bookingId) {
+        return ApiResponse.ok(bookingService.undoRemainderMarkByOwner(ownerId, bookingId), "Mark undone");
+    }
+
     @DeleteMapping("/api/owner/bookings/{bookingId}")
     public ApiResponse<BookingResponse> cancelByOwner(@AuthenticationPrincipal UUID ownerId,
                                                       @PathVariable UUID bookingId,

@@ -2,6 +2,8 @@ package uz.minipolya.minipolya_backend.controller.admin;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -13,6 +15,7 @@ import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.service.AdminBookingService;
 import uz.minipolya.minipolya_backend.service.AdminGameService;
+import uz.minipolya.minipolya_backend.service.BookingService;
 
 import java.time.LocalDate;
 import java.util.UUID;
@@ -20,7 +23,7 @@ import java.util.function.Function;
 
 /**
  * Every booking and every game, for the admin panel's Bronlar page and a user's page.
- * Read only. {@code from} / {@code to} are Tashkent days on {@code startsAt}, both
+ * Read only, except undoing a booking's remainder mark (E6). {@code from} / {@code to} are Tashkent days on {@code startsAt}, both
  * inclusive. The status history of either comes from the audit log.
  */
 @RestController
@@ -29,6 +32,7 @@ public class AdminActivityController {
 
     private final AdminBookingService adminBookingService;
     private final AdminGameService adminGameService;
+    private final BookingService bookingService;
 
     @GetMapping("/api/admin/bookings")
     public ApiResponse<PageResponse<AdminBookingResponse>> bookings(
@@ -48,6 +52,17 @@ public class AdminActivityController {
     @GetMapping("/api/admin/bookings/{id}")
     public ApiResponse<AdminBookingResponse> booking(@PathVariable UUID id) {
         return ApiResponse.ok(adminBookingService.get(id));
+    }
+
+    /**
+     * E6: an admin undoes a booking's remainder mark at any time; "cash received" voids that
+     * cash row. 409 "This booking has no remainder mark" when there is none.
+     */
+    @DeleteMapping("/api/admin/bookings/{id}/remainder-mark")
+    public ApiResponse<AdminBookingResponse> undoRemainderMark(@AuthenticationPrincipal UUID adminId,
+                                                               @PathVariable UUID id) {
+        bookingService.undoRemainderMarkByAdmin(adminId, id);
+        return ApiResponse.ok(adminBookingService.get(id), "Mark undone");
     }
 
     @GetMapping("/api/admin/games")

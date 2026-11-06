@@ -61,6 +61,24 @@ public class BookingResponse {
     /** Admin view only: what ATMOS takes of the card money kept. */
     private Long atmosFee;
 
+    /**
+     * E4 (every view): tiyin of cash the owner took for this booking that still counts (a
+     * cash row voided by undoing the mark does not). 0 when none.
+     */
+    private Long paidInCash;
+    /**
+     * E4/E8 (every view): the owner's mark on the remainder — {@code cash_received} or
+     * {@code not_paid}; absent when there is none.
+     */
+    private Booking.RemainderMark remainderMark;
+    /** E8, owner and admin views: when the mark was set (UTC); absent with no mark. */
+    private OffsetDateTime remainderMarkedAt;
+    /**
+     * E8, owner view only: until when the owner may undo the mark themselves — the end of the
+     * Tashkent day it was set (UTC); afterwards only an admin can. Absent with no mark.
+     */
+    private OffsetDateTime remainderMarkUndoableUntil;
+
     private String clientName;
     private String clientPhone;
 

@@ -272,7 +272,13 @@ public class Payment {
          * the reconcile job leaves it alone.
          */
         REFUND_FAILED,
-        HELD, CAPTURED, RELEASED, PAID, REFUNDED, FAILED, PENDING, COMPLETED;
+        HELD, CAPTURED, RELEASED, PAID, REFUNDED, FAILED, PENDING, COMPLETED,
+        /**
+         * E5: a cash row voided because the owner (or an admin) undid the "cash received"
+         * mark. No money moved through the platform, so it is not a refund; it no longer
+         * counts as money that arrived. Changeset 050.
+         */
+        CANCELLED;
 
         @JsonValue
         public String getValue() {

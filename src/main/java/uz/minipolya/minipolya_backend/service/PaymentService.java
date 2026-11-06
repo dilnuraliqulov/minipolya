@@ -978,6 +978,12 @@ public class PaymentService {
             booking.setStatus("confirmed");
         }
         booking.setExpiresAt(null);
+        // E7: the player paying the rest in the app settles a "not paid" mark.
+        if (payment.getMethod() != Payment.Method.CASH
+                && booking.getRemainderMark() == Booking.RemainderMark.NOT_PAID
+                && booking.getPaymentStatus() == Booking.PaymentStatus.PAID) {
+            booking.clearRemainderMark();
+        }
 
         try {
             bookingRepository.saveAndFlush(booking);
@@ -1379,6 +1385,50 @@ public class PaymentService {
 
     @Transactional
     public Payment recordCashPayment(UUID bookingId, UUID ownerUserId) {
+        return recordCashPayment(bookingId, ownerUserId, false);
+    }
+
+    /**
+     * E5: undoing a "cash received" mark voids the cash row it recorded — the latest arrived
+     * cash payment of the booking becomes {@code cancelled} (never a refund: the money never
+     * passed through the platform) — and the booking's paid amount and payment status are
+     * recomputed without it. The booking's own status is left alone. Returns the voided row,
+     * or null when there was none.
+     */
+    @Transactional
+    public Payment voidLatestCashPayment(Booking booking) {
+        Payment cash = paymentRepository.findByBookingId(booking.getId()).stream()
+                .filter(p -> p.getMethod() == Payment.Method.CASH)
+                .filter(p -> p.getStatus() == Payment.Status.PAID)
+                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .max(java.util.Comparator.comparing(Payment::getCreatedAt,
+                                java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder()))
+                        .thenComparing(Payment::getId, java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())))
+                .orElse(null);
+        if (cash == null) {
+            return null;
+        }
+        cash.setStatus(Payment.Status.CANCELLED);
+        paymentRepository.save(cash);
+
+        long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
+        long paid = Math.max(0L, paidBefore - booking.creditOf(cash));
+        booking.setPaidAmount(paid);
+        booking.setPaymentStatus(paid > 0 && paid >= booking.totalDue()
+                ? Booking.PaymentStatus.PAID
+                : paid > 0 ? Booking.PaymentStatus.PARTIALLY_PAID : Booking.PaymentStatus.UNPAID);
+        bookingRepository.save(booking);
+        log.info("Cash payment voided: id={} bookingId={} paid={}", cash.getId(), booking.getId(), paid);
+        return cash;
+    }
+
+    /**
+     * Records the cash the owner took. With {@code markRemainder} (the owner's "Naqd olindi",
+     * E5) the booking also gets the {@code cash_received} mark, recorded in the same
+     * {@code CASH_RECEIVED} entry; a walk-in paid on creation is not marked.
+     */
+    @Transactional
+    public Payment recordCashPayment(UUID bookingId, UUID ownerUserId, boolean markRemainder) {
         Booking booking = bookingRepository.findById(bookingId)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
         if (!booking.getStadium().getOwner().getId().equals(ownerUserId)) {
@@ -1412,11 +1462,18 @@ public class PaymentService {
 
         long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
         Booking.PaymentStatus statusBefore = booking.getPaymentStatus();
+        Booking.RemainderMark markBefore = booking.getRemainderMark();
         applySuccessfulBookingPayment(booking, saved);
+        if (markRemainder) {
+            booking.markRemainder(Booking.RemainderMark.CASH_RECEIVED, ownerUserId,
+                    java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC));
+            bookingRepository.save(booking);
+        }
         auditService.record(AuditEntry.owner(ownerUserId, AuditAction.CASH_RECEIVED)
                 .entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
                 .change("paidAmount", paidBefore, booking.getPaidAmount())
-                .change("paymentStatus", statusBefore, booking.getPaymentStatus()));
+                .change("paymentStatus", statusBefore, booking.getPaymentStatus())
+                .change("remainderMark", markBefore, booking.getRemainderMark()));
         log.info("Cash payment recorded: id={} bookingId={} ownerId={}", saved.getId(), bookingId, ownerUserId);
         return saved;
     }

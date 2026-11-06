@@ -141,6 +141,22 @@ public class Booking {
     @Column(name = "cancellation_reason", columnDefinition = "text")
     private String cancellationReason;
 
+    /**
+     * E5: the owner's mark on the remainder — {@code cash_received} or {@code not_paid};
+     * null when none. Changeset 050.
+     */
+    @Convert(converter = RemainderMarkConverter.class)
+    @Column(name = "remainder_mark", length = 20)
+    private RemainderMark remainderMark;
+
+    /** When the mark was set (UTC): the owner may undo it until the end of that Tashkent day. */
+    @Column(name = "remainder_marked_at")
+    private OffsetDateTime remainderMarkedAt;
+
+    /** Who set the mark (the owner). */
+    @Column(name = "remainder_marked_by")
+    private UUID remainderMarkedBy;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -216,6 +232,46 @@ public class Booking {
         public PricingModel convertToEntityAttribute(String dbData) {
             return dbData == null ? null : PricingModel.valueOf(dbData.trim().toUpperCase(Locale.ROOT));
         }
+    }
+
+    /** E5: what the owner marked about the remainder. */
+    public enum RemainderMark {
+        /** The owner took the rest in cash (a cash payment row exists for it). */
+        CASH_RECEIVED,
+        /** The player did not pay the rest; nothing charged, the remainder still stands. */
+        NOT_PAID;
+
+        @JsonValue
+        public String getValue() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+    }
+
+    @Converter
+    public static class RemainderMarkConverter implements AttributeConverter<RemainderMark, String> {
+        @Override
+        public String convertToDatabaseColumn(RemainderMark attribute) {
+            return attribute == null ? null : attribute.getValue();
+        }
+
+        @Override
+        public RemainderMark convertToEntityAttribute(String dbData) {
+            return dbData == null ? null : RemainderMark.valueOf(dbData.trim().toUpperCase(Locale.ROOT));
+        }
+    }
+
+    /** Sets the owner's mark, now, by {@code userId}. */
+    public void markRemainder(RemainderMark mark, UUID userId, OffsetDateTime at) {
+        this.remainderMark = mark;
+        this.remainderMarkedAt = at;
+        this.remainderMarkedBy = userId;
+    }
+
+    /** Clears the owner's mark. */
+    public void clearRemainderMark() {
+        this.remainderMark = null;
+        this.remainderMarkedAt = null;
+        this.remainderMarkedBy = null;
     }
 
     /** How much of the price has been paid. */

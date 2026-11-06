@@ -43,6 +43,10 @@ public enum AuditAction {
     PROMOTION_DEACTIVATED,
     MANUAL_BOOKING_CREATED,
     CASH_RECEIVED,
+    /** E5: the owner marked a booking's remainder as not paid by the player. */
+    REMAINDER_NOT_PAID,
+    /** E6: a remainder mark undone — by the owner the same Tashkent day, or by an admin. */
+    REMAINDER_MARK_UNDONE,
     BOOKING_CANCELLED_BY_OWNER,
 
     // ---- Player ----

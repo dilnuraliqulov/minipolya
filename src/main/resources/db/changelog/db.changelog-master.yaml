@@ -97,3 +97,5 @@ databaseChangeLog:
       file: db/changelog/changes/048-stadium-wizard-fields.sql
   - include:
       file: db/changelog/changes/049-rounding-5000.sql
+  - include:
+      file: db/changelog/changes/050-remainder-marks.sql

@@ -126,10 +126,24 @@ public class BookingResponseFactory {
                         .thenComparing(Payment::getId, Comparator.nullsLast(Comparator.naturalOrder())));
     }
 
-    /** declineReason and paymentState, from the same payments. */
+    /**
+     * declineReason and paymentState, from the same payments; and (E4) the cash that counts
+     * and the owner's remainder mark, which every view shows.
+     */
     private static void setPaymentState(BookingResponse response, List<Payment> payments) {
         response.setDeclineReason(declineReasonOf(payments));
         response.setPaymentState(paymentStateOf(payments));
+        response.setPaidInCash(paidInCash(payments));
+    }
+
+    /** E4: cash rows of the booking whose money counts — a voided (cancelled) one does not. */
+    static long paidInCash(List<Payment> payments) {
+        return payments.stream()
+                .filter(p -> p.getMethod() == Payment.Method.CASH)
+                .filter(p -> KEPT.contains(p.getStatus()))
+                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .mapToLong(Payment::getAmount)
+                .sum();
     }
 
     /** price, paidAmount and remainingAmount in the player's terms, adding up for every booking. */
@@ -197,12 +211,20 @@ public class BookingResponseFactory {
                         : pricing.ownerReceives(p.getOwnerAmount() == null ? 0L : p.getOwnerAmount()))
                 .sum());
         setPaymentState(response, payments);
+        // E8: when the mark was set, and until when the owner may undo it themselves.
+        response.setRemainderMarkedAt(booking.getRemainderMarkedAt());
+        response.setRemainderMarkUndoableUntil(booking.getRemainderMark() == null ? null
+                : BookingService.markUndoableUntil(booking.getRemainderMarkedAt()));
         return response;
     }
 
-    /** The admin's view: the owner's, plus what ATMOS takes of the card money kept. */
+    /**
+     * The admin's view: the owner's, plus what ATMOS takes of the card money kept. No
+     * {@code remainderMarkUndoableUntil}: an admin may undo a mark at any time.
+     */
     public BookingResponse forAdmin(Booking booking, OffsetDateTime now, List<Payment> payments, CardPricing pricing) {
         BookingResponse response = forOwner(booking, now, payments, pricing);
+        response.setRemainderMarkUndoableUntil(null);
         response.setAtmosFee(payments.stream()
                 .filter(p -> KEPT.contains(p.getStatus()))
                 .filter(p -> p.getMethod() != Payment.Method.CASH)
@@ -214,6 +236,7 @@ public class BookingResponseFactory {
 
     private BookingResponse build(Booking booking, OffsetDateTime now, LongSupplier refundable) {
         BookingResponse response = bookingMapper.toResponse(booking);
+        response.setRemainderMark(booking.getRemainderMark());
         if (booking.getStartsAt() == null || booking.getStadium() == null) {
             return response; // not enough to say anything about cancelling
         }

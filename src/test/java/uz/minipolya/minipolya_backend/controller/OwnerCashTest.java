@@ -90,7 +90,7 @@ class OwnerCashTest {
                 });
 
         cash(booking.getId(), ownerToken)
-                .andExpect(status().isBadRequest())
+                .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").value("Already paid"));
     }
 
@@ -104,24 +104,24 @@ class OwnerCashTest {
     }
 
     @Test
-    void nothingToCompleteIs400() throws Exception {
+    void nothingToCompleteIs409() throws Exception {
         String message = "This booking has no part payment to complete";
         booking.setStatus("cancelled_by_user");
         bookingRepository.saveAndFlush(booking);
-        cash(booking.getId(), ownerToken).andExpect(status().isBadRequest())
+        cash(booking.getId(), ownerToken).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").value(message));
 
         // A pending app booking (unpaid, on hold) is not the owner's to settle.
         Booking pending = data.booking(stadium, player,
                 OffsetDateTime.now(ZoneOffset.UTC).plusDays(4).truncatedTo(ChronoUnit.HOURS), "pending");
-        cash(pending.getId(), ownerToken).andExpect(status().isBadRequest())
+        cash(pending.getId(), ownerToken).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").value(message));
 
         // A game booking's remainders belong to its teams.
         Booking game = partiallyPaid(OffsetDateTime.now(ZoneOffset.UTC).plusDays(5).truncatedTo(ChronoUnit.HOURS));
         game.setSource("game");
         bookingRepository.saveAndFlush(game);
-        cash(game.getId(), ownerToken).andExpect(status().isBadRequest())
+        cash(game.getId(), ownerToken).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").value(message));
     }
 

@@ -35,6 +35,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -117,6 +118,28 @@ class PaymentFlowsWithFakeProviderTest extends FakeProviderFlowSupport {
         long remainder = onlyPayment(bookingId, Payment.PaymentType.REMAINDER).getAmount();
         assertThat(deposit + remainder).isEqualTo(booking.getCardPrice());
         assertThat(balance(cardId)).isEqualTo(START - booking.getCardPrice());
+    }
+
+    @Test
+    void payingTheRestInTheAppClearsTheOwnersNotPaidMark() throws Exception {
+        User player = data.user("Not Paid Player");
+        UUID cardId = addCard(player, "8600123412346666");
+        UUID bookingId = bookingId(book(player, cardId, "MINIMUM", slot(6, 18)).andExpect(status().isOk()));
+
+        mvc.perform(post("/api/owner/bookings/" + bookingId + "/not-paid").header("Authorization", data.bearer(owner)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.remainderMark").value("not_paid"));
+        mvc.perform(get("/api/bookings/" + bookingId).header("Authorization", data.bearer(player)))
+                .andExpect(jsonPath("$.data.remainderMark").value("not_paid"))
+                .andExpect(jsonPath("$.data.remainderMarkedAt").doesNotExist())
+                .andExpect(jsonPath("$.data.paidInCash").value(0));
+
+        mvc.perform(post("/api/bookings/" + bookingId + "/pay-remainder").header("Authorization", data.bearer(player))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"cardId\":\"" + cardId + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.paymentStatus").value("paid"))
+                .andExpect(jsonPath("$.data.remainderMark").doesNotExist());
+        assertThat(bookings.findById(bookingId).orElseThrow().getRemainderMark()).isNull();
     }
 
     @Test
