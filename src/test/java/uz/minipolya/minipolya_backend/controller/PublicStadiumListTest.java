@@ -110,7 +110,7 @@ class PublicStadiumListTest {
                 .andExpect(jsonPath("$.data.content", hasSize(1)))
                 .andExpect(jsonPath("$.data.content[0].coverPhotoUrl").value("https://cdn/first.jpg"))
                 .andExpect(jsonPath("$.data.content[0].isFavorited").value(true))
-                .andExpect(jsonPath("$.data.content[0].pricePerHour").value(20_310_000));
+                .andExpect(jsonPath("$.data.content[0].pricePerHour").value(20_500_000));
     }
 
     @Test

@@ -58,7 +58,7 @@ class OwnerStadiumDetailTest {
                 .andExpect(jsonPath("$.data.id").value(stadium.getId().toString()))
                 .andExpect(jsonPath("$.data.status").value("pending"))
                 .andExpect(jsonPath("$.data.pricePerHour").value(20_000_000))
-                .andExpect(jsonPath("$.data.playerPrice").value(20_310_000))
+                .andExpect(jsonPath("$.data.playerPrice").value(20_500_000))
                 .andExpect(jsonPath("$.data.minBookingAmount").value(5_000_000))
                 .andExpect(jsonPath("$.data.playerMinBookingAmount").isNumber())
                 .andExpect(jsonPath("$.data.openTime").value("08:00:00"))

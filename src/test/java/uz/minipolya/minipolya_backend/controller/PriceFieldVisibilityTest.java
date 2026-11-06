@@ -35,15 +35,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * price or any other breakdown: a player response carrying {@code cardFee} or
  * {@code netPrice} (or any such field) fails here.
  *
- * <p>Stadium price 200 000 so'm; with the default settings (150 bps, 100 so'm step) players
- * pay 203 100 so'm = 20 310 000 tiyin.
+ * <p>Stadium price 200 000 so'm; with the default settings (150 bps, 5 000 so'm step) players
+ * pay 205 000 so'm = 20 500 000 tiyin.
  */
 @DatabaseTest
 class PriceFieldVisibilityTest {
 
     private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
     private static final long OWNER_PRICE = 20_000_000L;
-    private static final long PLAYER_PRICE = 20_310_000L;
+    private static final long PLAYER_PRICE = 20_500_000L; // playerAmount(20 000 000) at 150 bps, step 5 000 so'm
 
     /** Fields a player response must never carry, at any depth. */
     private static final List<String> BREAKDOWN = List.of(
@@ -100,7 +100,7 @@ class PriceFieldVisibilityTest {
                 .andExpect(jsonPath("$.data.content[0].pricePerHour").value(PLAYER_PRICE)));
         assertPlayerSafe(mvc.perform(get("/api/stadiums/" + stadium.getId()))
                 .andExpect(jsonPath("$.data.pricePerHour").value(PLAYER_PRICE))
-                .andExpect(jsonPath("$.data.minBookingAmount").value(5_080_000)));
+                .andExpect(jsonPath("$.data.minBookingAmount").value(5_500_000)));
 
         mvc.perform(get("/api/owner/stadiums").header("Authorization", ownerToken))
                 .andExpect(jsonPath("$.data[0].pricePerHour").value(OWNER_PRICE))
@@ -111,8 +111,8 @@ class PriceFieldVisibilityTest {
         mvc.perform(get("/api/admin/stadiums/" + stadium.getId()).header("Authorization", adminToken))
                 .andExpect(jsonPath("$.data.pricePerHour").value(OWNER_PRICE))
                 .andExpect(jsonPath("$.data.playerPrice").value(PLAYER_PRICE))
-                .andExpect(jsonPath("$.data.ownerReceives").value(20_005_350))
-                .andExpect(jsonPath("$.data.atmosFee").value(304_650))
+                .andExpect(jsonPath("$.data.ownerReceives").value(20_192_500))
+                .andExpect(jsonPath("$.data.atmosFee").value(307_500))
                 .andExpect(jsonPath("$.data.cardFee").doesNotExist());
     }
 
@@ -129,11 +129,11 @@ class PriceFieldVisibilityTest {
                 .startTime(LocalTime.of(18, 0)).endTime(LocalTime.of(23, 0)).pricePerHour(30_000_000L).build());
 
         assertPlayerSafe(mvc.perform(get("/api/stadiums/" + stadium.getId() + "/pricing"))
-                .andExpect(jsonPath("$.data[0].pricePerHour").value(30_460_000)));
+                .andExpect(jsonPath("$.data[0].pricePerHour").value(30_500_000)));
 
         mvc.perform(get("/api/owner/stadiums/" + stadium.getId() + "/pricing").header("Authorization", ownerToken))
                 .andExpect(jsonPath("$.data[0].pricePerHour").value(30_000_000))
-                .andExpect(jsonPath("$.data[0].playerPrice").value(30_460_000))
+                .andExpect(jsonPath("$.data[0].playerPrice").value(30_500_000))
                 .andExpect(jsonPath("$.data[0].cardFee").doesNotExist());
     }
 
@@ -181,18 +181,18 @@ class PriceFieldVisibilityTest {
 
         assertPlayerSafe(mvc.perform(get("/api/games/" + game.getId()).header("Authorization", playerToken))
                 // advance 50 000 + fee 25 000 = 75 000 so'm → 76 200 as one price
-                .andExpect(jsonPath("$.data.teams[0].price").value(7_620_000)));
+                .andExpect(jsonPath("$.data.teams[0].price").value(8_000_000)));
         assertPlayerSafe(mvc.perform(get("/api/games/challenges").header("Authorization", data.bearer(other))));
         assertPlayerSafe(mvc.perform(get("/api/games/my").header("Authorization", playerToken)));
 
         Game casual = data.casualGame(stadium, player, tomorrowAt(10));
         assertPlayerSafe(mvc.perform(get("/api/games/" + casual.getId()).header("Authorization", playerToken))
-                // 200 000 / 10 players = 20 000 so'm → 20 400 as one price
-                .andExpect(jsonPath("$.data.price").value(2_040_000))
-                .andExpect(jsonPath("$.data.totalPrice").value(20_400_000)));
+                // 200 000 / 10 players = 20 000 so'm → 25 000 as one price (5 000 so'm step)
+                .andExpect(jsonPath("$.data.price").value(2_500_000))
+                .andExpect(jsonPath("$.data.totalPrice").value(25_000_000)));
 
         mvc.perform(get("/api/admin/games/" + game.getId()).header("Authorization", adminToken))
-                .andExpect(jsonPath("$.data.teams[0].price").value(7_620_000))
+                .andExpect(jsonPath("$.data.teams[0].price").value(8_000_000))
                 .andExpect(jsonPath("$.data.teams[0].platformFee").value(2_500_000))
                 .andExpect(jsonPath("$.data.teams[0].ownerAdvance").value(5_000_000))
                 .andExpect(jsonPath("$.data.teams[0].ownerRemainder").value(5_000_000));

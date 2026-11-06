@@ -240,7 +240,7 @@ class StadiumServiceTest {
         StadiumDetailResponse player = stadiumService.getPublicDetail(STADIUM_ID, null);
         StadiumDetailResponse forOwner = stadiumService.update(OWNER_ID, STADIUM_ID, new UpdateStadiumRequest());
 
-        assertThat(player.getPricePerHour()).isEqualTo(20_310_000L);
+        assertThat(player.getPricePerHour()).isEqualTo(20_500_000L);
         assertThat(player.getMinBookingAmount()).isEqualTo(TestPrices.card(5_000_000L));
         assertThat(player.getPlayerPrice()).isNull();
         assertThat(player.getPlayerMinBookingAmount()).isNull();
@@ -248,7 +248,7 @@ class StadiumServiceTest {
         assertThat(player.getAtmosFee()).isNull();
 
         assertThat(forOwner.getPricePerHour()).isEqualTo(20_000_000L);
-        assertThat(forOwner.getPlayerPrice()).isEqualTo(20_310_000L);
+        assertThat(forOwner.getPlayerPrice()).isEqualTo(20_500_000L);
         assertThat(forOwner.getMinBookingAmount()).isEqualTo(5_000_000L);
         assertThat(forOwner.getPlayerMinBookingAmount()).isEqualTo(TestPrices.card(5_000_000L));
     }

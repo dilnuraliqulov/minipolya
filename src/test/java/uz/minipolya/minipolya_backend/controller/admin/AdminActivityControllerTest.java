@@ -110,8 +110,8 @@ class AdminActivityControllerTest {
                 .andExpect(jsonPath("$.data.userName").value("Dilshod Karimov"))
                 .andExpect(jsonPath("$.data.userPhone").value(player.getPhone()))
                 .andExpect(jsonPath("$.data.ownerPrice").value(20_000_000))
-                // playerAmount(20 000 000) at 150 bps, rounded up to 10 000 tiyin
-                .andExpect(jsonPath("$.data.price").value(20_310_000))
+                // playerAmount(20 000 000) at 150 bps, rounded up to 500 000 tiyin
+                .andExpect(jsonPath("$.data.price").value(20_500_000))
                 .andExpect(jsonPath("$.data.cardFee").doesNotExist())
                 .andExpect(jsonPath("$.data.netPrice").doesNotExist())
                 // the refunded payment no longer counts
@@ -265,7 +265,7 @@ class AdminActivityControllerTest {
                 .andExpect(jsonPath("$.data.teams[?(@.side=='a')].ownerAdvance").value(5_000_000))
                 .andExpect(jsonPath("$.data.teams[?(@.side=='a')].platformFee").value(2_500_000))
                 // playerAmount(5 000 000 + 2 500 000)
-                .andExpect(jsonPath("$.data.teams[?(@.side=='a')].price").value(7_620_000))
+                .andExpect(jsonPath("$.data.teams[?(@.side=='a')].price").value(8_000_000))
                 .andExpect(jsonPath("$.data.teams[?(@.side=='b')].players[0].userName").value("Leader B"))
                 .andExpect(jsonPath("$.data.participants").doesNotExist())
                 .andExpect(jsonPath("$.data.cancelledAt").doesNotExist());

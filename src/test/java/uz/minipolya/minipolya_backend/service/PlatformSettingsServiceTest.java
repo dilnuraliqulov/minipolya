@@ -116,11 +116,11 @@ class PlatformSettingsServiceTest {
     }
 
     @Test
-    void theCardFeeDefaultsTo150BpsAndA100SomStep() {
+    void theCardFeeDefaultsTo150BpsAndA5000SomStep() {
         PlatformSettingsResponse response = service.get();
 
         assertThat(response.getCardFeeBps()).isEqualTo(150);
-        assertThat(response.getPaymentRoundingStep()).isEqualTo(10_000L);
+        assertThat(response.getPaymentRoundingStep()).isEqualTo(500_000L);
     }
 
     @Test
@@ -132,7 +132,7 @@ class PlatformSettingsServiceTest {
         assertThat(response.getPaymentRoundingStep()).isEqualTo(50_000L);
         assertThat(Audited.one(auditService, AuditAction.SETTINGS_CHANGED).getChanges()).containsExactly(
                 new AuditChange("cardFeeBps", 150L, 200L),
-                new AuditChange("paymentRoundingStep", 10_000L, 50_000L));
+                new AuditChange("paymentRoundingStep", 500_000L, 50_000L));
     }
 
     @Test

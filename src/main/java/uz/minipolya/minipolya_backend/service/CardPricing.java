@@ -38,7 +38,7 @@ public class CardPricing {
         this.settings = settings;
     }
 
-    /** With the default settings: 150 bps, a 10 000-tiyin step. */
+    /** With the default settings: 150 bps, a 500 000-tiyin (5 000 so'm) step. */
     public static CardPricing withDefaults() {
         PlatformSettings defaults = PlatformSettings.builder().build();
         return new CardPricing(() -> defaults);

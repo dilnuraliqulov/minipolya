@@ -44,8 +44,8 @@ public class PlatformSettings {
     /** The highest card fee an admin may set: 1000 bps = 10%. */
     public static final int MAX_CARD_FEE_BPS = 1000;
 
-    /** Default rounding step for player card prices: 10 000 tiyin = 100 so'm. */
-    public static final long DEFAULT_PAYMENT_ROUNDING_STEP = 10_000L;
+    /** Default rounding step for player card prices: 500 000 tiyin = 5 000 so'm (changeset 049). */
+    public static final long DEFAULT_PAYMENT_ROUNDING_STEP = 500_000L;
 
     /** The largest rounding step an admin may set: 1 000 000 tiyin = 10 000 so'm. */
     public static final long MAX_PAYMENT_ROUNDING_STEP = 1_000_000L;

@@ -2,7 +2,7 @@ package uz.minipolya.minipolya_backend.service;
 
 import uz.minipolya.minipolya_backend.util.CardFeeSplit;
 
-/** Card charges as the services build them, with the default fee settings (150 bps, 100 so'm step). */
+/** Card charges as the services build them, with the default fee settings (150 bps, 5 000 so'm step). */
 final class TestPrices {
 
     private static final CardPricing DEFAULTS = CardPricing.withDefaults();
