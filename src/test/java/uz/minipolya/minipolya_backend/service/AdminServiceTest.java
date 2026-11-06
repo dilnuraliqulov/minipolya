@@ -109,10 +109,16 @@ class AdminServiceTest {
                 ownerLegalDetailsService, adminUserService);
     }
 
+    /** With the three photos approval needs (D7). */
     private Stadium stadium(String status) {
-        return Stadium.builder().id(STADIUM_ID).name("Arena").address("Tashkent").status(status)
+        Stadium stadium = Stadium.builder().id(STADIUM_ID).name("Arena").address("Tashkent").status(status)
                 .format("5x5").surfaceType("artificial")
                 .owner(User.builder().id(OWNER_ID).name("Owner").isOwner(true).build()).build();
+        for (int i = 0; i < 3; i++) {
+            stadium.addPhoto(uz.minipolya.minipolya_backend.entity.StadiumPhoto.builder()
+                    .url("/api/uploads/stadiums/x/" + i + ".jpg").position(i).build());
+        }
+        return stadium;
     }
 
     @Test
@@ -276,6 +282,52 @@ class AdminServiceTest {
         assertThat(stadium.getStatus()).isEqualTo("pending");
         assertThat(stadium.getOwner().isOwner()).isFalse();
         verify(stadiumRepository, never()).save(any(Stadium.class));
+    }
+
+    @Test
+    void approvalNeedsThreePhotosAndChangesNothingWithoutThem() {
+        for (String from : java.util.List.of("pending", "blocked", "rejected")) {
+            Stadium stadium = stadium(from);
+            stadium.getOwner().setOwner(false);
+            stadium.getPhotos().remove(2);
+            when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.updateStadiumStatus(STADIUM_ID,
+                            AdminUpdateStadiumStatusRequest.builder().status("approved").build(), ADMIN_ID))
+                    .hasMessage("A stadium needs at least 3 photos to be approved");
+
+            assertThat(stadium.getStatus()).isEqualTo(from);
+            assertThat(stadium.getOwner().isOwner()).isFalse();
+        }
+        verify(stadiumRepository, never()).save(any(Stadium.class));
+        assertThat(Audited.entries(auditService)).isEmpty();
+    }
+
+    @Test
+    void theContractIsCheckedBeforeThePhotos() {
+        Stadium stadium = stadium("pending");
+        stadium.getPhotos().clear();
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        org.mockito.Mockito.doThrow(new uz.minipolya.minipolya_backend.exception.BadRequestException(
+                        "The owner's ATMOS contract is not signed"))
+                .when(ownerLegalDetailsService).requireSignedContract(OWNER_ID);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.updateStadiumStatus(STADIUM_ID,
+                        AdminUpdateStadiumStatusRequest.builder().status("approved").build(), ADMIN_ID))
+                .hasMessage("The owner's ATMOS contract is not signed");
+    }
+
+    @Test
+    void anApprovedStadiumWithFewerPhotosCanStillBeSetApprovedAgainOrBlocked() {
+        Stadium stadium = stadium("approved");
+        stadium.getPhotos().clear(); // approved before the rule
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateStadiumStatus(STADIUM_ID,
+                AdminUpdateStadiumStatusRequest.builder().status("approved").build(), ADMIN_ID);
+
+        assertThat(stadium.getStatus()).isEqualTo("approved");
     }
 
     @Test
