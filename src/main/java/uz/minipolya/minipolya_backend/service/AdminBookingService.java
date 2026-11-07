@@ -79,8 +79,10 @@ public class AdminBookingService {
     private AdminBookingResponse toResponse(Booking booking, List<Payment> payments,
                                             CardPricing pricing, OffsetDateTime now) {
         AdminBookingResponse response = adminActivityMapper.toAdminBooking(booking);
-        response.setBooking(bookingResponseFactory.forAdmin(booking, now, payments, pricing));
-        List<Payment> cash = payments.stream()
+        // A team game's money, cash included, is on its teams' payments (moneyPayments).
+        List<Payment> money = bookingResponseFactory.moneyPayments(booking, payments);
+        response.setBooking(bookingResponseFactory.forAdmin(booking, now, payments, money, pricing));
+        List<Payment> cash = money.stream()
                 .filter(p -> p.getMethod() == Payment.Method.CASH)
                 .filter(p -> KEPT.contains(p.getStatus()))
                 .toList();

@@ -113,6 +113,21 @@ The game's **booking** (owner schedule / unpaid list, `source: "game"`): when ev
 the game chose an option, the booking counts in player terms — `price` = what both teams pay
 altogether, `paidAmount` what they paid, `remainingAmount` = the teams' unpaid rests exactly.
 
+**Fixed 2026-11-07 — the booking's money fields.** On such a booking `paidInApp`,
+`paidInCash` and `ownerReceives` (owner schedule, unpaid list, `BookingResponse`) and the
+admin's `atmosFee`, `cashReceived` / `cashReceivedAt` (`GET /api/admin/bookings`, `/{id}`)
+answered **0 / absent**, because a team game's money sits on the teams' payments, not on the
+booking. They are now taken from the payments of the two teams in the game:
+`paidInApp` = their card money that arrived (a hold counts once captured — on a confirmed game
+both teams' joining payments are), `paidInCash` / `cashReceived` = their cash not voided,
+`ownerReceives` = the owner's splits after ATMOS plus that cash, `atmosFee` = ATMOS's part.
+Example (A full, B minimum): `paidAmount` 18 500 000, `paidInApp` 18 500 000, `paidInCash` 0;
+after the owner's cash for B: `paidAmount` 26 000 000, `paidInCash` 7 500 000,
+`ownerReceives` + 7 500 000. The owner stats' `…PaidInApp` / `…PaidInCash` now include team
+game payments too. The booking's `remainderMark` stays **absent** on a game booking — the
+marks are per team (`teams[].remainderMark`). `paymentState` stays `none` and
+`refundIfCancelledNow` unchanged. Games with a team from before 052 keep their old figures.
+
 ## 6. Owner marks on a team's remainder (T10)
 
 | Endpoint | Body / query | Answer |

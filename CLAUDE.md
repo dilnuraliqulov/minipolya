@@ -706,6 +706,16 @@ game chose an option, it counts in player terms — `pricing_model = player_pric
 stats' outstanding) is exactly the teams' unpaid rests; `paid` once nothing is left (both
 on `full`, or both rests settled). Otherwise (a team from before changeset 052) it keeps the
 old `net` accounting: the sum of the teams' advances plus any settled remainder.
+Its **money fields** come from the teams' payments, since none sit on the booking
+(`BookingResponseFactory.moneyPayments` → `PaymentRepository.findTeamPaymentsOfGameBooking`:
+the payments of the game's `active` teams, the ones `paidAmount` counts), in the owner and admin
+views alike: `paidInApp` = their card money that arrived (`paid` / `captured` / `completed`; a
+hold counts only once captured — on a confirmed game both joining payments are, so it agrees
+with `paidAmount`), `paidInCash` and the admin's `cashReceived` = their cash not voided,
+`ownerReceives` = owner splits after ATMOS plus that cash, `atmosFee` ATMOS's part.
+`paymentState`, `declineReason` and `refundIfCancelledNow` stay the booking's own, and its
+`remainderMark` stays absent (marks are per team). Only `player_price` game bookings with team
+payments; a `net` (legacy) game booking keeps its own (zero) figures. `TeamGameBookingMoneyTest`.
 
 *Everything back / nothing back.* "Everything back" releases a `held` payment
 (no refund row — no money ever moved) and refunds a settled one in full;
@@ -1443,7 +1453,7 @@ alongside (`playerPrice`, `playerMinBookingAmount`).
 | `GET /api/owner/legal-details` | the caller's own `{ legalType?, atmosContractStatus, ownerContractStatus }` (R39), read-only; see "Owner legal details" |
 | `GET /api/owner/dashboard/stadiums/{id}/revenue?days=` | `{ stadiumId, dailyRevenue: [{ date, revenue, bookingCount }] }`: `days` 7 or 30 (default 30, anything else 400 "days must be 7 or 30"); **every** Tashkent day of the window, oldest first, ending today, `0` / `0` on a day without payments (R43). Revenue as before: completed `booking` payments, by `created_at` |
 | `GET /api/owner/dashboard/stadiums/{id}/bookings?unpaid=true` | (R38) only **live** bookings (`pending`, `confirmed`, `completed` — not cancelled or expired) with `remainingAmount > 0`, soonest `startsAt` first, paged, owner-view `BookingResponse`; `from`/`to` still apply. Filtered in the query (`BookingSpecifications.ownerUnpaid`, remaining computed in SQL as `Booking.getRemainingAmount` does) |
-| `GET /api/owner/dashboard/stadiums/{id}/stats` | the counts and revenue as before, plus (R38, tiyin) `todayPaidInApp`, `todayPaidInCash`, `todayOutstanding`, `weekPaidInApp`, `weekPaidInCash`, `weekOutstanding`, `monthPaidInApp`, `monthPaidInCash`, `monthOutstanding`. PaidInApp / PaidInCash: payments of the stadium's bookings whose money arrived (`paid`, `captured`, `completed`), by method `card` / `cash`, counted by the payment's `created_at` in the Tashkent period — one grouped query for all three periods. Outstanding: the sum of `remainingAmount` (`BookingResponseFactory.remainingAmount`, what the responses show) of live bookings **starting** in the period — one query. Periods: today, this Monday–Sunday week, this calendar month |
+| `GET /api/owner/dashboard/stadiums/{id}/stats` | the counts and revenue as before, plus (R38, tiyin) `todayPaidInApp`, `todayPaidInCash`, `todayOutstanding`, `weekPaidInApp`, `weekPaidInCash`, `weekOutstanding`, `monthPaidInApp`, `monthPaidInCash`, `monthOutstanding`. PaidInApp / PaidInCash: payments of the stadium's bookings and of its team games' teams (`game_team_id`) whose money arrived (`paid`, `captured`, `completed`), by method `card` / `cash`, counted by the payment's `created_at` in the Tashkent period — one grouped query for all three periods. Outstanding: the sum of `remainingAmount` (`BookingResponseFactory.remainingAmount`, what the responses show) of live bookings **starting** in the period — one query. Periods: today, this Monday–Sunday week, this calendar month |
 | `POST /api/owner/bookings/{id}/cash` | the rest of a booking taken in cash (R37), mark `cash_received` (E5) — see "Paying for a booking → Owner marks" |
 | `POST /api/owner/bookings/{id}/not-paid` | mark the rest as not paid (E5): no charge, no penalty; "Marked as not paid" |
 | `DELETE /api/owner/bookings/{id}/remainder-mark` | undo the mark until the end of its Tashkent day (E6), else 409 "Only an admin can change this mark"; "Mark undone" |

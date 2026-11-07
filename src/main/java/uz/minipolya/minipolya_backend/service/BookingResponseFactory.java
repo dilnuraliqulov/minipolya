@@ -185,9 +185,39 @@ public class BookingResponseFactory {
     /**
      * The owner's view for one row of a list, from what the list has already loaded: the
      * booking's payments and the settings read once ({@link CardPricing#snapshot()}). Costs
-     * no query of its own.
+     * no query of its own, except a team game booking's team payments ({@link #moneyPayments}).
      */
     public BookingResponse forOwner(Booking booking, OffsetDateTime now, List<Payment> payments, CardPricing pricing) {
+        return forOwner(booking, now, payments, moneyPayments(booking, payments), pricing);
+    }
+
+    /**
+     * The payments a booking's money figures count ({@code paidInApp}, {@code paidInCash},
+     * {@code ownerReceives}, {@code atmosFee}, the admin's {@code cashReceived}): the
+     * booking's own — except the booking of a team game counted in player terms (every team
+     * chose minimum / full, T6): its money lives on the teams' payments
+     * ({@code payments.game_team_id}), never on the booking, so it is the payments of the
+     * teams currently in the game, the same teams its {@code paidAmount} counts. A casual
+     * game's booking has no team payments and keeps its own; a game booking with a team from
+     * before changeset 052 ({@code net}) keeps its old figures. One query, only for such a
+     * game booking.
+     */
+    public List<Payment> moneyPayments(Booking booking, List<Payment> own) {
+        if (booking.getId() == null || !"game".equals(booking.getSource())
+                || booking.getPricingModel() != Booking.PricingModel.PLAYER_PRICE) {
+            return own;
+        }
+        List<Payment> team = paymentService.activeTeamPaymentsOfGameBooking(booking.getId());
+        return team.isEmpty() ? own : team;
+    }
+
+    /**
+     * The owner's view, its money figures from {@code money} ({@link #moneyPayments}); the
+     * cancellation figures, {@code paymentState} and {@code declineReason} stay the
+     * booking's own (a game booking has no card payment of its own: {@code none}).
+     */
+    private BookingResponse forOwner(Booking booking, OffsetDateTime now, List<Payment> payments,
+                                     List<Payment> money, CardPricing pricing) {
         BookingResponse response = build(booking, now, () -> payments.stream()
                 .filter(PaymentService::isRefundableCardPayment)
                 .mapToLong(Payment::getAmount)
@@ -197,7 +227,7 @@ public class BookingResponseFactory {
             setPlayerAmounts(response, booking, pricing);
             response.setOwnerPrice(booking.getPrice());
         }
-        List<Payment> kept = payments.stream()
+        List<Payment> kept = money.stream()
                 .filter(p -> KEPT.contains(p.getStatus()))
                 .filter(p -> p.getAmount() != null && p.getAmount() > 0)
                 .toList();
@@ -211,6 +241,7 @@ public class BookingResponseFactory {
                         : pricing.ownerReceives(p.getOwnerAmount() == null ? 0L : p.getOwnerAmount()))
                 .sum());
         setPaymentState(response, payments);
+        response.setPaidInCash(paidInCash(money));
         // E8: when the mark was set, and until when the owner may undo it themselves.
         response.setRemainderMarkedAt(booking.getRemainderMarkedAt());
         response.setRemainderMarkUndoableUntil(booking.getRemainderMark() == null ? null
@@ -223,9 +254,15 @@ public class BookingResponseFactory {
      * {@code remainderMarkUndoableUntil}: an admin may undo a mark at any time.
      */
     public BookingResponse forAdmin(Booking booking, OffsetDateTime now, List<Payment> payments, CardPricing pricing) {
-        BookingResponse response = forOwner(booking, now, payments, pricing);
+        return forAdmin(booking, now, payments, moneyPayments(booking, payments), pricing);
+    }
+
+    /** The admin's view, its money figures from {@code money} ({@link #moneyPayments}). */
+    public BookingResponse forAdmin(Booking booking, OffsetDateTime now, List<Payment> payments,
+                                    List<Payment> money, CardPricing pricing) {
+        BookingResponse response = forOwner(booking, now, payments, money, pricing);
         response.setRemainderMarkUndoableUntil(null);
-        response.setAtmosFee(payments.stream()
+        response.setAtmosFee(money.stream()
                 .filter(p -> KEPT.contains(p.getStatus()))
                 .filter(p -> p.getMethod() != Payment.Method.CASH)
                 .filter(p -> p.getAmount() != null && p.getAmount() > 0)

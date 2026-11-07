@@ -1337,6 +1337,12 @@ public class PaymentService {
         return paymentRepository.findByBookingId(bookingId);
     }
 
+    /** The payments of the teams currently in the team game whose booking this is (none for any other booking). */
+    @Transactional(readOnly = true)
+    public List<Payment> activeTeamPaymentsOfGameBooking(UUID bookingId) {
+        return paymentRepository.findTeamPaymentsOfGameBooking(bookingId, GameTeam.Status.ACTIVE);
+    }
+
     /** Every payment of several bookings, grouped by booking — one query for a list. */
     @Transactional(readOnly = true)
     public java.util.Map<UUID, List<Payment>> paymentsOfBookings(java.util.Collection<UUID> bookingIds) {
