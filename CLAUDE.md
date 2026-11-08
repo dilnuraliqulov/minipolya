@@ -1701,16 +1701,17 @@ Telegram, language uz). Every message is in the user's saved `user.language`.
 
 - **Blocked** user: only "Hisobingiz bloklangan." plus the support contact, for any message
   or button.
-- **`/start`**, no phone yet: the banner photo with the greeting and a one-button reply
-  keyboard, "📱 Telefon raqamni yuborish" (`request_contact`, resized, one-time, placeholder).
-  With a phone: the banner with the welcome and an inline `web_app` button "⚽ MiniPolya'ni
-  ochish". The first name is HTML-escaped.
+- **`/start`**, no phone yet: two messages. The banner photo with the greeting and an inline
+  `web_app` button "⚽ MiniPolya'ni ochish" (with the deep link, if any); then the request for
+  the phone with a one-button reply keyboard, "📱 Telefon raqamni yuborish" (`request_contact`,
+  resized, one-time, placeholder). With a phone: only the banner, with "Xush kelibsiz" and the
+  open button. The first name is HTML-escaped.
 - **Deep links**: `/start <payload>` (e.g. `game_<id>` from an invite,
   `t.me/{bot}?start=game_{id}`) — if it is a valid start parameter (`[A-Za-z0-9_-]{1,64}`),
   the open button goes to `MINIAPP_URL?startapp=<payload>`. A `web_app` button gives the Mini
   App no `start_param`, so **the Mini App reads `startapp` from its own URL**. When the phone
-  is still to come, the payload is kept in memory for an hour (`StartPayloads`) and carried
-  by the button sent after the phone.
+  is still to come, the payload is also kept in memory for an hour (`StartPayloads`) and
+  carried by the button sent after the phone.
 - **The contact**: accepted only if `contact.user_id == from.id` (otherwise "Iltimos,
   oʻzingizning raqamingizni yuboring…" with the keyboard again); normalised to
   `+998XXXXXXXXX`, any other country refused; a phone another account has is **never
@@ -1725,7 +1726,9 @@ Telegram, language uz). Every message is in the user's saved `user.language`.
   (`lang:uz|ru|en`). The choice is saved through `UserService.updateProfile` — the same
   `user.language` the Mini App uses, audited `PROFILE_UPDATED` — and the message is edited
   to confirm it.
-- Without `MINIAPP_URL` the open buttons are left out (and a warning logged).
+- With `MINIAPP_URL` missing or not https (Telegram refuses such a `web_app` button) the open
+  buttons are left out and the texts still go out; `TelegramBotModeGuard` logs a warning at
+  startup (under `prod` it refuses to start).
 
 ### Texts and the banner
 

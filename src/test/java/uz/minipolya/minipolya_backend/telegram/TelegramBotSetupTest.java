@@ -118,6 +118,16 @@ class TelegramBotSetupTest {
     }
 
     @Test
+    void aMiniAppUrlThatIsNotHttpsLeavesTheMenuButtonAlone() {
+        telegramAlreadyUpToDate();
+        properties.getBot().setMiniappUrl("http://localhost:5173");
+
+        setup.run();
+
+        verify(api, never()).call(eq("setChatMenuButton"), any());
+    }
+
+    @Test
     void withoutAMiniAppUrlTheMenuButtonIsLeftAlone() {
         telegramAlreadyUpToDate();
         properties.getBot().setMiniappUrl("");

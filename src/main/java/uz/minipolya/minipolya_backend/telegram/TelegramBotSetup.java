@@ -104,8 +104,8 @@ public class TelegramBotSetup {
 
     private boolean menuButton() {
         String url = bot.getMiniappUrl();
-        if (url == null || url.isBlank()) {
-            log.warn("[telegram] MINIAPP_URL is not set: the menu button is left as it is");
+        if (!MiniAppUrl.usable(url)) {
+            log.warn("[telegram] MINIAPP_URL is missing or not https: the menu button is left as it is");
             return false;
         }
         JsonNode current = api.call("getChatMenuButton", Map.of());

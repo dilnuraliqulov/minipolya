@@ -1,12 +1,17 @@
 package uz.minipolya.minipolya_backend.telegram;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.mock.env.MockEnvironment;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@ExtendWith(OutputCaptureExtension.class)
 class TelegramBotModeGuardTest {
 
     private static final String GOOD_SECRET = "abcdefghijklmnopqrstuvwxyz_0123456789-ABC";
@@ -58,6 +63,23 @@ class TelegramBotModeGuardTest {
         http.setMiniappUrl("http://app.minipolya.uz");
         assertThatThrownBy(() -> TelegramBotModeGuard.check(http, env("prod")))
                 .hasMessageContaining("MINIAPP_URL");
+    }
+
+    @Test
+    void outsideProdAMiniAppUrlThatIsNotHttpsIsAWarningAtStartup(CapturedOutput output) {
+        AppProperties.Bot http = bot("polling");
+        http.setMiniappUrl("http://localhost:5173");
+
+        assertThatCode(() -> TelegramBotModeGuard.check(http, env("dev"))).doesNotThrowAnyException();
+
+        assertThat(output.getOut()).contains("MINIAPP_URL").contains("https");
+    }
+
+    @Test
+    void aGoodMiniAppUrlIsNotWarnedAbout(CapturedOutput output) {
+        TelegramBotModeGuard.check(bot("polling"), env("dev"));
+
+        assertThat(output.getOut()).doesNotContain("MINIAPP_URL");
     }
 
     @Test

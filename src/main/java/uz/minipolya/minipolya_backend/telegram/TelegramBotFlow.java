@@ -125,7 +125,9 @@ public class TelegramBotFlow {
             if (startParam != null) {
                 startPayloads.remember(user.getTelegramId(), startParam);
             }
-            banner.send(chatId, texts.get(language, "start.ask_phone", "firstName", firstName), askPhoneKeyboard(language));
+            banner.send(chatId, texts.get(language, "start.greeting", "firstName", firstName),
+                    openButton(language, startParam));
+            bot.send(chatId, texts.get(language, "start.ask_phone"), askPhoneKeyboard(language));
         } else {
             banner.send(chatId, texts.get(language, "start.welcome", "firstName", firstName),
                     openButton(language, startParam));
@@ -197,11 +199,11 @@ public class TelegramBotFlow {
                 texts.get(language, "placeholder.share_phone"));
     }
 
-    /** The inline "open MiniPolya" button, or none when MINIAPP_URL is not set. */
+    /** The inline "open MiniPolya" button, or none when MINIAPP_URL is missing or not https. */
     Map<String, Object> openButton(String language, String startParam) {
         String url = miniAppUrl(startParam);
         if (url == null) {
-            log.warn("[telegram] MINIAPP_URL is not set: no open button");
+            log.warn("[telegram] MINIAPP_URL is missing or not https: no open button");
             return null;
         }
         return TelegramKeyboards.inline(List.of(TelegramKeyboards.webAppButton(texts.get(language, "button.open"), url)));
@@ -210,10 +212,11 @@ public class TelegramBotFlow {
     /**
      * MINIAPP_URL, with {@code startapp=<param>} added when /start carried a deep link: a
      * web_app button gets no start_param from Telegram, so the Mini App reads it from its URL.
+     * Null when MINIAPP_URL cannot be used for a web_app button.
      */
     String miniAppUrl(String startParam) {
         String base = appProperties.getBot().getMiniappUrl();
-        if (base == null || base.isBlank()) {
+        if (!MiniAppUrl.usable(base)) {
             return null;
         }
         base = base.trim();

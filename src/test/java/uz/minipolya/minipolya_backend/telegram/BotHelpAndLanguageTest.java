@@ -87,7 +87,8 @@ class BotHelpAndLanguageTest {
         assertThat(edit.text()).isEqualTo("✅ Язык изменён: Русский");
 
         flow.onMessage(BotFixture.message(tg, "Aziz", "/start"));
-        assertThat(bot.last().text()).startsWith("<b>Здравствуйте, Aziz!</b>");
+        assertThat(bot.sent().get(bot.sent().size() - 2).text()).startsWith("<b>Здравствуйте, Aziz!</b>");
+        assertThat(bot.last().text()).startsWith("Отправьте свой номер телефона");
 
         flow.onMessage(BotFixture.message(tg, "Aziz", "/help"));
         assertThat(bot.last().text()).startsWith("<b>Как работает MiniPolya</b>");

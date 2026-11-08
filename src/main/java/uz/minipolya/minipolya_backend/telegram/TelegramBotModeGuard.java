@@ -1,5 +1,6 @@
 package uz.minipolya.minipolya_backend.telegram;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
@@ -16,7 +17,10 @@ import java.util.regex.Pattern;
  *       characters or with characters Telegram does not allow, or a MINIAPP_URL that is not
  *       https (Telegram refuses web_app buttons without it).</li>
  * </ul>
+ * Outside {@code prod} an unusable MINIAPP_URL is only a warning: the bot still talks, without
+ * the open button.
  */
+@Slf4j
 @Configuration
 public class TelegramBotModeGuard {
 
@@ -42,10 +46,13 @@ public class TelegramBotModeGuard {
                 throw new IllegalStateException(
                         "TELEGRAM_WEBHOOK_SECRET must be 32-256 characters of A-Z, a-z, 0-9, _ and -");
             }
-            String url = bot.getMiniappUrl();
-            if (url == null || !url.startsWith("https://")) {
+            if (!MiniAppUrl.usable(bot.getMiniappUrl())) {
                 throw new IllegalStateException("MINIAPP_URL must be an https URL");
             }
+        }
+        if (bot.isActive() && !MiniAppUrl.usable(bot.getMiniappUrl())) {
+            log.warn("[telegram] MINIAPP_URL is missing or not https: "
+                    + "the bot sends its messages without the open button and leaves the menu button as it is");
         }
     }
 }

@@ -37,18 +37,23 @@ class BotStartTest {
     }
 
     @Test
-    void withoutAPhoneTheBannerAsksForItWithTheContactButton() {
+    void withoutAPhoneTheBannerOpensTheMiniAppAndASecondMessageAsksForIt() {
         flow.onMessage(BotFixture.message(TG, "Ali", "/start"));
 
         verify(authService).findOrCreateFromTelegram(argThat(data -> data.telegramId() == TG
                 && "Ali".equals(data.firstName())));
+        assertThat(bot.sent()).hasSize(2);
+        BotFixture.Call banner = bot.sent().getFirst();
+        assertThat(banner.method()).isEqualTo("sendPhoto");
+        assertThat(banner.text()).isEqualTo("<b>Assalomu alaykum, Ali!</b> 👋\n\n"
+                + "<b>MiniPolya</b> — maydon band qilishning eng oson yoʻli.");
+        assertThat(banner.params()).containsEntry("parse_mode", "HTML");
+        assertThat(banner.webAppUrl()).isEqualTo(BotFixture.MINIAPP);
+
         BotFixture.Call call = bot.last();
-        assertThat(call.method()).isEqualTo("sendPhoto");
-        assertThat(call.text()).isEqualTo("<b>Assalomu alaykum, Ali!</b> 👋\n\n"
-                + "<b>MiniPolya</b> — maydon band qilishning eng oson yoʻli.\n\n"
-                + "Davom etish uchun telefon raqamingizni yuboring. Raqamingiz faqat bronlarni tasdiqlash "
-                + "va maydon egasi siz bilan bogʻlanishi uchun ishlatiladi.");
-        assertThat(call.params()).containsEntry("parse_mode", "HTML");
+        assertThat(call.method()).isEqualTo("sendMessage");
+        assertThat(call.text()).isEqualTo(
+                "Bronlarni tasdiqlash va maydon egasi siz bilan bogʻlanishi uchun telefon raqamingizni yuboring 👇");
         assertThat(call.markup()).containsEntry("resize_keyboard", true)
                 .containsEntry("one_time_keyboard", true)
                 .containsEntry("input_field_placeholder", "Pastdagi tugmani bosing")
@@ -57,11 +62,41 @@ class BotStartTest {
     }
 
     @Test
+    void withoutAPhoneADeepLinkIsOnTheBannerButton() {
+        flow.onMessage(BotFixture.message(TG, "Ali", "/start game_42"));
+
+        assertThat(bot.sent().getFirst().webAppUrl()).isEqualTo(BotFixture.MINIAPP + "?startapp=game_42");
+    }
+
+    @Test
+    void withoutAMiniAppUrlTheTextsGoOutWithNoButton() {
+        bot.properties.getBot().setMiniappUrl("");
+
+        flow.onMessage(BotFixture.message(TG, "Ali", "/start"));
+
+        assertThat(bot.sent().getFirst().markup()).isNull();
+        assertThat(bot.last().asksForContact()).isTrue();
+    }
+
+    @Test
+    void aMiniAppUrlThatIsNotHttpsGivesNoButtonEither() {
+        bot.properties.getBot().setMiniappUrl("http://localhost:5173");
+        user.setPhone("+998901234558");
+
+        flow.onMessage(BotFixture.message(TG, "Ali", "/start"));
+
+        assertThat(bot.sent()).hasSize(1);
+        assertThat(bot.last().text()).startsWith("<b>Xush kelibsiz, Ali!</b>");
+        assertThat(bot.last().markup()).isNull();
+    }
+
+    @Test
     void withAPhoneTheBannerWelcomesAndOpensTheMiniApp() {
         user.setPhone("+998901234558");
 
         flow.onMessage(BotFixture.message(TG, "Ali", "/start"));
 
+        assertThat(bot.sent()).hasSize(1);
         BotFixture.Call call = bot.last();
         assertThat(call.method()).isEqualTo("sendPhoto");
         assertThat(call.text()).isEqualTo("<b>Xush kelibsiz, Ali!</b> ⚽\n\nMaydon tanlang va bir necha soniyada band qiling.");
@@ -104,7 +139,7 @@ class BotStartTest {
     void theFirstNameIsEscapedForHtml() {
         flow.onMessage(BotFixture.message(TG, "<b>Ali</b> & Co", "/start"));
 
-        assertThat(bot.last().text()).startsWith("<b>Assalomu alaykum, &lt;b&gt;Ali&lt;/b&gt; &amp; Co!</b>");
+        assertThat(bot.sent().getFirst().text()).startsWith("<b>Assalomu alaykum, &lt;b&gt;Ali&lt;/b&gt; &amp; Co!</b>");
     }
 
     @Test
@@ -113,7 +148,7 @@ class BotStartTest {
 
         flow.onMessage(BotFixture.message(TG, "Ali", "/start"));
 
-        assertThat(bot.last().text()).startsWith("<b>Здравствуйте, Ali!</b>");
+        assertThat(bot.sent().getFirst().text()).startsWith("<b>Здравствуйте, Ali!</b>");
         assertThat(bot.last().markup().toString()).contains("📱 Отправить номер телефона");
     }
 
