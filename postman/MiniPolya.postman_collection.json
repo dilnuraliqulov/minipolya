@@ -2891,6 +2891,51 @@
           }
         },
         {
+          "name": "200 public listing for a date: freeSlotsCount",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('every stadium has freeSlotsCount', function () {",
+                  "    pm.response.json().data.content.forEach(function (s) {",
+                  "        pm.expect(s.freeSlotsCount).to.be.a('number');",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/stadiums?date=2030-01-15",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "stadiums"
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "2030-01-15"
+                }
+              ]
+            },
+            "description": "date: YYYY-MM-DD, Tashkent, default today. A date outside the booking window answers 0 for every stadium; a malformed one is 400.",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
           "name": "200 public listing as a signed-in player: isFavorited (R23)",
           "event": [
             {

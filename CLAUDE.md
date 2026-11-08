@@ -274,7 +274,8 @@ When you need to change the schema (add column, new table, alter constraint):
   else 400 "Invalid district"), all optional — a JPA specification
   (`StadiumSpecifications.publicFilter`). Each `StadiumResponse` carries
   `coverPhotoUrl` (the lowest-position photo; absent when none), `averageRating` (absent
-  with no reviews), `reviewCount`, and for a signed-in caller `isFavorited`. Ratings,
+  with no reviews), `reviewCount`, `freeSlotsCount` (see "Availability Calculation") and for a
+  signed-in caller `isFavorited`. Ratings,
   cover photos and favorites are loaded for the whole page in one grouped query each
   (`StadiumService.toPublicResponses`; `PublicStadiumListTest` counts the queries with 22
   stadiums). The detail (`GET /api/stadiums/{id}`) carries `averageRating` /
@@ -1214,6 +1215,13 @@ Every opening hour of the date is listed, each with a `status`:
 8. Apply any active promotion discount
 9. When the deposit of the stadium's effective minimum is below the slot's player price,
    add `depositAmount` / `remainderAmount` (E3, T3; see "Payments → API fields")
+
+**Free-slot count.** `GET /api/stadiums?date=YYYY-MM-DD` (Tashkent, default today; malformed = 400)
+answers `freeSlotsCount` on each stadium: the hours of that date whose status above would be
+`free`, from the one definition in `SlotRules`, which the availability endpoint uses too, so the
+two cannot disagree. Two queries for the whole page (`AvailabilityService.freeSlotCounts`;
+`StadiumFreeSlotsTest` counts them with 22 stadiums). A date outside the booking window (past,
+or beyond `max-weeks-ahead`) answers 0, not an error, so a list left open past midnight still loads.
 
 ## Audit log
 

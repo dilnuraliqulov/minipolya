@@ -129,4 +129,17 @@ public interface BookingRepository extends JpaRepository<Booking, UUID>, JpaSpec
     List<Booking> findActiveForStadiumBetween(@Param("stadiumId") UUID stadiumId,
                                               @Param("from") OffsetDateTime from,
                                               @Param("to") OffsetDateTime to);
+
+    /** {@link #findActiveForStadiumBetween} for a whole page of stadiums at once. */
+    @Query("""
+            SELECT new uz.minipolya.minipolya_backend.repository.BookedSpan(b.stadium.id, b.startsAt, b.endsAt)
+            FROM Booking b
+            WHERE b.stadium.id IN :stadiumIds
+              AND b.status IN ('pending', 'confirmed')
+              AND b.startsAt >= :from
+              AND b.startsAt < :to
+            """)
+    List<BookedSpan> findActiveSpansBetween(@Param("stadiumIds") List<UUID> stadiumIds,
+                                            @Param("from") OffsetDateTime from,
+                                            @Param("to") OffsetDateTime to);
 }

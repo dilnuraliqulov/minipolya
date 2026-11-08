@@ -34,6 +34,7 @@ import uz.minipolya.minipolya_backend.util.Districts;
 import uz.minipolya.minipolya_backend.util.Pagination;
 import uz.minipolya.minipolya_backend.util.StadiumRules;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -59,6 +60,7 @@ public class StadiumService {
     private final AuditService auditService;
     private final EntityManager entityManager;
     private final CardPricing cardPricing;
+    private final AvailabilityService availabilityService;
 
     // ---- Owner operations ----
 
@@ -168,13 +170,15 @@ public class StadiumService {
      * The players' stadium search. Every filter is optional; {@code district} must be one of
      * the twelve ({@link Districts}) and {@code maxPrice} is a player price. A page costs a
      * fixed handful of queries: the stadiums with owner and amenities, the count, then
-     * ratings, cover photos and the caller's favorites for the whole page at once.
+     * ratings, cover photos, the caller's favorites and {@code freeSlotsCount} for the whole
+     * page at once.
      *
+     * @param date     the Tashkent date {@code freeSlotsCount} is for; null means today
      * @param viewerId the caller, or null when anonymous (no favorite flag)
      */
     @Transactional(readOnly = true)
     public PageResponse<StadiumResponse> searchPublic(String q, String format, Long maxPrice, String district,
-                                                      UUID viewerId, int page, int size) {
+                                                      LocalDate date, UUID viewerId, int page, int size) {
         String validDistrict = Districts.require(district);
         Pageable pageable = Pagination.of(page, size,
                 Sort.by(Sort.Direction.ASC, "createdAt").and(Sort.by(Sort.Direction.ASC, "id")));
@@ -185,6 +189,8 @@ public class StadiumService {
                 maxPrice == null ? null : pricing.maxNetFor(maxPrice), validDistrict), pageable);
         Map<UUID, StadiumResponse> byId = toPublicResponses(stadiums.getContent(), viewerId, pricing).stream()
                 .collect(Collectors.toMap(StadiumResponse::getId, r -> r));
+        availabilityService.freeSlotCounts(stadiums.getContent(), date)
+                .forEach((id, count) -> byId.get(id).setFreeSlotsCount(count));
         return PageResponse.from(stadiums, stadium -> byId.get(stadium.getId()));
     }
 

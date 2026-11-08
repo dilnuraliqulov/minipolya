@@ -11,8 +11,10 @@ import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.PricingRule;
 import uz.minipolya.minipolya_backend.entity.Promotion;
 import uz.minipolya.minipolya_backend.entity.Stadium;
+import uz.minipolya.minipolya_backend.entity.StadiumClosure;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
+import uz.minipolya.minipolya_backend.repository.BookedSpan;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -28,8 +30,10 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Computes free/occupied 1-hour slots for a stadium on a Tashkent-local date,
@@ -61,7 +65,7 @@ public class AvailabilityService {
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
 
-        ZonedDateTime nowLocal = ZonedDateTime.now(clock.withZone(TASHKENT));
+        ZonedDateTime nowLocal = nowInTashkent();
         LocalDate today = nowLocal.toLocalDate();
         LocalDate queryDate = date != null ? date : today;
         if (queryDate.isBefore(today)) {
@@ -85,24 +89,19 @@ public class AvailabilityService {
                 .filter(g -> !g.getStartsAt().isBefore(dayStart) && g.getStartsAt().isBefore(dayEnd))
                 .toList();
 
-        // On today's date an hour that has already started can no longer be booked:
-        // it is listed as past, so the day still shows every opening hour.
-        boolean isToday = queryDate.equals(today);
-        LocalTime localNow = nowLocal.toLocalTime();
+        List<BookedSpan> booked = bookings.stream()
+                .map(b -> new BookedSpan(stadiumId, b.getStartsAt(), b.getEndsAt()))
+                .toList();
 
+        // An hour already started today is listed as past, so the day still shows every opening hour.
         List<TimeSlot> slots = new ArrayList<>();
-        LocalTime slotStart = stadium.getOpenTime();
-        while (slotStart.isBefore(stadium.getCloseTime())) {
-            LocalTime slotEnd = slotStart.plusHours(1);
-            if (slotEnd.isAfter(stadium.getCloseTime())) {
-                break; // no room for a full hour before closing
-            }
-            boolean past = isToday && !slotStart.isAfter(localNow);
-            slots.add(past
-                    ? TimeSlot.builder().startTime(slotStart).endTime(slotEnd)
+        for (SlotRules.Hour hour : SlotRules.hoursOf(stadium.getOpenTime(), stadium.getCloseTime())) {
+            String status = SlotRules.status(queryDate, hour, nowLocal, booked,
+                    time -> closureService.isClosedAt(stadiumId, queryDate, time));
+            slots.add(TimeSlot.PAST.equals(status)
+                    ? TimeSlot.builder().startTime(hour.start()).endTime(hour.end())
                         .available(false).status(TimeSlot.PAST).build()
-                    : buildSlot(stadium, queryDate, slotStart, slotEnd, bookings, rules, waitingGames));
-            slotStart = slotEnd;
+                    : buildSlot(stadium, queryDate, hour.start(), hour.end(), status, rules, waitingGames));
         }
 
         return AvailabilityResponse.builder()
@@ -113,16 +112,53 @@ public class AvailabilityService {
                 .build();
     }
 
+    /**
+     * How many hours of {@code date} can still be booked at each stadium, by the same
+     * {@link SlotRules} as {@link #getAvailability}, in two queries however long the list. A
+     * day outside the booking window has nothing to book; unlike the availability screen this
+     * is not an error, so a list left open past midnight still loads.
+     *
+     * @param requested the Tashkent date; null means today
+     */
+    @Transactional(readOnly = true)
+    public Map<UUID, Integer> freeSlotCounts(List<Stadium> stadiums, LocalDate requested) {
+        if (stadiums.isEmpty()) {
+            return Map.of();
+        }
+        ZonedDateTime nowLocal = nowInTashkent();
+        LocalDate today = nowLocal.toLocalDate();
+        LocalDate date = requested != null ? requested : today;
+        if (date.isBefore(today) || date.isAfter(today.plusWeeks(appProperties.getBooking().getMaxWeeksAhead()))) {
+            return stadiums.stream().collect(Collectors.toMap(Stadium::getId, s -> 0));
+        }
+        List<UUID> ids = stadiums.stream().map(Stadium::getId).toList();
+        Map<UUID, List<BookedSpan>> booked = bookingRepository.findActiveSpansBetween(ids,
+                        date.atStartOfDay(TASHKENT).toOffsetDateTime(),
+                        date.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime()).stream()
+                .collect(Collectors.groupingBy(BookedSpan::stadiumId));
+        Map<UUID, List<StadiumClosure>> closures = closureService.closuresOn(ids, date).stream()
+                .collect(Collectors.groupingBy(c -> c.getStadium().getId()));
+
+        return stadiums.stream().collect(Collectors.toMap(Stadium::getId, stadium -> {
+            List<BookedSpan> spans = booked.getOrDefault(stadium.getId(), List.of());
+            List<StadiumClosure> closed = closures.getOrDefault(stadium.getId(), List.of());
+            return (int) SlotRules.hoursOf(stadium.getOpenTime(), stadium.getCloseTime()).stream()
+                    .filter(hour -> TimeSlot.FREE.equals(SlotRules.status(date, hour, nowLocal, spans,
+                            time -> closed.stream().anyMatch(c -> StadiumClosureService.covers(c, date, time)))))
+                    .count();
+        }));
+    }
+
+    private ZonedDateTime nowInTashkent() {
+        return ZonedDateTime.now(clock.withZone(TASHKENT));
+    }
+
     private TimeSlot buildSlot(Stadium stadium, LocalDate date, LocalTime slotStart, LocalTime slotEnd,
-                               List<Booking> bookings, List<PricingRule> rules, List<Game> waitingGames) {
+                               String status, List<PricingRule> rules, List<Game> waitingGames) {
         OffsetDateTime slotStartUtc = date.atTime(slotStart).atZone(TASHKENT).toOffsetDateTime();
         OffsetDateTime slotEndUtc = date.atTime(slotEnd).atZone(TASHKENT).toOffsetDateTime();
 
-        boolean booked = bookings.stream()
-                .anyMatch(b -> b.getStartsAt().isBefore(slotEndUtc) && slotStartUtc.isBefore(b.getEndsAt()));
-        boolean closed = closureService.isClosedAt(stadium.getId(), date, slotStart);
-        boolean available = !booked && !closed;
-        String status = booked ? TimeSlot.BOOKED : closed ? TimeSlot.CLOSED : TimeSlot.FREE;
+        boolean available = TimeSlot.FREE.equals(status);
 
         TimeSlot.TimeSlotBuilder slot = TimeSlot.builder()
                 .startTime(slotStart)

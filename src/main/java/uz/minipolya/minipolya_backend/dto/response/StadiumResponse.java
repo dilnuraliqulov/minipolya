@@ -59,6 +59,9 @@ public class StadiumResponse {
     private Double averageRating;
     private Integer reviewCount;
 
+    /** The player search only: how many hours of the requested date can still be booked. */
+    private Integer freeSlotsCount;
+
     /** Player lists, for a signed-in caller only: whether they have favorited this stadium. */
     @JsonProperty("isFavorited")
     private Boolean favorited;
