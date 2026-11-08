@@ -17,11 +17,13 @@ import uz.minipolya.minipolya_backend.dto.request.PayBookingRequest;
 import uz.minipolya.minipolya_backend.dto.request.PayRemainderRequest;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
+import uz.minipolya.minipolya_backend.dto.response.ManualBookingPriceResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.service.BookingService;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @RestController
@@ -108,6 +110,16 @@ public class BookingController {
                                                      @Valid @RequestBody CreateManualBookingRequest request) {
         request.setStadiumId(stadiumId); // path is authoritative
         return ApiResponse.ok(bookingService.createManualBooking(request, ownerId), "Manual booking created");
+    }
+
+    /** What the walk-in form prefills: the owner's own price for that hour. */
+    @GetMapping("/api/owner/stadiums/{stadiumId}/bookings/suggested-price")
+    public ApiResponse<ManualBookingPriceResponse> suggestedPrice(
+            @AuthenticationPrincipal UUID ownerId,
+            @PathVariable UUID stadiumId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime startsAt) {
+        return ApiResponse.ok(new ManualBookingPriceResponse(
+                bookingService.manualBookingPrice(ownerId, stadiumId, startsAt)));
     }
 
     @GetMapping("/api/owner/stadiums/{stadiumId}/bookings")

@@ -44,6 +44,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -531,7 +532,7 @@ class BookingServiceTest {
     }
 
     @Test
-    void createManualBookingConfirmsImmediatelyAndRecordsCash() {
+    void createManualBookingConfirmsImmediatelyAndStaysUnpaid() {
         when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
         when(bookingPriceCalculator.hourPrice(any(Stadium.class), any(OffsetDateTime.class)))
                 .thenReturn(100_000L);
@@ -555,14 +556,14 @@ class BookingServiceTest {
         assertThat(saved.getUser()).isNull();
         assertThat(saved.getClientName()).isEqualTo("Walk-in");
         verify(gameService).cancelGamesOnSlot(eq(STADIUM_ID), any(), any());
-        verify(paymentService).recordCashPayment(MANUAL_BOOKING_ID, OWNER_ID);
+        verify(paymentService, never()).recordCashPayment(any(), any(), anyBoolean());
 
         AuditEntry entry = Audited.one(auditService, AuditAction.MANUAL_BOOKING_CREATED);
         assertThat(entry.getActorType()).isEqualTo(AuditActorType.OWNER);
         assertThat(entry.getEntityId()).isEqualTo(MANUAL_BOOKING_ID);
         assertThat(entry.getEntityLabel()).endsWith(", Walk-in");
         assertThat(entry.getChanges()).extracting(AuditChange::field)
-                .containsExactly("status", "startsAt", "durationHours", "price", "clientName");
+                .containsExactly("status", "startsAt", "durationHours", "price", "paymentStatus", "clientName");
         assertThat(entry.getChanges()).contains(AuditChange.of("price", null, 100_000L));
     }
 

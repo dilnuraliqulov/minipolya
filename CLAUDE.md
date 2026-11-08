@@ -460,7 +460,13 @@ paid"** and the owner's cash **409 "Already paid"**. The remainder is charged as
   These were 400 on the cash endpoint before. Cash also answers 409 "A payment for this
   booking is being processed" while a card payment is `processing` / `capture_pending`.
   Not the stadium's owner **403 "You do not own this stadium"**; 404 "Booking not found".
-- A walk-in paid in cash when it is added gets no mark (nothing to undo).
+- **A walk-in's payment** (`POST /api/owner/stadiums/{id}/bookings`): optional `price` (tiyin,
+  1 … `PRICE_MAX`; absent = the owner's price for that hour, the same figure
+  `GET /api/owner/stadiums/{id}/bookings/suggested-price?startsAt=` answers for the form) and
+  `paymentStatus` `unpaid` (the default: players pay after the game) or `paid`. `clientPhone`
+  is `+998XXXXXXXXX`. Added as `paid`, it records the cash row and the `cash_received` mark, so
+  the owner can undo a slip the same day like any other mark. Walk-ins never touch the platform
+  or a card; they count in the owner's `paidInCash` / `outstanding` figures.
 - Audited: `CASH_RECEIVED` (with `remainderMark`), `REMAINDER_NOT_PAID` (OWNER),
   `REMAINDER_MARK_UNDONE` (OWNER, or ADMIN for the admin's undo; `remainderMark`,
   `paidAmount`, `paymentStatus`, `cashPaymentStatus`). Paying the rest in the app records

@@ -455,7 +455,9 @@ public class BookingService {
         bookingWindowValidator.validate(stadium, startsAt);
 
         // The owner prices a walk-in in net terms; cash carries no card fee.
-        long price = bookingPriceCalculator.hourPrice(stadium, startsAt);
+        long price = request.getPrice() != null
+                ? request.getPrice()
+                : bookingPriceCalculator.hourPrice(stadium, startsAt);
 
         Booking booking = Booking.builder()
                 .stadium(stadium)
@@ -482,9 +484,10 @@ public class BookingService {
 
         gameService.cancelGamesOnSlot(stadium.getId(), startsAt, endsAt);
 
-        String method = request.getPaymentMethod();
-        if (method == null || method.isBlank() || "cash".equalsIgnoreCase(method.trim())) {
-            paymentService.recordCashPayment(saved.getId(), ownerUserId);
+        // Cash only, between the owner and the client: never a platform or card payment. Added
+        // as paid, it carries the same mark as cash taken later, so the owner can undo a slip.
+        if ("paid".equals(request.getPaymentStatus())) {
+            paymentService.recordCashPayment(saved.getId(), ownerUserId, true);
         }
 
         auditService.record(AuditEntry.owner(ownerUserId, AuditAction.MANUAL_BOOKING_CREATED)
@@ -493,10 +496,22 @@ public class BookingService {
                 .created("startsAt", saved.getStartsAt())
                 .created("durationHours", saved.getDurationHours())
                 .created("price", saved.getPrice())
+                .created("paymentStatus", saved.getPaymentStatus())
                 .created("clientName", saved.getClientName()));
         log.info("Manual booking created: id={} stadiumId={} ownerId={} client='{}'",
                 saved.getId(), stadium.getId(), ownerUserId, request.getClientName());
         return bookingResponseFactory.forOwner(saved);
+    }
+
+    /** What a walk-in at {@code startsAt} costs unless the owner says otherwise: their own price for that hour. */
+    @Transactional(readOnly = true)
+    public long manualBookingPrice(UUID ownerUserId, UUID stadiumId, OffsetDateTime startsAt) {
+        Stadium stadium = stadiumRepository.findById(stadiumId)
+                .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
+        if (!stadium.getOwner().getId().equals(ownerUserId)) {
+            throw new ForbiddenException("You do not own this stadium");
+        }
+        return bookingPriceCalculator.hourPrice(stadium, startsAt);
     }
 
     /** Pending → confirmed, called after a successful payment. Idempotent. */

@@ -8465,6 +8465,55 @@
           }
         },
         {
+          "name": "200 walk-in form: the owner's price for that hour",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('price is a number of tiyin', function () {",
+                  "    pm.expect(pm.response.json().data.price).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/stadiums/{{stadiumId}}/bookings/suggested-price?startsAt=2030-01-15T13:00:00Z",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "stadiums",
+                "{{stadiumId}}",
+                "bookings",
+                "suggested-price"
+              ],
+              "query": [
+                {
+                  "key": "startsAt",
+                  "value": "2030-01-15T13:00:00Z"
+                }
+              ]
+            },
+            "description": "What POST .../bookings charges when no price is sent."
+          }
+        },
+        {
           "name": "400 a two-hour manual booking",
           "event": [
             {

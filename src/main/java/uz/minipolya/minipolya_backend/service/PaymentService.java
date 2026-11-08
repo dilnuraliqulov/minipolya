@@ -1413,11 +1413,6 @@ public class PaymentService {
                 java.util.List.of(Payment.Status.PROCESSING, Payment.Status.CAPTURE_PENDING));
     }
 
-    @Transactional
-    public Payment recordCashPayment(UUID bookingId, UUID ownerUserId) {
-        return recordCashPayment(bookingId, ownerUserId, false);
-    }
-
     /**
      * E5: undoing a "cash received" mark voids the cash row it recorded — the latest arrived
      * cash payment of the booking becomes {@code cancelled} (never a refund: the money never
@@ -1455,7 +1450,7 @@ public class PaymentService {
     /**
      * Records the cash the owner took. With {@code markRemainder} (the owner's "Naqd olindi",
      * E5) the booking also gets the {@code cash_received} mark, recorded in the same
-     * {@code CASH_RECEIVED} entry; a walk-in paid on creation is not marked.
+     * {@code CASH_RECEIVED} entry. A walk-in added as paid is marked too, so the owner can undo it.
      */
     @Transactional
     public Payment recordCashPayment(UUID bookingId, UUID ownerUserId, boolean markRemainder) {

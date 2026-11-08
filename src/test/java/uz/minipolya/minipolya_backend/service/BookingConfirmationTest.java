@@ -343,7 +343,7 @@ class BookingConfirmationTest {
         paid.setPaymentStatus(Booking.PaymentStatus.PAID);
         when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(paid));
 
-        assertThatThrownBy(() -> service.recordCashPayment(BOOKING_ID, OWNER_ID))
+        assertThatThrownBy(() -> service.recordCashPayment(BOOKING_ID, OWNER_ID, false))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessage("Already paid");
 
@@ -358,7 +358,7 @@ class BookingConfirmationTest {
         when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(partly));
         when(userRepository.findById(OWNER_ID)).thenReturn(Optional.of(owner));
 
-        Payment cash = service.recordCashPayment(BOOKING_ID, OWNER_ID);
+        Payment cash = service.recordCashPayment(BOOKING_ID, OWNER_ID, false);
 
         assertThat(cash.getAmount()).isEqualTo(PRICE - MINIMUM);
         assertThat(cash.getMethod()).isEqualTo(Payment.Method.CASH);

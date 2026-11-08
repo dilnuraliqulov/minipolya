@@ -258,7 +258,7 @@ class PaymentServiceTest {
         when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        Payment result = service.recordCashPayment(BOOKING_ID, OWNER_ID);
+        Payment result = service.recordCashPayment(BOOKING_ID, OWNER_ID, false);
 
         assertThat(result.getProvider()).isEqualTo(Payment.Provider.CASH);
         assertThat(result.getMethod()).isEqualTo(Payment.Method.CASH);
