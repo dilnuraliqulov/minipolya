@@ -954,7 +954,9 @@ Every amount a player sees is the final amount they pay.
 - **Admin**: the owner's view plus `ownerReceives` and `atmosFee` on stadiums, pricing
   rules and bookings; a team adds `platformFee`, `ownerPart`, `ownerAdvance`, `ownerRemainder`,
   `ownerReceives`, `atmosFee`; a payment shows `ownerAmount`, `platformAmount`,
-  `atmosFee` (`card_fee_expected`) and `providerCommission`.
+  `atmosFee` (`card_fee_expected`), `providerCommission` and what each side keeps after ATMOS,
+  `ownerNet` / `platformNet` (`util/PaymentNets`, read from the stored row;
+  `ownerNet + platformNet + atmosFee = amount`, and `platformNet` is exactly the team fee).
 - The public search's `maxPrice` is a player price, converted to the largest fitting
   owner price.
 

@@ -44,6 +44,10 @@ public class AdminPaymentResponse {
     private Long platformAmount;
     /** What ATMOS was expected to take when the payment was made (the card fee and rounding on rows from before the one-player-price rule). */
     private Long atmosFee;
+    /** What the owner keeps after ATMOS; {@code ownerNet + platformNet + atmosFee = amount}. */
+    private Long ownerNet;
+    /** What the platform keeps after ATMOS: exactly the fee on a team payment. */
+    private Long platformNet;
     private Long providerCommission;
     private Integer commissionPercent;
 

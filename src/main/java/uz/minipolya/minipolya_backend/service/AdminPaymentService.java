@@ -16,6 +16,7 @@ import uz.minipolya.minipolya_backend.repository.AdminPaymentFilter;
 import uz.minipolya.minipolya_backend.repository.PaymentRepository;
 import uz.minipolya.minipolya_backend.repository.PaymentSpecifications;
 import uz.minipolya.minipolya_backend.util.Pagination;
+import uz.minipolya.minipolya_backend.util.PaymentNets;
 import uz.minipolya.minipolya_backend.util.Revenue;
 import uz.minipolya.minipolya_backend.util.TashkentDays;
 
@@ -35,6 +36,7 @@ public class AdminPaymentService {
     private final PaymentRepository paymentRepository;
     private final AdminPaymentMapper adminPaymentMapper;
     private final RevenueService revenueService;
+    private final CardPricing cardPricing;
 
     @Transactional(readOnly = true)
     public Page<AdminPaymentResponse> list(String search, String type, String status, String method,
@@ -46,15 +48,16 @@ public class AdminPaymentService {
                 stadiumId, TashkentDays.range(from, to));
         // Unsorted on purpose: the specification orders (failed refunds first, then newest).
         PageRequest pageable = Pagination.of(page, size, Sort.unsorted());
+        int cardFeeBps = cardPricing.cardFeeBps();
         return paymentRepository.findAll(PaymentSpecifications.adminFilter(filter), pageable)
-                .map(adminPaymentMapper::toResponse);
+                .map(payment -> toResponse(payment, cardFeeBps));
     }
 
     @Transactional(readOnly = true)
     public AdminPaymentResponse get(UUID paymentId) {
         Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
-        AdminPaymentResponse response = adminPaymentMapper.toResponse(payment);
+        AdminPaymentResponse response = toResponse(payment, cardPricing.cardFeeBps());
         List<Payment> linked = payment.getRefundOfPayment() != null
                 ? List.of(payment.getRefundOfPayment())
                 : paymentRepository.findByRefundOfPaymentIdOrderByCreatedAtAsc(paymentId);
@@ -75,6 +78,22 @@ public class AdminPaymentService {
                 .refunded(summary.refunded())
                 .held(revenueService.heldNow())
                 .build();
+    }
+
+    private AdminPaymentResponse toResponse(Payment payment, int cardFeeBps) {
+        AdminPaymentResponse response = adminPaymentMapper.toResponse(payment);
+        PaymentNets nets = payment.getMethod() == Payment.Method.CASH
+                ? PaymentNets.ofCash(payment.getAmount())
+                : PaymentNets.ofCard(payment.getAmount(), zeroIfNull(payment.getOwnerAmount()),
+                        zeroIfNull(payment.getPlatformAmount()), payment.getCardFeeExpected(), cardFeeBps);
+        response.setOwnerNet(nets.ownerNet());
+        response.setPlatformNet(nets.platformNet());
+        response.setAtmosFee(nets.atmosFee());
+        return response;
+    }
+
+    private static long zeroIfNull(Long amount) {
+        return amount == null ? 0L : amount;
     }
 
     private static <T> T parse(String value, Function<String, T> parser, String message) {
