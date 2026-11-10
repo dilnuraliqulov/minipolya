@@ -12,6 +12,7 @@ import uz.minipolya.minipolya_backend.dto.request.UpdateStadiumRequest;
 import uz.minipolya.minipolya_backend.dto.response.AmenitiesResponse;
 import uz.minipolya.minipolya_backend.dto.response.PhotoResponse;
 import uz.minipolya.minipolya_backend.dto.response.StadiumDetailResponse;
+import uz.minipolya.minipolya_backend.dto.response.StadiumLocationResponse;
 import uz.minipolya.minipolya_backend.dto.response.StadiumResponse;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.StadiumAmenities;
@@ -57,6 +58,10 @@ public interface StadiumMapper {
     @Mapping(source = "owner.phone", target = "ownerPhone")
     @Mapping(source = "cancellationHours", target = "cancellationPolicy.cancellationHours")
     StadiumDetailResponse toDetailResponse(Stadium stadium);
+
+    /** Where a game is played (team game screens, the challenge board); the cover photo is the service's. */
+    @Mapping(target = "coverPhotoUrl", ignore = true)
+    StadiumLocationResponse toLocationResponse(Stadium stadium);
 
     AmenitiesResponse toAmenitiesResponse(StadiumAmenities amenities);
 

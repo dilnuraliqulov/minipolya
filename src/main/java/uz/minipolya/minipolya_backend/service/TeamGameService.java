@@ -1,6 +1,8 @@
 package uz.minipolya.minipolya_backend.service;
 
 import lombok.RequiredArgsConstructor;
+import org.mapstruct.factory.Mappers;
+import uz.minipolya.minipolya_backend.mapper.StadiumMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
@@ -98,6 +100,9 @@ public class TeamGameService {
 
     private static final String STATUS_WAITING = "open";
     private static final String STATUS_CONFIRMED = "confirmed";
+
+    /** Stateless: a challenge card's location is built as the game detail's is. */
+    private static final StadiumMapper STADIUM_MAPPER = Mappers.getMapper(StadiumMapper.class);
 
     private final GameRepository gameRepository;
     private final GameTeamRepository gameTeamRepository;
@@ -906,7 +911,9 @@ public class TeamGameService {
                 .map(g -> g.getStadium().getId()).distinct().toList());
         return games.map(game -> {
             GameChallengeResponse card = toChallenge(game);
-            card.setStadiumPhotoUrl(covers.get(game.getStadium().getId()));
+            String cover = covers.get(game.getStadium().getId());
+            card.setStadiumPhotoUrl(cover);
+            card.getLocation().setCoverPhotoUrl(cover);
             return card;
         });
     }
@@ -1405,6 +1412,7 @@ public class TeamGameService {
                 .stadiumAddress(stadium.getAddress())
                 .stadiumDistrict(stadium.getDistrict())
                 .format(stadium.getFormat())
+                .location(STADIUM_MAPPER.toLocationResponse(stadium))
                 .startsAt(game.getStartsAt())
                 .endsAt(game.getEndsAt())
                 .durationHours((int) Duration.between(game.getStartsAt(), game.getEndsAt()).toHours())

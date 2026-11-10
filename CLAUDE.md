@@ -823,6 +823,12 @@ when no minimum is offered), `remainderAmount` = what is left after it, `fullAmo
 full option, and `totalPrice` = what both teams pay altogether (a team in counts what it
 fixed, a free side in full), plus `stadiumDistrict` and `stadiumPhotoUrl` (E9: the cover photo, absent
 when none; the page's covers in one grouped query, `GameRepository.findStadiumPhotoUrls`).
+**Where the game is played:** each board item and every `GameDetailResponse` (any game type,
+anyone who opens it, in every status) carry `location` — `StadiumLocationResponse` from
+`StadiumMapper.toLocationResponse`: `id`, `name`, `address`, `district`, `landmark` (Moʻljal),
+`latitude`, `longitude`, `coverPhotoUrl`, `format` (absent fields omitted). The board fetches
+the stadiums with its page (`@EntityGraph` on `findChallenges`), so no stadium loads per card
+(`TeamGameLocationTest`).
 A team game
 stays `is_public = false`; this endpoint queries by type and status instead.
 Availability and the owner's schedule mark a slot where a team is looking for an

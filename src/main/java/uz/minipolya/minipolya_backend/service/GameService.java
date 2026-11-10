@@ -669,6 +669,9 @@ public class GameService {
         dto.setParticipants(participants.stream().map(participantMapper::toResponse).toList());
         dto.setCurrentPlayers(participants.size());
         dto.setInviteLink(inviteLink(game.getId()));
+        if (dto.getLocation() != null) {
+            dto.getLocation().setCoverPhotoUrl(coverPhoto(game.getStadium().getId()));
+        }
         if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
             dto.setTeams(viewerId == null ? teamGameService.teamsOf(game) : teamGameService.teamsOf(game, viewerId));
             dto.setJoinPending(teamGameService.joinPending(game.getId()));
@@ -677,6 +680,12 @@ public class GameService {
         }
         dto.setTotalPrice(playerTotal(game));
         return dto;
+    }
+
+    /** The stadium's cover photo (lowest position), or null when it has none. */
+    private String coverPhoto(UUID stadiumId) {
+        List<Object[]> rows = gameRepository.findStadiumPhotoUrls(List.of(stadiumId));
+        return rows == null || rows.isEmpty() ? null : (String) rows.get(0)[1];
     }
 
     /** A game in a player's list: its total as the players pay it. */

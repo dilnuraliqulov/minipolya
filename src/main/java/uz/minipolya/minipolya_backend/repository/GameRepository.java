@@ -2,6 +2,7 @@ package uz.minipolya.minipolya_backend.repository;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
@@ -68,6 +69,8 @@ public interface GameRepository extends JpaRepository<Game, UUID>, JpaSpecificat
      * non-null bind compared against a column is fine — the column gives the
      * type — which is why the remaining comparisons need no casts.
      */
+    // The stadium comes with the page (each card shows its name and location): no load per row.
+    @EntityGraph(attributePaths = "stadium")
     @Query("""
             SELECT g FROM Game g
             WHERE g.type = 'team_vs_team'

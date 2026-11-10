@@ -30,6 +30,8 @@ public class GameDetailResponse {
 
     private UUID stadiumId;
     private String stadiumName;
+    /** Where the game is played: address, district, Moʻljal, coordinates, cover photo, format. */
+    private StadiumLocationResponse location;
     private UUID creatorId;
     private String creatorName;
 

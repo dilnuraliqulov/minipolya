@@ -38,6 +38,8 @@ public class GameChallengeResponse {
     /** E9: the stadium's cover photo (lowest position); absent when it has none. */
     private String stadiumPhotoUrl;
     private String format;
+    /** Where the game is played: address, district, Moʻljal, coordinates, cover photo, format. */
+    private StadiumLocationResponse location;
 
     private OffsetDateTime startsAt;
     private OffsetDateTime endsAt;
