@@ -20,6 +20,7 @@ import uz.minipolya.minipolya_backend.dto.response.GameResponse;
 import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
+import uz.minipolya.minipolya_backend.entity.GameTeam;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
 import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.SavedCard;
@@ -29,6 +30,7 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
+import uz.minipolya.minipolya_backend.exception.CardDeclinedException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.exception.SlotNotAvailableException;
@@ -66,6 +68,8 @@ public class GameService {
     private static final String STATUS_APPROVED = "approved";
     private static final String STATUS_OPEN = "open";
     private static final String TYPE_TEAM_VS_TEAM = "team_vs_team";
+    static final String ONLY_LEADERS_JOIN =
+            "Only the joining team's leader can join a team game, with their team and a card";
     private static final String TYPE_OPEN = "open";
 
     private final GameRepository gameRepository;
@@ -85,6 +89,8 @@ public class GameService {
     private final PlatformSettingsService platformSettingsService;
     private final TeamGameService teamGameService;
     private final SavedCardService savedCardService;
+    /** For the joins that must not run inside one big transaction (see {@link #joinGame}). */
+    private final org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     @Transactional
     public GameDetailResponse createGame(CreateGameRequest request, UUID creatorUserId) {
@@ -95,13 +101,14 @@ public class GameService {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         String type = request.getType();
-        int duration = request.getDuration();
+        // A game is one slot, like every booking.
+        BookingWindowValidator.requireOneHour(request.getDuration());
         OffsetDateTime startsAt = request.getStartsAt();
-        OffsetDateTime endsAt = startsAt.plusHours(duration);
+        OffsetDateTime endsAt = startsAt.plusHours(Booking.HOURS);
 
         // A confirmed game becomes a source=game booking, so the slot must already
         // satisfy the booking window rules (on the hour, inside open-close, no closure).
-        bookingWindowValidator.validate(stadium, startsAt, duration);
+        bookingWindowValidator.validate(stadium, startsAt);
 
         if (bookingRepository.existsActiveOverlap(stadium.getId(), startsAt, endsAt)) {
             throw new SlotNotAvailableException("That time slot is already booked");
@@ -118,7 +125,7 @@ public class GameService {
                 .endsAt(endsAt)
                 // Same calculation as a direct booking, promotions included, so a game
                 // costs exactly what booking the same slot costs.
-                .totalPrice(bookingPriceCalculator.totalPrice(stadium, startsAt, duration))
+                .totalPrice(bookingPriceCalculator.hourPrice(stadium, startsAt))
                 // Fees are platform settings, not static config: a team game is charged the
                 // per-team platform fee, any other game the per-player service fee.
                 .serviceFeePerPerson(serviceFeeFor(type))
@@ -147,7 +154,8 @@ public class GameService {
         // A team game is paid for as it is created: the creating team's fee and
         // advance go on hold. A declined card throws, rolling the game back.
         if (TYPE_TEAM_VS_TEAM.equals(type)) {
-            teamGameService.createWaitingGame(saved, teamA, creator, request.getCardId());
+            teamGameService.createWaitingGame(saved, teamA, creator, request.getCardId(),
+                    teamOption(request.getPaymentOption()));
         }
 
         auditService.record(AuditEntry.player(creatorUserId, AuditAction.GAME_CREATED)
@@ -164,8 +172,18 @@ public class GameService {
         return toDetail(saved);
     }
 
-    @Transactional(noRollbackFor = uz.minipolya.minipolya_backend.exception.PaymentStepFailedException.class)
+    /**
+     * Joins a game. Deliberately not {@code @Transactional}: a team game's join commits after
+     * each of its steps (see {@link TeamGameService#join}), which a surrounding transaction
+     * would undo all together; a casual join is one transaction of its own.
+     */
     public GameParticipantResponse joinGame(UUID gameId, UUID userId, String side, UUID teamId, UUID cardId) {
+        return joinGame(gameId, userId, side, teamId, cardId, null);
+    }
+
+    /** As above, with a team's payment option (T6; null = minimum). */
+    public GameParticipantResponse joinGame(UUID gameId, UUID userId, String side, UUID teamId, UUID cardId,
+                                            uz.minipolya.minipolya_backend.dto.request.PaymentOption option) {
         Game game = requireGame(gameId);
         if (!STATUS_OPEN.equals(game.getStatus())) {
             throw new BadRequestException("Game is not open for joining");
@@ -173,32 +191,88 @@ public class GameService {
         if (participantRepository.findByGameIdAndUserId(gameId, userId).isPresent()) {
             throw new BadRequestException("You have already joined this game");
         }
-
-        GameParticipant.Side assignedSide = null;
-        long playersBefore = participantRepository.findByGameId(gameId).size();
-        String joinedTeam = null;
         if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
-            // A leader joins with an explicit side; invited members join without one (no payment).
-            assignedSide = parseSide(side);
-            if (assignedSide == GameParticipant.Side.B) {
-                // Taking the free side is what books the slot and settles both
-                // teams, so it is the team flow's job, not a plain membership row.
-                Team teamB = teamId == null ? null : teamRepository.findById(teamId)
-                        .orElseThrow(() -> new ResourceNotFoundException("Team not found"));
-                User leader = userRepository.findById(userId)
-                        .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-                teamGameService.join(game, teamB, leader, cardId);
-                joinedTeam = teamB.getName();
-                // The game has just taken the slot, so any other team still
-                // waiting on it must be cleared and refunded — the same rule an
-                // ordinary booking follows. This game is 'confirmed' by now, so
-                // it cannot cancel itself.
-                cancelGamesOnSlot(game.getStadium().getId(), game.getStartsAt(), game.getEndsAt());
+            return joinTeamGame(game, userId, side, teamId, cardId, teamOption(option));
+        }
+        return inTransaction(() -> joinCasualGame(gameId, userId));
+    }
+
+    /**
+     * The server decides, never the client's side: only the joining team's leader joins a
+     * team game, always on the free side, and always pays. Nobody joins the other side as a
+     * plain, non-paying member.
+     */
+    /** The request's option as a team stores it; absent means minimum (T6). */
+    static GameTeam.PaymentOption teamOption(uz.minipolya.minipolya_backend.dto.request.PaymentOption option) {
+        return option == uz.minipolya.minipolya_backend.dto.request.PaymentOption.FULL
+                ? GameTeam.PaymentOption.FULL
+                : GameTeam.PaymentOption.MINIMUM;
+    }
+
+    private GameParticipantResponse joinTeamGame(Game game, UUID userId, String side, UUID teamId, UUID cardId,
+                                                 GameTeam.PaymentOption option) {
+        Team joiningTeam = teamId == null ? null : teamRepository.findById(teamId)
+                .orElseThrow(() -> new ResourceNotFoundException("Team not found"));
+        if (joiningTeam == null || !joiningTeam.getLeader().getId().equals(userId)) {
+            throw new ForbiddenException(ONLY_LEADERS_JOIN);
+        }
+        if (cardId == null) {
+            throw new BadRequestException("cardId is required to join a team game");
+        }
+        GameParticipant.Side free = teamGameService.freeSide(game);
+        GameParticipant.Side requested = parseSide(side);
+        // "b" stays accepted from older clients, which always sent it for the opponent.
+        if (requested != null && requested != free && requested != GameParticipant.Side.B) {
+            throw new BadRequestException("The opposing team joins as side " + free.getValue());
+        }
+        User leader = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        // Books the slot, charges the team, captures the waiting team's hold and confirms
+        // the game — the leader's participant row, notifications and audit included.
+        teamGameService.join(game, joiningTeam, leader, cardId, option);
+        // The game has just taken the slot, so any other team still waiting on it must be
+        // cleared and refunded — the same rule an ordinary booking follows. This game is
+        // 'confirmed' by now, so it cannot cancel itself.
+        inTransaction(() -> {
+            cancelGamesOnSlot(game.getStadium().getId(), game.getStartsAt(), game.getEndsAt());
+            return null;
+        });
+        log.info("Game joined: gameId={} userId={} team={}", game.getId(), userId, joiningTeam.getName());
+        return participantMapper.toResponse(participantRepository.findByGameIdAndUserId(game.getId(), userId)
+                .orElseThrow(() -> new IllegalStateException("Confirmed join without its participant")));
+    }
+
+    /**
+     * The reconcile job's second pass: joins left half-way (a crash, an unclear answer)
+     * since before {@code startedBefore} are carried on to confirmed or undone.
+     *
+     * @return how many were looked at
+     */
+    public int resumeStuckJoins(OffsetDateTime startedBefore) {
+        List<UUID> stuck = teamGameService.stuckJoins(startedBefore);
+        for (UUID gameTeamId : stuck) {
+            try {
+                if (teamGameService.resumeJoin(gameTeamId) == TeamGameService.JoinState.CONFIRMED) {
+                    inTransaction(() -> {
+                        Game game = gameRepository.findById(teamGameService.gameIdOf(gameTeamId)).orElseThrow();
+                        cancelGamesOnSlot(game.getStadium().getId(), game.getStartsAt(), game.getEndsAt());
+                        return null;
+                    });
+                }
+            } catch (RuntimeException ex) {
+                log.error("Could not resume join {}: {}", gameTeamId, ex.toString());
             }
-        } else {
-            if (playersBefore >= game.getMaxPlayers()) {
-                throw new BadRequestException("Game is already full");
-            }
+        }
+        return stuck.size();
+    }
+
+    private GameParticipantResponse joinCasualGame(UUID gameId, UUID userId) {
+        Game game = requireGame(gameId);
+        GameParticipant.Side assignedSide = null;
+        String joinedTeam = null;
+        long playersBefore = participantRepository.findByGameId(gameId).size();
+        if (playersBefore >= game.getMaxPlayers()) {
+            throw new BadRequestException("Game is already full");
         }
 
         User user = userRepository.findById(userId)
@@ -237,6 +311,24 @@ public class GameService {
         teamGameService.recordCashRemainder(gameId, ownerUserId, parseSide(side));
     }
 
+    /** T10: the stadium owner marks one team's remainder as not paid. */
+    @Transactional
+    public void markTeamNotPaid(UUID gameId, UUID ownerUserId, String side) {
+        teamGameService.markNotPaid(gameId, ownerUserId, parseSide(side));
+    }
+
+    /** T10: the stadium owner undoes their mark on one team's remainder (same Tashkent day). */
+    @Transactional
+    public void undoTeamRemainderMark(UUID gameId, UUID ownerUserId, String side) {
+        teamGameService.undoRemainderMarkByOwner(gameId, ownerUserId, parseSide(side));
+    }
+
+    /** T10: an admin undoes the mark on one team's remainder, at any time. */
+    @Transactional
+    public void undoTeamRemainderMarkByAdmin(UUID gameId, UUID adminUserId, String side) {
+        teamGameService.undoRemainderMarkByAdmin(gameId, adminUserId, parseSide(side));
+    }
+
     /**
      * Casual games only — the hosted checkout. A team game is paid for when it
      * is created and when an opponent joins, from a saved card.
@@ -257,7 +349,7 @@ public class GameService {
         SavedCard card = savedCardService.requireOwnedCard(userId, cardId);
         Payment payment = paymentService.chargeGameShare(gameId, userId, card);
         if (payment.getStatus() == Payment.Status.FAILED) {
-            throw new BadRequestException("Card payment was declined");
+            throw CardDeclinedException.of(payment, "Card payment was declined");
         }
         return PaymentInitResponse.builder()
                 .paymentId(payment.getId())
@@ -294,7 +386,38 @@ public class GameService {
 
     @Transactional(readOnly = true)
     public GameDetailResponse getGameDetail(UUID gameId, UUID userId) {
-        return toDetail(requireGame(gameId));
+        return toDetail(requireGame(gameId), userId);
+    }
+
+    /**
+     * T7: {@code GET /api/stadiums/{id}/team-game-quote?startsAt=} — what the creating team may
+     * pay for a team game at this hour (side A). The hour must be bookable as a game would be:
+     * on the hour, inside opening hours, no closure, free, in the future — else 400; an unknown
+     * or unavailable stadium 404.
+     */
+    @Transactional(readOnly = true)
+    public uz.minipolya.minipolya_backend.dto.response.TeamGameQuoteResponse teamGameQuote(UUID stadiumId,
+                                                                                         OffsetDateTime startsAt) {
+        Stadium stadium = stadiumRepository.findByIdAndStatus(stadiumId, STATUS_APPROVED)
+                .filter(Stadium::isActive)
+                .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
+        if (startsAt == null) {
+            throw new BadRequestException("startsAt is required");
+        }
+        if (!startsAt.isAfter(OffsetDateTime.now(java.time.ZoneOffset.UTC))) {
+            throw new BadRequestException("startsAt must be in the future");
+        }
+        bookingWindowValidator.validate(stadium, startsAt);
+        if (bookingRepository.existsActiveOverlap(stadium.getId(), startsAt, startsAt.plusHours(Booking.HOURS))) {
+            throw new BadRequestException("That time slot is already booked");
+        }
+        long price = bookingPriceCalculator.hourPrice(stadium, startsAt);
+        return teamGameService.quoteResponse(price, stadium, GameParticipant.Side.A, startsAt);
+    }
+
+    /** T7: {@code GET /api/games/{id}/join-quote} — see {@link TeamGameService#joinQuote}. */
+    public uz.minipolya.minipolya_backend.dto.response.TeamGameQuoteResponse joinQuote(UUID gameId) {
+        return teamGameService.joinQuote(gameId);
     }
 
     @Transactional(readOnly = true)
@@ -302,12 +425,12 @@ public class GameService {
         Page<Game> games = stadiumId == null
                 ? gameRepository.findByIsPublicTrueAndStatus(STATUS_OPEN, pageable)
                 : gameRepository.findByStadiumIdAndIsPublicTrueAndStatus(stadiumId, STATUS_OPEN, pageable);
-        return games.map(gameMapper::toResponse);
+        return games.map(this::toResponse);
     }
 
     @Transactional(readOnly = true)
     public Page<GameResponse> getMyGames(UUID userId, Pageable pageable) {
-        return gameRepository.findMyGames(userId, pageable).map(gameMapper::toResponse);
+        return gameRepository.findMyGames(userId, pageable).map(this::toResponse);
     }
 
     @Transactional
@@ -456,6 +579,8 @@ public class GameService {
                 .endsAt(game.getEndsAt())
                 .durationHours((int) Duration.between(game.getStartsAt(), game.getEndsAt()).toHours())
                 .price(game.getTotalPrice())
+                // A game's money is its players'; the booking keeps the owner's terms.
+                .pricingModel(Booking.PricingModel.NET)
                 .gameId(game.getId())
                 .build();
         try {
@@ -528,26 +653,61 @@ public class GameService {
         }
     }
 
-    /** The card fee with the settings in force now; a quote never asks the payment service. */
+    /** The player price with the settings in force now; a quote never asks the payment service. */
     private CardPricing cardPricing() {
         return new CardPricing(platformSettingsService::current);
     }
 
     private GameDetailResponse toDetail(Game game) {
+        return toDetail(game, null);
+    }
+
+    /** The detail as one viewer sees it (the stadium's owner gets the mark's undo deadline, T9). */
+    private GameDetailResponse toDetail(Game game, UUID viewerId) {
         GameDetailResponse dto = gameMapper.toDetailResponse(game);
         List<GameParticipant> participants = participantRepository.findByGameId(game.getId());
         dto.setParticipants(participants.stream().map(participantMapper::toResponse).toList());
         dto.setCurrentPlayers(participants.size());
         dto.setInviteLink(inviteLink(game.getId()));
-        if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
-            dto.setTeams(teamGameService.teamsOf(game));
-        } else if (game.getTotalPrice() != null) {
-            // What one player's share costs by card.
-            uz.minipolya.minipolya_backend.util.CardFeeSplit share = cardPricing().gameShareSplit(game);
-            dto.setPrice(share.playerAmount());
-            dto.setCardFee(share.cardFee());
+        if (dto.getLocation() != null) {
+            dto.getLocation().setCoverPhotoUrl(coverPhoto(game.getStadium().getId()));
         }
+        if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
+            dto.setTeams(viewerId == null ? teamGameService.teamsOf(game) : teamGameService.teamsOf(game, viewerId));
+            dto.setJoinPending(teamGameService.joinPending(game.getId()));
+        } else if (game.getTotalPrice() != null) {
+            dto.setPrice(cardPricing().gameShareSplit(game).playerAmount());
+        }
+        dto.setTotalPrice(playerTotal(game));
         return dto;
+    }
+
+    /** The stadium's cover photo (lowest position), or null when it has none. */
+    private String coverPhoto(UUID stadiumId) {
+        List<Object[]> rows = gameRepository.findStadiumPhotoUrls(List.of(stadiumId));
+        return rows == null || rows.isEmpty() ? null : (String) rows.get(0)[1];
+    }
+
+    /** A game in a player's list: its total as the players pay it. */
+    private GameResponse toResponse(Game game) {
+        GameResponse dto = gameMapper.toResponse(game);
+        dto.setTotalPrice(playerTotal(game));
+        return dto;
+    }
+
+    /**
+     * What the players pay for a game altogether: every share of a casual or open game,
+     * both teams' joining prices and remainders of a team game. Null without a price.
+     */
+    private Long playerTotal(Game game) {
+        if (game.getTotalPrice() == null) {
+            return null;
+        }
+        if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
+            return teamGameService.playerTotal(game);
+        }
+        int players = game.getMaxPlayers() == null || game.getMaxPlayers() < 1 ? 1 : game.getMaxPlayers();
+        return cardPricing().gameShareSplit(game).playerAmount() * players;
     }
 
     /**
@@ -596,6 +756,11 @@ public class GameService {
     }
 
     /** Notifications are best-effort — a failure must never break the game flow. */
+    private <T> T inTransaction(java.util.function.Supplier<T> work) {
+        return new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                .execute(status -> work.get());
+    }
+
     private void safeNotify(Runnable action) {
         try {
             action.run();

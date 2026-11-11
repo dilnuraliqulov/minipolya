@@ -84,7 +84,7 @@ class TeamGameChallengesTest {
                 mock(PaymentService.class), mock(SavedCardService.class), platformSettingsService,
                 mock(NotificationService.class), mock(AuditService.class),
                 new CancellationPolicy(), new AppProperties(),
-                teamMemberRepository, teamRepository);
+                teamMemberRepository, teamRepository, org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         User waitingLeader = User.builder().id(UUID.randomUUID()).name("Leader A").build();
         stadium = Stadium.builder().id(STADIUM_ID).name("Chilonzor Arena")
@@ -107,7 +107,8 @@ class TeamGameChallengesTest {
         when(teamRepository.findByLeaderId(VIEWER_ID)).thenReturn(List.of());
         when(gameTeamRepository.findByGameIdAndSideAndStatus(game.getId(), Side.A, GameTeam.Status.ACTIVE))
                 .thenReturn(Optional.of(sideA));
-        when(gameRepository.findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any()))
+        when(gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)).thenReturn(List.of(sideA));
+        when(gameRepository.findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(game)));
     }
 
@@ -126,20 +127,43 @@ class TeamGameChallengesTest {
         assertThat(card.getFormat()).isEqualTo("5x5");
         assertThat(card.getStartsAt()).isEqualTo(game.getStartsAt());
         assertThat(card.getDurationHours()).isEqualTo(1);
-        assertThat(card.getTotalPrice()).isEqualTo(PRICE);
+        // What both teams pay altogether, as players see it.
+        // The waiting team (a row from before changeset 052) keeps its stored terms; the free
+        // side is quoted in full: P/2 + F = 125 000 -> 130 000 so'm.
+        assertThat(card.getTotalPrice()).isEqualTo(TestPrices.card(FEE + ADVANCE) + TestPrices.card(REMAINDER) + 13_000_000L);
+    }
+
+    @Test
+    void aChallengeCarriesTheStadiumCoverPhotoAndDistrictFromOneGroupedQuery() {
+        stadium.setDistrict("Chilonzor");
+        List<Object[]> photos = new java.util.ArrayList<>();
+        photos.add(new Object[]{STADIUM_ID, "/api/uploads/stadiums/" + STADIUM_ID + "/cover.jpg"});
+        photos.add(new Object[]{STADIUM_ID, "/api/uploads/stadiums/" + STADIUM_ID + "/second.jpg"});
+        when(gameRepository.findStadiumPhotoUrls(any())).thenReturn(photos);
+
+        GameChallengeResponse card = challenges(null, null, null).getContent().getFirst();
+
+        assertThat(card.getStadiumDistrict()).isEqualTo("Chilonzor");
+        assertThat(card.getStadiumPhotoUrl()).isEqualTo("/api/uploads/stadiums/" + STADIUM_ID + "/cover.jpg");
+        org.mockito.Mockito.verify(gameRepository, org.mockito.Mockito.times(1)).findStadiumPhotoUrls(any());
+    }
+
+    @Test
+    void aStadiumWithoutPhotosHasNoPhotoUrl() {
+        GameChallengeResponse card = challenges(null, null, null).getContent().getFirst();
+
+        assertThat(card.getStadiumPhotoUrl()).isNull();
+        assertThat(card.getStadiumDistrict()).isNull();
     }
 
     @Test
     void aChallengeShowsWhatTheJoiningTeamPaysNow() {
         GameChallengeResponse card = challenges(null, null, null).getContent().getFirst();
 
-        // 25 000 fee + 25 000 advance = 50 000 so'm, with 75 000 to come later.
-        assertThat(card.getFeeAmount()).isEqualTo(FEE);
-        assertThat(card.getAdvanceAmount()).isEqualTo(ADVANCE);
-        // ... paid by card, so grossed up by the card fee.
-        assertThat(card.getAmountToPayNow()).isEqualTo(TestPrices.card(FEE + ADVANCE));
-        assertThat(card.getCardFee()).isEqualTo(TestPrices.card(FEE + ADVANCE) - FEE - ADVANCE);
-        assertThat(card.getRemainderAmount()).isEqualTo(REMAINDER);
+        // T8: the minimum (M = 50 000 -> 55 000 so'm) now; the rest of the full 130 000 later.
+        assertThat(card.getAmountToPayNow()).isEqualTo(5_500_000L);
+        assertThat(card.getRemainderAmount()).isEqualTo(7_500_000L);
+        assertThat(card.getFullAmount()).isEqualTo(13_000_000L);
     }
 
     /** Every argument findChallenges was called with, in order. */
@@ -152,7 +176,7 @@ class TeamGameChallengesTest {
         ArgumentCaptor<String> format = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
         verify(gameRepository).findChallenges(from.capture(), to.capture(), anyStadium.capture(),
-                stadiumId.capture(), anyFormat.capture(), format.capture(), any(), excluded.capture(), any());
+                stadiumId.capture(), anyFormat.capture(), format.capture(), any(), excluded.capture(), any(), any());
         return new Object[]{from.getValue(), to.getValue(), anyStadium.getValue(),
                 stadiumId.getValue(), anyFormat.getValue(), format.getValue(), excluded.getValue()};
     }
@@ -219,7 +243,7 @@ class TeamGameChallengesTest {
         challenges(null, null, null);
 
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
-        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any());
+        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any(), any());
         assertThat(excluded.getValue()).contains(VIEWER_TEAM_ID);
     }
 
@@ -231,7 +255,7 @@ class TeamGameChallengesTest {
         challenges(null, null, null);
 
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
-        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any());
+        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any(), any());
         assertThat(excluded.getValue()).contains(VIEWER_TEAM_ID);
     }
 
@@ -240,7 +264,7 @@ class TeamGameChallengesTest {
         challenges(null, null, null);
 
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
-        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any());
+        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any(), any());
 
         // An empty IN (...) is not valid SQL, so the list always holds something.
         assertThat(excluded.getValue()).isNotEmpty();

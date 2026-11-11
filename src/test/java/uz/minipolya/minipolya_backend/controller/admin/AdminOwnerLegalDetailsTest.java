@@ -154,6 +154,12 @@ class AdminOwnerLegalDetailsTest {
 
         putDetails(owner.getId(), """
                 {"legalType":"mchj","tin":"301234567","atmosContractStatus":"signed","atmosRecipientId":"RCP-1"}""");
+        // Signed, but a stadium also needs three photos (D7).
+        stadium = data.photos(stadium, 2);
+        setStatus(stadium, "approved")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("A stadium needs at least 3 photos to be approved"));
+        stadium = data.photos(stadium, 1);
         setStatus(stadium, "approved")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("approved"))

@@ -23,15 +23,18 @@ public class PricingRuleResponse {
     private Integer dayOfWeek;
     private LocalTime startTime;
     private LocalTime endTime;
-    /** Public responses: what the player pays by card for the hour. Owner responses: net. */
+    /**
+     * Tiyin for one hour under this rule. Player responses: the one price the player pays.
+     * Owner and admin responses: the owner's own price, as they set it.
+     */
     private Long pricePerHour;
 
-    /** One hour under this rule by card, in tiyin: the net price grossed up by the card fee and rounded. */
-    private Long price;
-    /** The owner's own net price. Owner and admin responses only. */
-    private Long netPrice;
-    /** price − netPrice. */
-    private Long cardFee;
+    /** Owner and admin responses only: what players see and pay for that hour. */
+    private Long playerPrice;
+    /** Admin responses only: what the owner receives of that hour paid by card, after ATMOS. */
+    private Long ownerReceives;
+    /** Admin responses only: what ATMOS takes of that hour paid by card. */
+    private Long atmosFee;
 
     @JsonProperty("isActive")
     private boolean isActive;

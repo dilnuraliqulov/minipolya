@@ -108,7 +108,7 @@ class TeamGameCreateTest {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(LEADER_A_ID)).thenReturn(Optional.of(leaderA));
         when(teamRepository.findById(TEAM_A_ID)).thenReturn(Optional.of(teamA));
-        when(priceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt())).thenReturn(PRICE);
+        when(priceCalculator.hourPrice(any(Stadium.class), any(OffsetDateTime.class))).thenReturn(PRICE);
         when(platformSettingsService.current()).thenReturn(
                 PlatformSettings.builder().teamGamePlatformFee(FEE).casualGameServiceFee(0L).build());
         when(bookingRepository.existsActiveOverlap(any(), any(), any())).thenReturn(false);
@@ -133,13 +133,13 @@ class TeamGameCreateTest {
                 participantRepository, bookingRepository, paymentService, savedCardService,
                 platformSettingsService, notificationService, auditService,
                 new uz.minipolya.minipolya_backend.util.CancellationPolicy(), new AppProperties(),
-                mock(TeamMemberRepository.class), teamRepository);
+                mock(TeamMemberRepository.class), teamRepository, org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         service = new GameService(gameRepository, participantRepository, stadiumRepository, userRepository,
                 teamRepository, priceCalculator, bookingRepository, gameMapper, participantMapper,
                 new AppProperties(), paymentService, notificationService, auditService,
                 new BookingWindowValidator(closureService), platformSettingsService, teamGameService,
-                savedCardService);
+                savedCardService, org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
     }
 
     private CreateGameRequest request(UUID cardId) {
@@ -196,11 +196,14 @@ class TeamGameCreateTest {
     void aDeclinedCardMeansNoGame() {
         when(paymentService.holdForTeamGame(any(), any(), anyInt())).thenAnswer(inv ->
                 Payment.builder().id(UUID.randomUUID()).status(Payment.Status.FAILED)
+                        .declineReason(uz.minipolya.minipolya_backend.provider.DeclineReason.INSUFFICIENT_FUNDS)
                         .gameTeam(inv.getArgument(0)).build());
 
+        // R44: a 400 whose code says why.
         assertThatThrownBy(() -> service.createGame(request(CARD_ID), LEADER_A_ID))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("declined");
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.CardDeclinedException.class)
+                .hasMessageContaining("declined")
+                .extracting("code").isEqualTo("INSUFFICIENT_FUNDS");
     }
 
     @Test
@@ -213,13 +216,31 @@ class TeamGameCreateTest {
     }
 
     @Test
-    void withoutAStadiumMinimumTheAdvanceIsHalfThePitchPrice() {
+    void withoutAStadiumMinimumThePlatformDefaultIsTheMinimum() {
+        // T1/T4: no minimum of its own → the default 50 000 so'm; absent option → minimum.
         stadium.setMinBookingAmount(null);
 
         service.createGame(request(CARD_ID), LEADER_A_ID);
 
         GameTeam sideA = savedGameTeam();
-        assertThat(sideA.getAdvanceAmount()).isEqualTo(10_000_000L);
+        assertThat(sideA.getPaymentOption()).isEqualTo(GameTeam.PaymentOption.MINIMUM);
+        assertThat(sideA.getAdvanceAmount()).isEqualTo(2_500_000L);     // M − F
+        assertThat(sideA.getJoinPrice()).isEqualTo(5_500_000L);         // 55 000 so'm held
+        assertThat(sideA.getRemainderPrice()).isEqualTo(7_500_000L);    // 130 000 − 55 000
+    }
+
+    @Test
+    void aFullPaymentHoldsTheWholeHalfAndLeavesNothingToPay() {
+        CreateGameRequest full = request(CARD_ID);
+        full.setPaymentOption(uz.minipolya.minipolya_backend.dto.request.PaymentOption.FULL);
+
+        service.createGame(full, LEADER_A_ID);
+
+        GameTeam sideA = savedGameTeam();
+        assertThat(sideA.getPaymentOption()).isEqualTo(GameTeam.PaymentOption.FULL);
+        assertThat(sideA.getAdvanceAmount()).isEqualTo(10_000_000L);    // P/2
         assertThat(sideA.getRemainderAmount()).isZero();
+        assertThat(sideA.getJoinPrice()).isEqualTo(13_000_000L);        // 130 000 so'm held
+        assertThat(sideA.getRemainderPrice()).isZero();
     }
 }

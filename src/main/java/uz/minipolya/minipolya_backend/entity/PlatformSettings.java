@@ -20,8 +20,8 @@ import java.time.ZoneOffset;
 /**
  * Platform-wide money settings, edited by admins. Exactly one row exists —
  * {@code singleton} is UNIQUE and CHECKed true, so the database rejects a
- * second one. All fees are tiyin; {@code bookingCommissionPercent} is a
- * percentage of the booking price kept by the platform.
+ * second one. All fees are tiyin. The platform takes nothing from ordinary
+ * bookings; its only money is the team-game fee and the casual-game service fee.
  */
 @Entity
 @Table(name = "platform_settings")
@@ -32,17 +32,11 @@ import java.time.ZoneOffset;
 @AllArgsConstructor
 public class PlatformSettings {
 
-    /** Default booking commission: the platform takes nothing for now. */
-    public static final int DEFAULT_BOOKING_COMMISSION_PERCENT = 0;
-
     /** Default team-game platform fee: 2 500 000 tiyin = 25 000 so'm per team. */
     public static final long DEFAULT_TEAM_GAME_PLATFORM_FEE = 2_500_000L;
 
     /** Default casual-game service fee per player: nothing for now. */
     public static final long DEFAULT_CASUAL_GAME_SERVICE_FEE = 0L;
-
-    /** The highest commission an admin may set. */
-    public static final int MAX_BOOKING_COMMISSION_PERCENT = 50;
 
     /** Default card fee: 150 basis points = 1.5%, what ATMOS takes from each card payment. */
     public static final int DEFAULT_CARD_FEE_BPS = 150;
@@ -50,11 +44,17 @@ public class PlatformSettings {
     /** The highest card fee an admin may set: 1000 bps = 10%. */
     public static final int MAX_CARD_FEE_BPS = 1000;
 
-    /** Default rounding step for player card prices: 10 000 tiyin = 100 so'm. */
-    public static final long DEFAULT_PAYMENT_ROUNDING_STEP = 10_000L;
+    /** Default rounding step for player card prices: 500 000 tiyin = 5 000 so'm (changeset 049). */
+    public static final long DEFAULT_PAYMENT_ROUNDING_STEP = 500_000L;
 
     /** The largest rounding step an admin may set: 1 000 000 tiyin = 10 000 so'm. */
     public static final long MAX_PAYMENT_ROUNDING_STEP = 1_000_000L;
+
+    /**
+     * Default minimum booking amount (T1, changeset 051): 5 000 000 tiyin = 50 000 so'm, used by
+     * every stadium without a minimum of its own (or with one not above the team-game fee).
+     */
+    public static final long DEFAULT_MIN_BOOKING_AMOUNT = 5_000_000L;
 
     @Id
     @UuidGenerator(style = UuidGenerator.Style.VERSION_7)
@@ -64,10 +64,6 @@ public class PlatformSettings {
     @Builder.Default
     @Column(nullable = false)
     private boolean singleton = true;
-
-    @Builder.Default
-    @Column(name = "booking_commission_percent", nullable = false)
-    private int bookingCommissionPercent = DEFAULT_BOOKING_COMMISSION_PERCENT;
 
     @Builder.Default
     @Column(name = "team_game_platform_fee", nullable = false)
@@ -86,6 +82,11 @@ public class PlatformSettings {
     @Builder.Default
     @Column(name = "payment_rounding_step", nullable = false)
     private long paymentRoundingStep = DEFAULT_PAYMENT_ROUNDING_STEP;
+
+    /** The minimum booking amount of a stadium that has none of its own, tiyin (owner's terms). */
+    @Builder.Default
+    @Column(name = "default_min_booking_amount", nullable = false)
+    private long defaultMinBookingAmount = DEFAULT_MIN_BOOKING_AMOUNT;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

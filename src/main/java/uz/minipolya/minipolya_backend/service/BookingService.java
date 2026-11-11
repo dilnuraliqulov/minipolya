@@ -26,10 +26,13 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.BookingExpiredException;
+import uz.minipolya.minipolya_backend.exception.BookingPaymentConflictException;
+import uz.minipolya.minipolya_backend.exception.ConflictException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.exception.SlotAlreadyBookedException;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
+import uz.minipolya.minipolya_backend.repository.BookingSpecifications;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.CancellationPolicy;
@@ -41,6 +44,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -60,6 +64,7 @@ public class BookingService {
     /** Pricing rules are keyed by local weekday/time; bookings are stored in UTC. */
     private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
     private static final String STATUS_APPROVED = "approved";
+    private static final String SLOT_TAKEN = "Slot is already booked";
 
     private final BookingRepository bookingRepository;
     private final StadiumRepository stadiumRepository;
@@ -84,11 +89,11 @@ public class BookingService {
 
         requireNotOwnStadium(stadium, userId);
 
-        int duration = request.getDurationHours();
+        BookingWindowValidator.requireOneHour(request.getDurationHours());
         OffsetDateTime startsAt = request.getStartsAt();
-        OffsetDateTime endsAt = startsAt.plusHours(duration);
+        OffsetDateTime endsAt = startsAt.plusHours(Booking.HOURS);
 
-        validateBookingWindow(stadium, startsAt, duration);
+        bookingWindowValidator.validate(stadium, startsAt);
 
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         OffsetDateTime latest = now.plusWeeks(appProperties.getBooking().getMaxWeeksAhead());
@@ -97,11 +102,11 @@ public class BookingService {
                     "Cannot book more than " + appProperties.getBooking().getMaxWeeksAhead() + " weeks ahead");
         }
 
-        // The owner's net price, and what the player sees by card: each hour's card price, summed.
-        List<Long> slotPrices = bookingPriceCalculator.slotPrices(stadium, startsAt, duration);
-        long price = slotPrices.stream().mapToLong(Long::longValue).sum();
-        long cardPrice = slotPrices.stream().mapToLong(cardPricing::playerAmount).sum();
-        CardFeeSplit charge = chargeFor(stadium, price, cardPrice, request.getPaymentOption());
+        // The owner's price N, and the one price the player sees, D: the slot's player
+        // price, exactly what availability shows for it.
+        long price = bookingPriceCalculator.hourPrice(stadium, startsAt);
+        long cardPrice = cardPricing.playerAmount(price);
+        CardFeeSplit charge = cardPricing.toOwner(amountDueNow(stadium, cardPrice, request.getPaymentOption()));
 
         // Resolved before the booking row exists, so an unusable card costs nothing.
         SavedCard card = savedCardService.requireOwnedCard(userId, request.getCardId());
@@ -118,7 +123,7 @@ public class BookingService {
                 .paidAmount(0L)
                 .startsAt(startsAt)
                 .endsAt(endsAt)
-                .durationHours(duration)
+                .durationHours(Booking.HOURS)
                 .price(price)
                 .cardPrice(cardPrice)
                 .expiresAt(now.plusMinutes(appProperties.getBooking().getHoldExpiryMinutes()))
@@ -131,7 +136,7 @@ public class BookingService {
         } catch (DataIntegrityViolationException ex) {
             log.info("Booking rejected by overlap constraint: stadiumId={} {}-{}",
                     stadium.getId(), startsAt, endsAt);
-            throw new SlotAlreadyBookedException(overlapMessage(duration));
+            throw new SlotAlreadyBookedException(SLOT_TAKEN);
         }
 
         gameService.cancelGamesOnSlot(stadium.getId(), startsAt, endsAt);
@@ -153,36 +158,81 @@ public class BookingService {
     }
 
     /**
-     * What the card is charged now. FULL is the booking's card price — the sum of its
-     * slots' card prices; MINIMUM is {@code playerAmount(min_booking_amount)}.
+     * What the card is charged now, in player terms: FULL is the player price D (the sum of
+     * the slots' player prices); MINIMUM is the deposit
+     * {@code d = min(playerAmount(M), D)}, M the stadium's effective minimum (its own or the
+     * platform default) — nothing else. The rest,
+     * {@code D - d}, is the same whether paid later in the app or in cash.
      */
-    private CardFeeSplit chargeFor(Stadium stadium, long price, long cardPrice, PaymentOption option) {
+    private long amountDueNow(Stadium stadium, long playerPrice, PaymentOption option) {
         if (option == PaymentOption.FULL) {
-            return cardPricing.bookingSplit(cardPrice, price);
+            return playerPrice;
         }
-        return cardPricing.bookingSplit(netFor(stadium, price, option));
+        // T1/T3: every stadium has a minimum now — its own, or the platform default.
+        return cardPricing.deposit(cardPricing.effectiveMinimum(stadium.getMinBookingAmount()), playerPrice);
     }
 
+    /** A payment of a booking that is on its way or arrived: no other attempt may start. */
+    private static final Set<Payment.Status> TAKEN_OR_TAKING = Set.of(
+            Payment.Status.PROCESSING, Payment.Status.PAID, Payment.Status.CAPTURED, Payment.Status.COMPLETED,
+            Payment.Status.HELD, Payment.Status.CAPTURE_PENDING);
+
     /**
-     * The net the player pays up front: either the stadium's minimum or the full
-     * price — nothing else. MINIMUM needs a stadium minimum that is actually below
-     * this booking's price, otherwise there is no remainder and the choice is
-     * meaningless.
+     * R28: the player pays a pending booking again — another card after a decline — on the
+     * same path as {@link #createBooking}: the same amount as the first attempt (the deposit
+     * or the whole price), charged by {@link PaymentService#chargeForBooking}, which
+     * confirms the booking on success. A decline leaves it pending with its hold unchanged
+     * (never extended) and the reason on the response.
+     *
+     * <p>The booking row is locked for the whole call, so two taps at once run one after the
+     * other and the second finds the first's payment: one charge.
+     *
+     * @throws BookingPaymentConflictException 409 {@code BOOKING_NOT_PENDING} (confirmed,
+     *         cancelled, expired by the job), {@code BOOKING_EXPIRED} (its hold ran out),
+     *         {@code PAYMENT_IN_PROGRESS} (a payment of it is processing or arrived)
      */
-    private long netFor(Stadium stadium, long price, PaymentOption option) {
-        if (option == PaymentOption.FULL) {
-            return price;
+    @Transactional
+    public BookingResponse retryPayment(UUID userId, UUID bookingId, UUID cardId) {
+        Booking booking = bookingRepository.findForUpdate(bookingId)
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
+        if (booking.getUser() == null || !booking.getUser().getId().equals(userId)) {
+            throw new ForbiddenException("This booking does not belong to you");
         }
-        Long minimum = stadium.getMinBookingAmount();
-        if (minimum == null) {
-            throw new BadRequestException(
-                    "This stadium requires full payment; it has no minimum booking amount");
+        if (!"pending".equals(booking.getStatus())) {
+            throw new BookingPaymentConflictException(BookingPaymentConflictException.NOT_PENDING,
+                    "This booking is not awaiting payment");
         }
-        if (minimum >= price) {
-            throw new BadRequestException(
-                    "The stadium minimum is not below this booking's price, so full payment is required");
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        if (booking.getExpiresAt() == null || !now.isBefore(booking.getExpiresAt())) {
+            throw new BookingPaymentConflictException(BookingPaymentConflictException.EXPIRED,
+                    "The booking's hold has expired; book the slot again");
         }
-        return minimum;
+        List<Payment> attempts = paymentService.paymentsOf(bookingId).stream()
+                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .toList();
+        if (attempts.stream().anyMatch(p -> TAKEN_OR_TAKING.contains(p.getStatus()))) {
+            throw new BookingPaymentConflictException(BookingPaymentConflictException.IN_PROGRESS,
+                    "A payment for this booking is being processed");
+        }
+        SavedCard card = savedCardService.requireOwnedCard(userId, cardId);
+
+        // The same amount as when it was created: the first attempt's (deposit or in full).
+        long amount = attempts.stream()
+                .filter(p -> p.getPaymentType() == Payment.PaymentType.BOOKING)
+                .min(java.util.Comparator.comparing(Payment::getCreatedAt,
+                        java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+                .map(Payment::getAmount)
+                .orElse(booking.getCardPrice());
+        Payment payment = paymentService.chargeForBooking(booking, card, cardPricing.toOwner(amount));
+
+        auditService.record(AuditEntry.player(userId, AuditAction.BOOKING_PAYMENT_RETRIED)
+                .entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
+                .created("amount", amount)
+                .created("paymentStatus", payment.getStatus())
+                .created("bookingStatus", booking.getStatus()));
+        log.info("Booking payment retried: bookingId={} userId={} amount={} payment={}",
+                booking.getId(), userId, amount, payment.getStatus().getValue());
+        return bookingResponseFactory.of(booking);
     }
 
     /**
@@ -193,7 +243,8 @@ public class BookingService {
      */
     @Transactional
     public BookingResponse payRemainder(UUID userId, UUID bookingId, UUID cardId) {
-        Booking booking = requireBooking(bookingId);
+        // Locked, like the owner's cash: whichever settles first, the other sees it.
+        Booking booking = requireBookingForUpdate(bookingId);
         if (booking.getUser() == null || !booking.getUser().getId().equals(userId)) {
             throw new ForbiddenException("This booking does not belong to you");
         }
@@ -207,12 +258,12 @@ public class BookingService {
             throw new BadRequestException("Only a live booking can be paid off");
         }
 
-        long remainder = booking.getRemainingAmount();
+        long remainder = cardPricing.remainingForPlayer(booking);
         SavedCard card = savedCardService.requireOwnedCard(userId, cardId);
         long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
         Booking.PaymentStatus statusBefore = booking.getPaymentStatus();
-        // By card the remainder is grossed up; the owner's cash takes the net remainder.
-        paymentService.chargeForBooking(booking, card, cardPricing.bookingSplit(remainder),
+        Booking.RemainderMark markBefore = booking.getRemainderMark();
+        paymentService.chargeForBooking(booking, card, remainderCharge(booking, remainder),
                 Payment.PaymentType.REMAINDER);
 
         // A declined card changes nothing, and then there is nothing to record.
@@ -220,11 +271,172 @@ public class BookingService {
             auditService.record(AuditEntry.player(userId, AuditAction.BOOKING_REMAINDER_PAID)
                     .entity(AuditEntityType.BOOKING, bookingId, AuditLabels.booking(booking))
                     .change("paidAmount", paidBefore, booking.getPaidAmount())
-                    .change("paymentStatus", statusBefore, booking.getPaymentStatus()));
+                    .change("paymentStatus", statusBefore, booking.getPaymentStatus())
+                    // E7: paying the rest in the app clears a "not paid" mark.
+                    .change("remainderMark", markBefore, booking.getRemainderMark()));
         }
         log.info("Booking remainder charged: id={} userId={} amount={} status={}",
                 bookingId, userId, remainder, booking.getPaymentStatus().getValue());
         return bookingResponseFactory.of(booking);
+    }
+
+    /**
+     * The remainder charge, all the owner's. On a booking priced under the player price it
+     * is simply {@code D - paid}, the same amount the owner would take in cash. A booking
+     * made before that rule keeps its owner's terms: its card payment records what it
+     * covers of the owner's price, as such payments always did.
+     */
+    private CardFeeSplit remainderCharge(Booking booking, long playerAmount) {
+        if (booking.getPricingModel() == Booking.PricingModel.PLAYER_PRICE) {
+            return cardPricing.toOwner(playerAmount);
+        }
+        return new CardFeeSplit(playerAmount, playerAmount, 0L, playerAmount - booking.getRemainingAmount());
+    }
+
+    /** E7: nothing is left to collect on this booking. */
+    static final String ALREADY_PAID = "Already paid";
+    /** E7: a pending, cancelled, expired or game booking has no remainder for the owner to mark. */
+    static final String NO_PART_PAYMENT = "This booking has no part payment to complete";
+    /** E6: the owner's same-day undo window has passed. */
+    static final String ONLY_ADMIN_CAN_CHANGE = "Only an admin can change this mark";
+    /** E6: there is nothing to undo. */
+    static final String NO_MARK = "This booking has no remainder mark";
+
+    /**
+     * R37 / E5: the owner took what is still owed on a booking in cash ("Naqd olindi"). The
+     * same money the player would pay with {@link #payRemainder} — {@code remainingAmount} —
+     * recorded by {@link PaymentService#recordCashPayment}; whichever lands first wins. The
+     * booking gets the {@code cash_received} mark (replacing a {@code not_paid} one).
+     *
+     * <p>Applies to a live (confirmed or completed) booking that is partially paid, or a
+     * manual booking still unpaid. Otherwise 409 (E7): a game booking (its remainders belong
+     * to its teams, {@code POST /api/games/{id}/cash}), a pending, cancelled or expired one —
+     * "This booking has no part payment to complete"; nothing left — "Already paid"; a card
+     * payment of the booking still being confirmed — "A payment for this booking is being
+     * processed".
+     */
+    @Transactional
+    public BookingResponse recordCashByOwner(UUID ownerId, UUID bookingId) {
+        Booking booking = requireMarkableByOwner(ownerId, bookingId);
+        if (paymentService.hasPaymentInFlight(bookingId)) {
+            throw new ConflictException("A payment for this booking is being processed");
+        }
+
+        paymentService.recordCashPayment(bookingId, ownerId, true);
+        log.info("Cash recorded by owner: bookingId={} ownerId={} paymentStatus={}",
+                bookingId, ownerId, booking.getPaymentStatus().getValue());
+        return bookingResponseFactory.forOwner(booking);
+    }
+
+    /**
+     * E5: the owner says the player did not pay the rest ("Toʻlanmadi"). No charge, no
+     * penalty: the remainder stands and the player can still pay it in the app (which
+     * clears the mark), or the owner can still take it in cash (which replaces it). Same
+     * rules and 403 / 409 answers as {@link #recordCashByOwner}. Marking it again changes
+     * nothing. Audited {@code REMAINDER_NOT_PAID}.
+     */
+    @Transactional
+    public BookingResponse markNotPaidByOwner(UUID ownerId, UUID bookingId) {
+        Booking booking = requireMarkableByOwner(ownerId, bookingId);
+        if (booking.getRemainderMark() != Booking.RemainderMark.NOT_PAID) {
+            Booking.RemainderMark before = booking.getRemainderMark();
+            booking.markRemainder(Booking.RemainderMark.NOT_PAID, ownerId, OffsetDateTime.now(ZoneOffset.UTC));
+            bookingRepository.save(booking);
+            auditService.record(AuditEntry.owner(ownerId, AuditAction.REMAINDER_NOT_PAID)
+                    .entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
+                    .change("remainderMark", before, booking.getRemainderMark())
+                    .created("remainingAmount", cardPricing.remainingForPlayer(booking)));
+            log.info("Remainder marked not paid: bookingId={} ownerId={}", bookingId, ownerId);
+        }
+        return bookingResponseFactory.forOwner(booking);
+    }
+
+    /**
+     * E6: the owner undoes their mark, until the end of the Tashkent day it was set
+     * ({@link #markUndoableUntil}); later 409 "Only an admin can change this mark". Undoing
+     * {@code cash_received} voids the cash row ({@code cancelled}, never a platform refund)
+     * and recomputes the paid amount and payment status; undoing {@code not_paid} only clears
+     * the mark. No mark: 409 "This booking has no remainder mark". Audited
+     * {@code REMAINDER_MARK_UNDONE} (OWNER).
+     */
+    @Transactional
+    public BookingResponse undoRemainderMarkByOwner(UUID ownerId, UUID bookingId) {
+        Booking booking = requireBookingForUpdate(bookingId);
+        if (!booking.getStadium().getOwner().getId().equals(ownerId)) {
+            throw new ForbiddenException("You do not own this stadium");
+        }
+        if (booking.getRemainderMark() == null) {
+            throw new ConflictException(NO_MARK);
+        }
+        if (!OffsetDateTime.now(ZoneOffset.UTC).isBefore(markUndoableUntil(booking.getRemainderMarkedAt()))) {
+            throw new ConflictException(ONLY_ADMIN_CAN_CHANGE);
+        }
+        undoMark(booking, AuditEntry.owner(ownerId, AuditAction.REMAINDER_MARK_UNDONE));
+        return bookingResponseFactory.forOwner(booking);
+    }
+
+    /** E6: an admin undoes a remainder mark, at any time. Audited {@code REMAINDER_MARK_UNDONE} (ADMIN). */
+    @Transactional
+    public void undoRemainderMarkByAdmin(UUID adminId, UUID bookingId) {
+        Booking booking = requireBookingForUpdate(bookingId);
+        if (booking.getRemainderMark() == null) {
+            throw new ConflictException(NO_MARK);
+        }
+        undoMark(booking, AuditEntry.admin(adminId, AuditAction.REMAINDER_MARK_UNDONE));
+    }
+
+    /** The end of the Tashkent day a mark was set: the owner may undo it until then. */
+    public static OffsetDateTime markUndoableUntil(OffsetDateTime markedAt) {
+        if (markedAt == null) {
+            return null;
+        }
+        return markedAt.atZoneSameInstant(TASHKENT).toLocalDate().plusDays(1)
+                .atStartOfDay(TASHKENT).toOffsetDateTime().withOffsetSameInstant(ZoneOffset.UTC);
+    }
+
+    private void undoMark(Booking booking, AuditEntry entry) {
+        Booking.RemainderMark mark = booking.getRemainderMark();
+        long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
+        Booking.PaymentStatus statusBefore = booking.getPaymentStatus();
+        Payment voided = mark == Booking.RemainderMark.CASH_RECEIVED
+                ? paymentService.voidLatestCashPayment(booking)
+                : null;
+        booking.clearRemainderMark();
+        bookingRepository.save(booking);
+        entry.entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
+                .change("remainderMark", mark, null)
+                .change("paidAmount", paidBefore, booking.getPaidAmount())
+                .change("paymentStatus", statusBefore, booking.getPaymentStatus());
+        if (voided != null) {
+            entry.change("cashPaymentStatus", Payment.Status.PAID, voided.getStatus());
+        }
+        auditService.record(entry);
+        log.info("Remainder mark undone: bookingId={} mark={} cashVoided={}",
+                booking.getId(), mark.getValue(), voided != null);
+    }
+
+    /**
+     * The booking, locked, if its owner may mark its remainder: 404, 403 "You do not own
+     * this stadium", then 409 (E7) when there is nothing for the owner to collect.
+     */
+    private Booking requireMarkableByOwner(UUID ownerId, UUID bookingId) {
+        Booking booking = requireBookingForUpdate(bookingId);
+        if (!booking.getStadium().getOwner().getId().equals(ownerId)) {
+            throw new ForbiddenException("You do not own this stadium");
+        }
+        boolean live = "confirmed".equals(booking.getStatus()) || "completed".equals(booking.getStatus());
+        if (!live || "game".equals(booking.getSource())) {
+            throw new ConflictException(NO_PART_PAYMENT);
+        }
+        if (booking.getPaymentStatus() == Booking.PaymentStatus.PAID) {
+            throw new ConflictException(ALREADY_PAID);
+        }
+        boolean owed = booking.getPaymentStatus() == Booking.PaymentStatus.PARTIALLY_PAID
+                || (booking.getPaymentStatus() == Booking.PaymentStatus.UNPAID && "manual".equals(booking.getSource()));
+        if (!owed) {
+            throw new ConflictException(NO_PART_PAYMENT);
+        }
+        return booking;
     }
 
     /** Owner adds a walk-in/phone booking: confirmed immediately, no hold. */
@@ -236,15 +448,16 @@ public class BookingService {
             throw new ForbiddenException("You do not own this stadium");
         }
 
-        int duration = request.getDuration();
+        BookingWindowValidator.requireOneHour(request.getDuration());
         OffsetDateTime startsAt = request.getStartsAt();
-        OffsetDateTime endsAt = startsAt.plusHours(duration);
+        OffsetDateTime endsAt = startsAt.plusHours(Booking.HOURS);
 
-        validateBookingWindow(stadium, startsAt, duration);
+        bookingWindowValidator.validate(stadium, startsAt);
 
         // The owner prices a walk-in in net terms; cash carries no card fee.
-        long price = bookingPriceCalculator.slotPrices(stadium, startsAt, duration).stream()
-                .mapToLong(Long::longValue).sum();
+        long price = request.getPrice() != null
+                ? request.getPrice()
+                : bookingPriceCalculator.hourPrice(stadium, startsAt);
 
         Booking booking = Booking.builder()
                 .stadium(stadium)
@@ -256,7 +469,7 @@ public class BookingService {
                 .clientPhone(request.getClientPhone())
                 .startsAt(startsAt)
                 .endsAt(endsAt)
-                .durationHours(duration)
+                .durationHours(Booking.HOURS)
                 .price(price)
                 .build();
 
@@ -266,14 +479,15 @@ public class BookingService {
         } catch (DataIntegrityViolationException ex) {
             log.info("Manual booking rejected by overlap constraint: stadiumId={} {}-{}",
                     stadium.getId(), startsAt, endsAt);
-            throw new SlotAlreadyBookedException(overlapMessage(duration));
+            throw new SlotAlreadyBookedException(SLOT_TAKEN);
         }
 
         gameService.cancelGamesOnSlot(stadium.getId(), startsAt, endsAt);
 
-        String method = request.getPaymentMethod();
-        if (method == null || method.isBlank() || "cash".equalsIgnoreCase(method.trim())) {
-            paymentService.recordCashPayment(saved.getId(), ownerUserId);
+        // Cash only, between the owner and the client: never a platform or card payment. Added
+        // as paid, it carries the same mark as cash taken later, so the owner can undo a slip.
+        if ("paid".equals(request.getPaymentStatus())) {
+            paymentService.recordCashPayment(saved.getId(), ownerUserId, true);
         }
 
         auditService.record(AuditEntry.owner(ownerUserId, AuditAction.MANUAL_BOOKING_CREATED)
@@ -282,10 +496,22 @@ public class BookingService {
                 .created("startsAt", saved.getStartsAt())
                 .created("durationHours", saved.getDurationHours())
                 .created("price", saved.getPrice())
+                .created("paymentStatus", saved.getPaymentStatus())
                 .created("clientName", saved.getClientName()));
         log.info("Manual booking created: id={} stadiumId={} ownerId={} client='{}'",
                 saved.getId(), stadium.getId(), ownerUserId, request.getClientName());
         return bookingResponseFactory.forOwner(saved);
+    }
+
+    /** What a walk-in at {@code startsAt} costs unless the owner says otherwise: their own price for that hour. */
+    @Transactional(readOnly = true)
+    public long manualBookingPrice(UUID ownerUserId, UUID stadiumId, OffsetDateTime startsAt) {
+        Stadium stadium = stadiumRepository.findById(stadiumId)
+                .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
+        if (!stadium.getOwner().getId().equals(ownerUserId)) {
+            throw new ForbiddenException("You do not own this stadium");
+        }
+        return bookingPriceCalculator.hourPrice(stadium, startsAt);
     }
 
     /** Pending → confirmed, called after a successful payment. Idempotent. */
@@ -381,8 +607,28 @@ public class BookingService {
 
     @Transactional(readOnly = true)
     public PageResponse<BookingResponse> getMyBookings(UUID userId, int page, int size) {
-        Pageable pageable = Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"));
-        return PageResponse.from(bookingRepository.findByUserId(userId, pageable), bookingResponseFactory::of);
+        return getMyBookings(userId, null, page, size);
+    }
+
+    /**
+     * R29: the player's bookings, all of them (latest start first, as before), or split:
+     * {@code upcoming} — starting now or later, soonest first; {@code past} — started
+     * already, newest first. Anything else is 400 "Invalid when".
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<BookingResponse> getMyBookings(UUID userId, String when, int page, int size) {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        if (when == null || when.isBlank()) {
+            Pageable pageable = Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"));
+            return PageResponse.from(bookingRepository.findByUserId(userId, pageable), bookingResponseFactory::of);
+        }
+        return switch (when) {
+            case "upcoming" -> PageResponse.from(bookingRepository.findByUserIdAndStartsAtGreaterThanEqual(userId, now,
+                    Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"))), bookingResponseFactory::of);
+            case "past" -> PageResponse.from(bookingRepository.findByUserIdAndStartsAtBefore(userId, now,
+                    Pagination.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"))), bookingResponseFactory::of);
+            default -> throw new BadRequestException("Invalid when");
+        };
     }
 
     @Transactional(readOnly = true)
@@ -398,12 +644,32 @@ public class BookingService {
     @Transactional(readOnly = true)
     public PageResponse<BookingResponse> getStadiumBookings(UUID ownerId, UUID stadiumId,
                                                             LocalDate from, LocalDate to, int page, int size) {
+        return getStadiumBookings(ownerId, stadiumId, from, to, false, page, size);
+    }
+
+    /**
+     * As above; with {@code unpaid}, only live bookings (pending, confirmed, completed) with
+     * {@code remainingAmount > 0}, soonest first — filtered in the query
+     * ({@link BookingSpecifications#ownerUnpaid}), so the pages and totals are exact (R38).
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<BookingResponse> getStadiumBookings(UUID ownerId, UUID stadiumId, LocalDate from,
+                                                            LocalDate to, boolean unpaid, int page, int size) {
         Stadium stadium = stadiumRepository.findById(stadiumId)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
         if (!stadium.getOwner().getId().equals(ownerId)) {
             throw new ForbiddenException("You do not own this stadium");
         }
         Pageable pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"));
+        if (unpaid) {
+            pageable = Pagination.of(page, size,
+                    Sort.by(Sort.Direction.ASC, "startsAt").and(Sort.by(Sort.Direction.ASC, "id")));
+            OffsetDateTime fromUtc = from == null ? null : from.atStartOfDay(TASHKENT).toOffsetDateTime();
+            OffsetDateTime toUtc = to == null ? null : to.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime();
+            return PageResponse.from(
+                    bookingRepository.findAll(BookingSpecifications.ownerUnpaid(stadiumId, fromUtc, toUtc), pageable),
+                    bookingResponseFactory::forOwner);
+        }
         if (from != null && to != null) {
             OffsetDateTime fromUtc = from.atStartOfDay(TASHKENT).toOffsetDateTime();
             OffsetDateTime toUtc = to.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime();
@@ -418,14 +684,6 @@ public class BookingService {
     // ---- Helpers ----
 
     /**
-     * Shared gate for app and manual bookings, delegated to
-     * {@link BookingWindowValidator} so games apply the identical rule.
-     */
-    private void validateBookingWindow(Stadium stadium, OffsetDateTime startsAt, int duration) {
-        bookingWindowValidator.validate(stadium, startsAt, duration);
-    }
-
-    /**
      * An owner must not take their own pitch through the player flow — they add a
      * manual booking instead, which is confirmed immediately and needs no hold.
      */
@@ -434,12 +692,6 @@ public class BookingService {
             throw new ForbiddenException(
                     "You cannot book your own stadium; add a manual booking instead");
         }
-    }
-
-    private String overlapMessage(int duration) {
-        return duration > 1
-                ? "One or more of the selected hours is already booked"
-                : "Slot is already booked";
     }
 
     /** A booking created by a game: its money belongs to the game, not to it. */
@@ -473,6 +725,11 @@ public class BookingService {
 
     private Booking requireBooking(UUID bookingId) {
         return bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
+    }
+
+    private Booking requireBookingForUpdate(UUID bookingId) {
+        return bookingRepository.findForUpdate(bookingId)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
     }
 

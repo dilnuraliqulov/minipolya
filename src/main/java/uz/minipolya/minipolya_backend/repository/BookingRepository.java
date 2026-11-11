@@ -2,8 +2,10 @@ package uz.minipolya.minipolya_backend.repository;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -12,6 +14,7 @@ import uz.minipolya.minipolya_backend.entity.Booking;
 import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Repository
@@ -19,7 +22,18 @@ public interface BookingRepository extends JpaRepository<Booking, UUID>, JpaSpec
 
     List<Booking> findByUserIdAndStatusIn(UUID userId, Collection<String> statuses);
 
+    /**
+     * The row, locked until the transaction ends — so the owner's cash and the player's
+     * remainder charge settle one at a time, and the second sees the first's outcome.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT b FROM Booking b WHERE b.id = :id")
+    Optional<Booking> findForUpdate(@Param("id") UUID id);
+
     List<Booking> findByStadiumIdAndStartsAtBetween(UUID stadiumId, OffsetDateTime from, OffsetDateTime to);
+
+    /** A game's bookings in one status — e.g. the pending one a join in progress holds the slot with. */
+    List<Booking> findByGameIdAndStatus(UUID gameId, String status);
 
     Page<Booking> findByStadiumIdAndStartsAtBetween(UUID stadiumId, OffsetDateTime from, OffsetDateTime to,
                                                     Pageable pageable);
@@ -34,6 +48,12 @@ public interface BookingRepository extends JpaRepository<Booking, UUID>, JpaSpec
     List<Booking> findByStatusAndEndsAtBefore(String status, OffsetDateTime time);
 
     Page<Booking> findByUserId(UUID userId, Pageable pageable);
+
+    /** R29 upcoming: the player's bookings starting at or after {@code from}. */
+    Page<Booking> findByUserIdAndStartsAtGreaterThanEqual(UUID userId, OffsetDateTime from, Pageable pageable);
+
+    /** R29 past: the player's bookings that started before {@code before}. */
+    Page<Booking> findByUserIdAndStartsAtBefore(UUID userId, OffsetDateTime before, Pageable pageable);
 
     Page<Booking> findByStadiumId(UUID stadiumId, Pageable pageable);
 
@@ -109,4 +129,17 @@ public interface BookingRepository extends JpaRepository<Booking, UUID>, JpaSpec
     List<Booking> findActiveForStadiumBetween(@Param("stadiumId") UUID stadiumId,
                                               @Param("from") OffsetDateTime from,
                                               @Param("to") OffsetDateTime to);
+
+    /** {@link #findActiveForStadiumBetween} for a whole page of stadiums at once. */
+    @Query("""
+            SELECT new uz.minipolya.minipolya_backend.repository.BookedSpan(b.stadium.id, b.startsAt, b.endsAt)
+            FROM Booking b
+            WHERE b.stadium.id IN :stadiumIds
+              AND b.status IN ('pending', 'confirmed')
+              AND b.startsAt >= :from
+              AND b.startsAt < :to
+            """)
+    List<BookedSpan> findActiveSpansBetween(@Param("stadiumIds") List<UUID> stadiumIds,
+                                            @Param("from") OffsetDateTime from,
+                                            @Param("to") OffsetDateTime to);
 }

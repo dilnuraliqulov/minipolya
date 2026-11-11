@@ -62,6 +62,10 @@ public class Stadium {
     @Column(length = 30)
     private String district;
 
+    /** "Moʻljal": a landmark near the pitch, optional (trimmed, blank stored as null). */
+    @Column(length = 150)
+    private String landmark;
+
     @Column(precision = 9, scale = 6)
     private BigDecimal latitude;
 

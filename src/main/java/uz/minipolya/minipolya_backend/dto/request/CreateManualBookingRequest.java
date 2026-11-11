@@ -1,12 +1,15 @@
 package uz.minipolya.minipolya_backend.dto.request;
 
-import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Positive;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import uz.minipolya.minipolya_backend.util.StadiumRules;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -24,17 +27,23 @@ public class CreateManualBookingRequest {
     private String clientName;
 
     @NotBlank
+    @Pattern(regexp = "^\\+998\\d{9}$", message = "clientPhone must be in the format +998XXXXXXXXX")
     private String clientPhone;
 
     @NotNull
     private OffsetDateTime startsAt;
 
-    @NotNull
-    @Min(value = 1, message = "duration must be at least 1 hour")
+    /** Optional: a booking is exactly one hour. Absent or 1; anything else is 400. */
     private Integer duration;
 
     private String notes;
 
-    /** "cash" or null — defaults to cash for walk-ins. */
-    private String paymentMethod;
+    /** The owner's price for this hour in tiyin; absent means the stadium's own price for it. */
+    @Positive
+    @Max(StadiumRules.PRICE_MAX)
+    private Long price;
+
+    /** "unpaid" (the default: players pay after the game) or "paid" (cash already taken). */
+    @Pattern(regexp = "unpaid|paid", message = "paymentStatus must be unpaid or paid")
+    private String paymentStatus;
 }

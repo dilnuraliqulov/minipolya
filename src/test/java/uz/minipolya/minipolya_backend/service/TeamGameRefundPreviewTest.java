@@ -107,7 +107,7 @@ class TeamGameRefundPreviewTest {
                 paymentService, mock(SavedCardService.class), platformSettingsService,
                 mock(NotificationService.class), mock(AuditService.class),
                 new CancellationPolicy(), new AppProperties(),
-                mock(TeamMemberRepository.class), mock(TeamRepository.class));
+                mock(TeamMemberRepository.class), mock(TeamRepository.class), org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         User owner = User.builder().id(UUID.randomUUID()).name("Owner").build();
         User leaderA = User.builder().id(LEADER_A_ID).name("Leader A").build();
@@ -326,6 +326,23 @@ class TeamGameRefundPreviewTest {
         service.cancelByLeader(game, LEADER_B_ID);
 
         assertThat(service.refundIfCancelledNow(game, sideB, OffsetDateTime.now(ZoneOffset.UTC))).isZero();
+    }
+
+    @Test
+    void aWaitingTeamShowsItsHoldAsHeldAmount() {
+        Game game = waitingGame(Duration.ofDays(2));
+
+        GameTeamResponse a = service.teamsOf(game).getFirst();
+
+        assertThat(a.getHeldAmount()).isEqualTo(FEE + ADVANCE);
+    }
+
+    @Test
+    void heldAmountIsZeroOnceTheHoldsAreCaptured() {
+        Game game = confirmedGame(Duration.ofDays(2));
+
+        assertThat(service.teamsOf(game)).extracting(GameTeamResponse::getHeldAmount)
+                .containsExactly(0L, 0L);
     }
 
     @Test

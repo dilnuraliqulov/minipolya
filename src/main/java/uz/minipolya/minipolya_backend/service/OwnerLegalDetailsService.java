@@ -9,6 +9,7 @@ import uz.minipolya.minipolya_backend.audit.AuditEntityType;
 import uz.minipolya.minipolya_backend.audit.AuditEntry;
 import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.request.UpdateOwnerLegalDetailsRequest;
+import uz.minipolya.minipolya_backend.dto.response.OwnerContractStatusResponse;
 import uz.minipolya.minipolya_backend.dto.response.OwnerLegalDetailsResponse;
 import uz.minipolya.minipolya_backend.entity.OwnerLegalDetails;
 import uz.minipolya.minipolya_backend.entity.OwnerLegalDetails.ContractStatus;
@@ -52,6 +53,20 @@ public class OwnerLegalDetailsService {
     public OwnerLegalDetailsResponse get(UUID userId) {
         requireUser(userId);
         return repository.findById(userId).map(mapper::toResponse).orElse(null);
+    }
+
+    /**
+     * R39: the caller's own legal form and contract status. With no row yet, the status the
+     * admin side shows for such an owner: {@code none} ({@link #contractStatuses}).
+     */
+    @Transactional(readOnly = true)
+    public OwnerContractStatusResponse getOwnStatus(UUID userId) {
+        return repository.findById(userId)
+                .map(mapper::toContractStatus)
+                .orElseGet(() -> OwnerContractStatusResponse.builder()
+                        .atmosContractStatus(ContractStatus.NONE)
+                        .ownerContractStatus(ContractStatus.NONE)
+                        .build());
     }
 
     @Transactional

@@ -15,6 +15,7 @@ import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.NotificationMapper;
 import uz.minipolya.minipolya_backend.repository.NotificationRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
+import uz.minipolya.minipolya_backend.telegram.TelegramHtml;
 
 import java.util.UUID;
 
@@ -97,6 +98,7 @@ public class NotificationService {
     }
 
     private String format(String title, String message) {
-        return "<b>" + title + "</b>\n" + message;
+        // Sent as HTML: a stadium or team name may hold & or <, which would break the message.
+        return "<b>" + TelegramHtml.escape(title) + "</b>\n" + TelegramHtml.escape(message);
     }
 }

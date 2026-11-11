@@ -1,6 +1,7 @@
 package uz.minipolya.minipolya_backend.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -9,6 +10,9 @@ import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.audit.AuditAction;
 import uz.minipolya.minipolya_backend.audit.AuditChange;
 import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
+import uz.minipolya.minipolya_backend.dto.request.AdminStadiumBookingTermsRequest;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumResponse;
 import uz.minipolya.minipolya_backend.dto.response.StadiumDetailResponse;
@@ -40,6 +44,7 @@ import java.util.stream.Collectors;
  * queries — the stadiums with owner and amenities, the count, then ratings, booking
  * counts, revenue and photos for the whole page at once.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AdminStadiumService {
@@ -47,6 +52,8 @@ public class AdminStadiumService {
     private static final List<String> COUNTED_STATUSES = List.of("confirmed", "completed");
     private static final Set<String> FORMATS = Set.of("5x5", "7x7", "9x9", "11x11");
     private static final String APPROVED = "approved";
+    /** A week: the longest cancellation window an admin can set. */
+    public static final int MAX_CANCELLATION_HOURS = 168;
     private static final List<String> STATUS_ACTIONS = List.of(
             AuditAction.STADIUM_APPROVED.name(), AuditAction.STADIUM_REJECTED.name(),
             AuditAction.STADIUM_BLOCKED.name(), AuditAction.STADIUM_UNBLOCKED.name(),
@@ -63,6 +70,7 @@ public class AdminStadiumService {
     private final OwnerLegalDetailsService ownerLegalDetailsService;
     private final AuditLogRepository auditLogRepository;
     private final AuditLogResponseFactory auditLogResponseFactory;
+    private final AuditService auditService;
 
     @Transactional(readOnly = true)
     public Page<AdminStadiumResponse> list(String status, String search, String district, String format,
@@ -102,6 +110,55 @@ public class AdminStadiumService {
                 .totalRevenue(row.getTotalRevenue())
                 .pricingRules(pricingService.listForAdmin(stadiumId))
                 .build();
+    }
+
+    /**
+     * D3: the deposit and the cancellation window, agreed with the owner by phone. Any status.
+     * {@code minBookingAmount} null is the platform default ({@code default_min_booking_amount}, T2),
+     * else more than the team-game fee, at least
+     * {@link Stadium#MIN_BOOKING_AMOUNT_FLOOR} and at most the hour's price; {@code cancellationHours}
+     * 0–{@value #MAX_CANCELLATION_HOURS}. Audited {@code STADIUM_BOOKING_TERMS_CHANGED} with old → new,
+     * nothing when nothing changed. Answers the admin detail, as {@link #get} does.
+     */
+    @Transactional
+    public AdminStadiumDetailResponse updateBookingTerms(UUID stadiumId, AdminStadiumBookingTermsRequest request,
+                                                         UUID adminUserId) {
+        Stadium stadium = stadiumRepository.findForUpdate(stadiumId)
+                .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
+        Long minimum = request.getMinBookingAmount();
+        Integer hours = request.getCancellationHours();
+        if (minimum != null && minimum < Stadium.MIN_BOOKING_AMOUNT_FLOOR) {
+            throw new BadRequestException("minBookingAmount must be at least "
+                    + Stadium.MIN_BOOKING_AMOUNT_FLOOR + " tiyin (500 so'm)");
+        }
+        if (minimum != null && stadium.getPricePerHour() != null && minimum > stadium.getPricePerHour()) {
+            throw new BadRequestException("minBookingAmount must not be more than pricePerHour");
+        }
+        long teamFee = cardPricing.teamGameFee();
+        if (minimum != null && minimum <= teamFee) {
+            // T2: a team's minimum payment is the fee plus the owner's part of it.
+            throw new BadRequestException("minBookingAmount must be more than the team game platform fee ("
+                    + uz.minipolya.minipolya_backend.util.Soum.of(teamFee) + ")");
+        }
+        if (hours == null) {
+            throw new BadRequestException("cancellationHours is required");
+        }
+        if (hours < 0 || hours > MAX_CANCELLATION_HOURS) {
+            throw new BadRequestException("cancellationHours must be between 0 and " + MAX_CANCELLATION_HOURS);
+        }
+        AuditEntry entry = AuditEntry.admin(adminUserId, AuditAction.STADIUM_BOOKING_TERMS_CHANGED)
+                .entity(AuditEntityType.STADIUM, stadium.getId(), AuditLabels.stadium(stadium))
+                .change("minBookingAmount", stadium.getMinBookingAmount(), minimum)
+                .change("cancellationHours", stadium.getCancellationHours(), hours);
+        stadium.setMinBookingAmount(minimum);
+        stadium.setCancellationHours(hours);
+        stadiumRepository.saveAndFlush(stadium);
+        if (!entry.getChanges().isEmpty()) {
+            auditService.record(entry);
+        }
+        log.info("Admin {} set booking terms of stadium {}: minBookingAmount={} cancellationHours={}",
+                adminUserId, stadiumId, minimum, hours);
+        return get(stadiumId);
     }
 
     /**
@@ -154,7 +211,10 @@ public class AdminStadiumService {
             response.setOwnerContractStatus(contracts.getOrDefault(
                     stadium.getOwner().getId(), OwnerLegalDetails.ContractStatus.NONE));
             if (stadium.getPricePerHour() != null) {
-                response.setPrice(pricing.playerAmount(stadium.getPricePerHour()));
+                long playerPrice = pricing.playerAmount(stadium.getPricePerHour());
+                response.setPlayerPrice(playerPrice);
+                response.setOwnerReceives(pricing.ownerReceives(playerPrice));
+                response.setAtmosFee(playerPrice - response.getOwnerReceives());
             }
             return response;
         }).toList();

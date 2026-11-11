@@ -15,8 +15,10 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
 import tools.jackson.databind.ObjectMapper;
+import uz.minipolya.minipolya_backend.dto.response.BlockedAccountResponse;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
+import uz.minipolya.minipolya_backend.service.AccountBlockService;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -46,9 +48,11 @@ class JwtAuthFilterTest {
     private UserRepository userRepository;
     @Mock
     private FilterChain filterChain;
+    @Mock
+    private AccountBlockService accountBlockService;
 
     private JwtAuthFilter filter() {
-        return new JwtAuthFilter(jwtProvider, userRepository, new ObjectMapper());
+        return new JwtAuthFilter(jwtProvider, userRepository, new ObjectMapper(), accountBlockService);
     }
 
     @AfterEach
@@ -70,13 +74,18 @@ class JwtAuthFilterTest {
         HttpServletResponse response = new MockHttpServletResponse();
         when(userRepository.findById(USER_ID))
                 .thenReturn(Optional.of(User.builder().id(USER_ID).name("Blocked").isBlocked(true).build()));
+        when(accountBlockService.details(USER_ID)).thenReturn(BlockedAccountResponse.builder()
+                .reason("Spam bookings").blockedAt(java.time.OffsetDateTime.parse("2026-10-30T08:00:00Z")).build());
 
         filter().doFilterInternal(request, response, filterChain);
 
         assertThat(response.getStatus()).isEqualTo(403);
         assertThat(((MockHttpServletResponse) response).getContentAsString())
                 .contains("Account is blocked")
-                .contains("\"success\":false");
+                .contains("\"success\":false")
+                .contains("\"code\":\"ACCOUNT_BLOCKED\"")
+                .contains("\"reason\":\"Spam bookings\"")
+                .contains("\"blockedAt\":\"2026-10-30T08:00:00Z\"");
         // The request must not reach the application, and must not be authenticated.
         verify(filterChain, never()).doFilter(request, response);
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
@@ -150,7 +159,7 @@ class JwtAuthFilterTest {
         MockHttpServletRequest request = requestWith(oldToken);
         MockHttpServletResponse response = new MockHttpServletResponse();
 
-        new JwtAuthFilter(realProvider, userRepository, new ObjectMapper())
+        new JwtAuthFilter(realProvider, userRepository, new ObjectMapper(), accountBlockService)
                 .doFilterInternal(request, response, filterChain);
 
         assertThat(response.getStatus()).isEqualTo(401);
@@ -169,7 +178,7 @@ class JwtAuthFilterTest {
         MockHttpServletRequest request = requestWith(freshToken);
         MockHttpServletResponse response = new MockHttpServletResponse();
 
-        new JwtAuthFilter(realProvider, userRepository, new ObjectMapper())
+        new JwtAuthFilter(realProvider, userRepository, new ObjectMapper(), accountBlockService)
                 .doFilterInternal(request, response, filterChain);
 
         verify(filterChain).doFilter(request, response);

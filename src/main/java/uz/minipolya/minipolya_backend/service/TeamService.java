@@ -7,11 +7,14 @@ import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.dto.request.AddTeamMemberRequest;
 import uz.minipolya.minipolya_backend.dto.request.CreateTeamRequest;
 import uz.minipolya.minipolya_backend.dto.response.TeamDetailResponse;
+import uz.minipolya.minipolya_backend.dto.response.TeamInvitePreviewResponse;
+import uz.minipolya.minipolya_backend.dto.response.TeamInviteResponse;
 import uz.minipolya.minipolya_backend.dto.response.TeamResponse;
 import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.TeamMember;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
+import uz.minipolya.minipolya_backend.exception.ConflictException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.TeamMapper;
@@ -20,6 +23,8 @@ import uz.minipolya.minipolya_backend.repository.TeamMemberRepository;
 import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
+import java.security.SecureRandom;
+import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 
@@ -30,6 +35,9 @@ public class TeamService {
 
     private static final String ROLE_LEADER = "leader";
     private static final String ROLE_MEMBER = "member";
+    private static final String ALREADY_MEMBER = "User is already a member of this team";
+    private static final int INVITE_CODE_MAX = 32;
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     private final TeamRepository teamRepository;
     private final TeamMemberRepository teamMemberRepository;
@@ -74,13 +82,59 @@ public class TeamService {
 
         UUID newMemberId = request.getUserId();
         if (teamMemberRepository.existsByTeamIdAndUserId(teamId, newMemberId)) {
-            throw new BadRequestException("User is already a member of this team");
+            throw new BadRequestException(ALREADY_MEMBER);
         }
-        User user = requireUser(newMemberId);
-
-        team.addMember(TeamMember.builder().user(user).role(ROLE_MEMBER).build());
-        Team saved = teamRepository.save(team);
+        Team saved = appendMember(team, requireUser(newMemberId));
         log.info("Team member added: teamId={} userId={} by leaderId={}", teamId, newMemberId, requesterId);
+        return teamMapper.toDetailResponse(saved);
+    }
+
+    // ---- Invite links (R32) ----
+
+    /** The team's invite code, created on first request. Leader only. */
+    @Transactional
+    public TeamInviteResponse getInvite(UUID requesterId, UUID teamId) {
+        Team team = requireTeam(teamId);
+        requireLeader(team, requesterId);
+        if (team.getInviteCode() == null) {
+            team.setInviteCode(newInviteCode());
+            teamRepository.save(team);
+            log.info("Team invite code created: teamId={} by leaderId={}", teamId, requesterId);
+        }
+        return new TeamInviteResponse(team.getInviteCode());
+    }
+
+    /** A new invite code; links with the old one stop working. Leader only. */
+    @Transactional
+    public TeamInviteResponse renewInvite(UUID requesterId, UUID teamId) {
+        Team team = requireTeam(teamId);
+        requireLeader(team, requesterId);
+        team.setInviteCode(newInviteCode());
+        teamRepository.save(team);
+        log.info("Team invite code renewed: teamId={} by leaderId={}", teamId, requesterId);
+        return new TeamInviteResponse(team.getInviteCode());
+    }
+
+    /** What an invite link leads to; any signed-in user. */
+    @Transactional(readOnly = true)
+    public TeamInvitePreviewResponse previewInvite(UUID userId, String code) {
+        Team team = requireInvite(code);
+        return new TeamInvitePreviewResponse(teamMapper.toResponse(team),
+                teamMemberRepository.existsByTeamIdAndUserId(team.getId(), userId));
+    }
+
+    /**
+     * Joins the team the code belongs to, as a member — the same membership the leader's
+     * add-member gives. Already in it: 409 (the add-member endpoint keeps its 400).
+     */
+    @Transactional
+    public TeamDetailResponse joinByInvite(UUID userId, String code) {
+        Team team = requireInvite(code);
+        if (teamMemberRepository.existsByTeamIdAndUserId(team.getId(), userId)) {
+            throw new ConflictException(ALREADY_MEMBER);
+        }
+        Team saved = appendMember(team, requireUser(userId));
+        log.info("Team joined by invite: teamId={} userId={}", team.getId(), userId);
         return teamMapper.toDetailResponse(saved);
     }
 
@@ -118,6 +172,27 @@ public class TeamService {
     }
 
     // ---- Helpers ----
+
+    private Team appendMember(Team team, User user) {
+        team.addMember(TeamMember.builder().user(user).role(ROLE_MEMBER).build());
+        return teamRepository.save(team);
+    }
+
+    private Team requireInvite(String code) {
+        String trimmed = code == null ? "" : code.trim();
+        if (trimmed.isEmpty() || trimmed.length() > INVITE_CODE_MAX) {
+            throw new ResourceNotFoundException("Invite not found");
+        }
+        return teamRepository.findByInviteCode(trimmed)
+                .orElseThrow(() -> new ResourceNotFoundException("Invite not found"));
+    }
+
+    /** 128 random bits, base64url without padding: 22 characters, safe in a link. */
+    static String newInviteCode() {
+        byte[] bytes = new byte[16];
+        RANDOM.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
 
     private User requireUser(UUID userId) {
         return userRepository.findById(userId)

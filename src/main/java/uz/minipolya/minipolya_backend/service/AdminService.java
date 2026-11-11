@@ -59,6 +59,8 @@ public class AdminService {
     private static final ZoneId TASHKENT = ZoneId.of("Asia/Tashkent");
     private static final List<String> COUNTED_STATUSES = List.of("confirmed", "completed");
     private static final int MAX_STATUS_REASON = 500;
+    /** D7: a stadium is approved only with at least this many photos. */
+    public static final int MIN_PHOTOS_TO_APPROVE = 3;
     /** The overview chart's span: the last 30 days, today included. */
     private static final int CHART_DAYS = 30;
 
@@ -268,6 +270,12 @@ public class AdminService {
         if ("approved".equals(status) && !"approved".equals(oldStatus)) {
             // Players will pay this owner by card: the payouts need a signed ATMOS contract.
             ownerLegalDetailsService.requireSignedContract(stadium.getOwner().getId());
+            // Then the photos (D7): players choose by them; the upload comes after creation, so it
+            // is checked here, not on create. Checked after the contract, the slower thing to fix.
+            if (stadium.getPhotos().size() < MIN_PHOTOS_TO_APPROVE) {
+                throw new BadRequestException("A stadium needs at least " + MIN_PHOTOS_TO_APPROVE
+                        + " photos to be approved");
+            }
         }
         stadium.setStatus(status);
         // The owner sees why it was turned down; approving or reopening clears it.

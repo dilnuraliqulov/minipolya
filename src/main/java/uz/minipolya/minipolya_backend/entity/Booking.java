@@ -40,6 +40,12 @@ import java.util.Locale;
 @AllArgsConstructor
 public class Booking {
 
+    /**
+     * Every booking is exactly one hour: one availability slot. App, manual, recurring and
+     * game bookings alike. Rows from before this rule may be longer and keep their length.
+     */
+    public static final int HOURS = 1;
+
     @Id
     @UuidGenerator(style = UuidGenerator.Style.VERSION_7)
     private UUID id;
@@ -71,7 +77,7 @@ public class Booking {
      * cancelled_by_user, cancelled_by_owner.
      */
     @Builder.Default
-    @Column(nullable = false, length = 20)
+    @Column(nullable = false, length = 30)
     private String status = "pending";
 
     @Column(name = "starts_at", nullable = false)
@@ -80,21 +86,32 @@ public class Booking {
     @Column(name = "ends_at", nullable = false)
     private OffsetDateTime endsAt;
 
+    /** Always {@link #HOURS} for a new booking; an older row may be longer. */
     @Column(name = "duration_hours", nullable = false)
     private Integer durationHours;
 
-    /** The owner's net price in tiyin — what the owner set, never grossed up. */
+    /** The owner's own price in tiyin — what the owner set, never converted. */
     @Column(nullable = false)
     private Long price;
 
     /**
-     * What the player is quoted to pay by card for the whole booking, in tiyin: the sum
-     * of each hour's card price when it was booked. Null for manual and older bookings.
+     * The player price D for the whole booking, in tiyin: the sum of each hour's player
+     * price when it was booked. Null for manual bookings (the walk-in pays the owner's own
+     * price) and for older bookings.
      */
     @Column(name = "card_price")
     private Long cardPrice;
 
-    /** Running total of this booking's successful payments, in tiyin. */
+    /** How {@link #paidAmount} and the remainder are counted; see {@link PricingModel}. */
+    @Builder.Default
+    @Convert(converter = PricingModelConverter.class)
+    @Column(name = "pricing_model", nullable = false, length = 20)
+    private PricingModel pricingModel = PricingModel.PLAYER_PRICE;
+
+    /**
+     * Running total of this booking's successful payments, in tiyin: what the player paid
+     * (card and cash) under {@code player_price}, the owner's net under {@code net}.
+     */
     @Builder.Default
     @Column(name = "paid_amount", nullable = false)
     private Long paidAmount = 0L;
@@ -124,6 +141,22 @@ public class Booking {
     @Column(name = "cancellation_reason", columnDefinition = "text")
     private String cancellationReason;
 
+    /**
+     * E5: the owner's mark on the remainder — {@code cash_received} or {@code not_paid};
+     * null when none. Changeset 050.
+     */
+    @Convert(converter = RemainderMarkConverter.class)
+    @Column(name = "remainder_mark", length = 20)
+    private RemainderMark remainderMark;
+
+    /** When the mark was set (UTC): the owner may undo it until the end of that Tashkent day. */
+    @Column(name = "remainder_marked_at")
+    private OffsetDateTime remainderMarkedAt;
+
+    /** Who set the mark (the owner). */
+    @Column(name = "remainder_marked_by")
+    private UUID remainderMarkedBy;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -151,8 +184,94 @@ public class Booking {
      */
     public long getRemainingAmount() {
         long paid = paidAmount == null ? 0L : paidAmount;
-        long total = price == null ? 0L : price;
-        return Math.max(0L, total - paid);
+        return Math.max(0L, totalDue() - paid);
+    }
+
+    /**
+     * What the booking costs in the terms {@link #paidAmount} is counted in: the player
+     * price D (the owner's own price on a manual booking) under {@code player_price}, the
+     * owner's price under {@code net}.
+     */
+    public long totalDue() {
+        if (pricingModel == PricingModel.PLAYER_PRICE && cardPrice != null) {
+            return cardPrice;
+        }
+        return price == null ? 0L : price;
+    }
+
+    /** What a successful payment counts towards {@link #totalDue()}. */
+    public long creditOf(Payment payment) {
+        return pricingModel == PricingModel.PLAYER_PRICE
+                ? (payment.getAmount() == null ? 0L : payment.getAmount())
+                : payment.netAmount();
+    }
+
+    /**
+     * How a booking counts its money. {@code PLAYER_PRICE}: every booking made under the
+     * one-player-price rule — the remainder is {@code D - paid}, the same in the app and in
+     * cash. {@code NET}: bookings made before it, and game bookings (whose teams' debts live
+     * on {@code game_teams}) — the owner's terms, as they always were.
+     */
+    public enum PricingModel {
+        NET, PLAYER_PRICE;
+
+        @JsonValue
+        public String getValue() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+    }
+
+    @Converter
+    public static class PricingModelConverter implements AttributeConverter<PricingModel, String> {
+        @Override
+        public String convertToDatabaseColumn(PricingModel attribute) {
+            return attribute == null ? null : attribute.getValue();
+        }
+
+        @Override
+        public PricingModel convertToEntityAttribute(String dbData) {
+            return dbData == null ? null : PricingModel.valueOf(dbData.trim().toUpperCase(Locale.ROOT));
+        }
+    }
+
+    /** E5: what the owner marked about the remainder. */
+    public enum RemainderMark {
+        /** The owner took the rest in cash (a cash payment row exists for it). */
+        CASH_RECEIVED,
+        /** The player did not pay the rest; nothing charged, the remainder still stands. */
+        NOT_PAID;
+
+        @JsonValue
+        public String getValue() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+    }
+
+    @Converter
+    public static class RemainderMarkConverter implements AttributeConverter<RemainderMark, String> {
+        @Override
+        public String convertToDatabaseColumn(RemainderMark attribute) {
+            return attribute == null ? null : attribute.getValue();
+        }
+
+        @Override
+        public RemainderMark convertToEntityAttribute(String dbData) {
+            return dbData == null ? null : RemainderMark.valueOf(dbData.trim().toUpperCase(Locale.ROOT));
+        }
+    }
+
+    /** Sets the owner's mark, now, by {@code userId}. */
+    public void markRemainder(RemainderMark mark, UUID userId, OffsetDateTime at) {
+        this.remainderMark = mark;
+        this.remainderMarkedAt = at;
+        this.remainderMarkedBy = userId;
+    }
+
+    /** Clears the owner's mark. */
+    public void clearRemainderMark() {
+        this.remainderMark = null;
+        this.remainderMarkedAt = null;
+        this.remainderMarkedBy = null;
     }
 
     /** How much of the price has been paid. */

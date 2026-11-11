@@ -11,8 +11,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.AddTeamMemberRequest;
 import uz.minipolya.minipolya_backend.dto.request.CreateTeamRequest;
+import uz.minipolya.minipolya_backend.dto.request.JoinTeamRequest;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.TeamDetailResponse;
+import uz.minipolya.minipolya_backend.dto.response.TeamInvitePreviewResponse;
+import uz.minipolya.minipolya_backend.dto.response.TeamInviteResponse;
 import uz.minipolya.minipolya_backend.dto.response.TeamResponse;
 import uz.minipolya.minipolya_backend.service.TeamService;
 
@@ -34,6 +37,32 @@ public class TeamController {
     @GetMapping("/api/teams/me")
     public ApiResponse<List<TeamResponse>> listMine(@AuthenticationPrincipal UUID userId) {
         return ApiResponse.ok(teamService.listMine(userId));
+    }
+
+    /** R32: the team's invite code (created on first request). Leader only. */
+    @GetMapping("/api/teams/{id}/invite")
+    public ApiResponse<TeamInviteResponse> invite(@AuthenticationPrincipal UUID userId, @PathVariable UUID id) {
+        return ApiResponse.ok(teamService.getInvite(userId, id));
+    }
+
+    /** R32: a new invite code; old links stop working. Leader only. */
+    @PostMapping("/api/teams/{id}/invite")
+    public ApiResponse<TeamInviteResponse> renewInvite(@AuthenticationPrincipal UUID userId, @PathVariable UUID id) {
+        return ApiResponse.ok(teamService.renewInvite(userId, id), "Invite link renewed");
+    }
+
+    /** R32: the team an invite code leads to, and whether the caller is already in it. */
+    @GetMapping("/api/teams/invite/{code}")
+    public ApiResponse<TeamInvitePreviewResponse> previewInvite(@AuthenticationPrincipal UUID userId,
+                                                                @PathVariable String code) {
+        return ApiResponse.ok(teamService.previewInvite(userId, code));
+    }
+
+    /** R32: join a team from its invite code. */
+    @PostMapping("/api/teams/join")
+    public ApiResponse<TeamDetailResponse> join(@AuthenticationPrincipal UUID userId,
+                                                @Valid @RequestBody JoinTeamRequest request) {
+        return ApiResponse.ok(teamService.joinByInvite(userId, request.getCode()), "Joined team");
     }
 
     @GetMapping("/api/teams/{id}")

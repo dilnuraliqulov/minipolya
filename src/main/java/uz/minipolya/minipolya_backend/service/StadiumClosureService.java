@@ -94,6 +94,12 @@ public class StadiumClosureService {
         log.info("Closure deleted: id={} ownerId={}", closureId, ownerUserId);
     }
 
+    /** Every closure touching {@code date} of the given stadiums, loaded at once. */
+    @Transactional(readOnly = true)
+    public List<StadiumClosure> closuresOn(List<UUID> stadiumIds, LocalDate date) {
+        return closureRepository.findCoveringDate(stadiumIds, date);
+    }
+
     /** True if the given date/time falls within any closure of the stadium. */
     @Transactional(readOnly = true)
     public boolean isClosedAt(UUID stadiumId, LocalDate date, LocalTime time) {
@@ -101,7 +107,7 @@ public class StadiumClosureService {
                 .anyMatch(closure -> covers(closure, date, time));
     }
 
-    private boolean covers(StadiumClosure closure, LocalDate date, LocalTime time) {
+    static boolean covers(StadiumClosure closure, LocalDate date, LocalTime time) {
         if (date.isBefore(closure.getStartDate()) || date.isAfter(closure.getEndDate())) {
             return false;
         }

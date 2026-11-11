@@ -51,7 +51,6 @@ class PlatformSettingsServiceTest {
     private PlatformSettings settings() {
         return PlatformSettings.builder()
                 .id(SETTINGS_ID)
-                .bookingCommissionPercent(0)
                 .teamGamePlatformFee(2_500_000L)
                 .casualGameServiceFee(0L)
                 .build();
@@ -61,7 +60,6 @@ class PlatformSettingsServiceTest {
     void readsTheSeededDefaults() {
         PlatformSettingsResponse response = service.get();
 
-        assertThat(response.getBookingCommissionPercent()).isZero();
         assertThat(response.getTeamGamePlatformFee()).isEqualTo(2_500_000L);
         assertThat(response.getCasualGameServiceFee()).isZero();
     }
@@ -72,35 +70,7 @@ class PlatformSettingsServiceTest {
                 UpdatePlatformSettingsRequest.builder().teamGamePlatformFee(3_000_000L).build(), ADMIN_ID);
 
         assertThat(response.getTeamGamePlatformFee()).isEqualTo(3_000_000L);
-        assertThat(response.getBookingCommissionPercent()).isZero();
         assertThat(response.getCasualGameServiceFee()).isZero();
-    }
-
-    @Test
-    void rejectsCommissionAboveFifty() {
-        assertThatThrownBy(() -> service.update(
-                UpdatePlatformSettingsRequest.builder().bookingCommissionPercent(51).build(), ADMIN_ID))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("bookingCommissionPercent");
-
-        verify(repository, never()).save(any());
-    }
-
-    @Test
-    void rejectsNegativeCommission() {
-        assertThatThrownBy(() -> service.update(
-                UpdatePlatformSettingsRequest.builder().bookingCommissionPercent(-1).build(), ADMIN_ID))
-                .isInstanceOf(BadRequestException.class);
-
-        verify(repository, never()).save(any());
-    }
-
-    @Test
-    void acceptsCommissionAtBothEndsOfTheRange() {
-        assertThat(service.update(UpdatePlatformSettingsRequest.builder().bookingCommissionPercent(0).build(),
-                ADMIN_ID).getBookingCommissionPercent()).isZero();
-        assertThat(service.update(UpdatePlatformSettingsRequest.builder().bookingCommissionPercent(50).build(),
-                ADMIN_ID).getBookingCommissionPercent()).isEqualTo(50);
     }
 
     @Test
@@ -126,7 +96,6 @@ class PlatformSettingsServiceTest {
     @Test
     void updateAuditsEveryChangedFieldWithItsOldAndNewValue() {
         service.update(UpdatePlatformSettingsRequest.builder()
-                .bookingCommissionPercent(5)
                 .teamGamePlatformFee(3_000_000L)
                 .build(), ADMIN_ID);
 
@@ -136,23 +105,22 @@ class PlatformSettingsServiceTest {
         assertThat(entry.getEntityId()).isEqualTo(SETTINGS_ID);
         // Untouched fields are not reported as changes.
         assertThat(entry.getChanges()).containsExactly(
-                new AuditChange("bookingCommissionPercent", 0L, 5L),
                 new AuditChange("teamGamePlatformFee", 2_500_000L, 3_000_000L));
     }
 
     @Test
     void updateThatChangesNothingIsNotAudited() {
-        service.update(UpdatePlatformSettingsRequest.builder().bookingCommissionPercent(0).build(), ADMIN_ID);
+        service.update(UpdatePlatformSettingsRequest.builder().teamGamePlatformFee(2_500_000L).build(), ADMIN_ID);
 
         assertThat(Audited.entries(auditService)).isEmpty();
     }
 
     @Test
-    void theCardFeeDefaultsTo150BpsAndA100SomStep() {
+    void theCardFeeDefaultsTo150BpsAndA5000SomStep() {
         PlatformSettingsResponse response = service.get();
 
         assertThat(response.getCardFeeBps()).isEqualTo(150);
-        assertThat(response.getPaymentRoundingStep()).isEqualTo(10_000L);
+        assertThat(response.getPaymentRoundingStep()).isEqualTo(500_000L);
     }
 
     @Test
@@ -164,7 +132,7 @@ class PlatformSettingsServiceTest {
         assertThat(response.getPaymentRoundingStep()).isEqualTo(50_000L);
         assertThat(Audited.one(auditService, AuditAction.SETTINGS_CHANGED).getChanges()).containsExactly(
                 new AuditChange("cardFeeBps", 150L, 200L),
-                new AuditChange("paymentRoundingStep", 10_000L, 50_000L));
+                new AuditChange("paymentRoundingStep", 500_000L, 50_000L));
     }
 
     @Test
@@ -191,7 +159,6 @@ class PlatformSettingsServiceTest {
 
         PlatformSettingsResponse response = service.get();
 
-        assertThat(response.getBookingCommissionPercent()).isZero();
         assertThat(response.getTeamGamePlatformFee()).isEqualTo(2_500_000L);
         assertThat(response.getCasualGameServiceFee()).isZero();
         verify(repository).save(any(PlatformSettings.class));

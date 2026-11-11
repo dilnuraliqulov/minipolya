@@ -1,6 +1,7 @@
 package uz.minipolya.minipolya_backend.dto.response;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import uz.minipolya.minipolya_backend.provider.DeclineReason;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -25,11 +26,8 @@ public class PaymentResponse {
     private UUID bookingId;
     private UUID gameId;
     private UUID userId;
-    /** All tiyin; ownerAmount + platformAmount always equals amount. */
+    /** Tiyin: what the player paid (negative on a refund). */
     private Long amount;
-    private Long ownerAmount;
-    private Long platformAmount;
-    private Integer commissionPercent;
 
     private Payment.Method method;
     private Payment.PaymentType paymentType;
@@ -37,5 +35,7 @@ public class PaymentResponse {
     private String providerTxnId;
     private Payment.Status status;
     private String refundReason;
+    /** R44: on a failed row the provider refused, why (INSUFFICIENT_FUNDS, CARD_EXPIRED, CARD_DECLINED). */
+    private DeclineReason declineReason;
     private OffsetDateTime createdAt;
 }

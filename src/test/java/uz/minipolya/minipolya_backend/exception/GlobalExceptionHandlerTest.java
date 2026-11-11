@@ -82,6 +82,17 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void anUploadOverSpringsMultipartLimitIs413FileTooLarge() {
+        ResponseEntity<ApiResponse<Void>> response = handler.handleTooLarge(
+                new org.springframework.web.multipart.MaxUploadSizeExceededException(10L * 1024 * 1024));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().isSuccess()).isFalse();
+        assertThat(response.getBody().getMessage()).isEqualTo("File too large");
+    }
+
+    @Test
     void blockedAccountIs403() {
         ResponseEntity<ApiResponse<Object>> response = handler.handleCoded(new AccountBlockedException());
 

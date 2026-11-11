@@ -87,7 +87,7 @@ class TeamGameRemainderTest {
                 paymentService, savedCardService, platformSettingsService,
                 mock(NotificationService.class), mock(AuditService.class),
                 new CancellationPolicy(), new AppProperties(),
-                mock(TeamMemberRepository.class), mock(TeamRepository.class));
+                mock(TeamMemberRepository.class), mock(TeamRepository.class), org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         owner = User.builder().id(OWNER_ID).name("Owner").build();
         User leaderA = User.builder().id(LEADER_A_ID).name("Leader A").build();
@@ -188,11 +188,14 @@ class TeamGameRemainderTest {
     void aDeclinedCardLeavesTheRemainderUnpaid() {
         when(paymentService.chargeForTeamGame(any(), any(), eq(Payment.PaymentType.REMAINDER)))
                 .thenAnswer(inv -> Payment.builder().id(UUID.randomUUID()).status(Payment.Status.FAILED)
+                        .declineReason(uz.minipolya.minipolya_backend.provider.DeclineReason.INSUFFICIENT_FUNDS)
                         .gameTeam(inv.getArgument(0)).build());
 
+        // R44: a 400 whose code says why.
         assertThatThrownBy(() -> service.payRemainder(GAME_ID, LEADER_B_ID, CARD_B_ID))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("declined");
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.CardDeclinedException.class)
+                .hasMessageContaining("declined")
+                .extracting("code").isEqualTo("INSUFFICIENT_FUNDS");
 
         assertThat(sideB.getRemainderStatus()).isEqualTo(GameTeam.RemainderStatus.UNPAID);
     }
@@ -215,11 +218,11 @@ class TeamGameRemainderTest {
     }
 
     @Test
-    void cashAfterTheCardLosesWith400() {
+    void cashAfterTheCardLosesWith409() {
         sideA.setRemainderStatus(GameTeam.RemainderStatus.PAID);
 
         assertThatThrownBy(() -> service.recordCashRemainder(GAME_ID, OWNER_ID, Side.A))
-                .isInstanceOf(BadRequestException.class)
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.ConflictException.class)
                 .hasMessage("Already paid");
 
         verify(paymentService, never()).recordCashTeamRemainder(any(), any());
@@ -242,22 +245,34 @@ class TeamGameRemainderTest {
 
         assertThat(teams).hasSize(2);
         GameTeamResponse a = teams.stream().filter(t -> t.getSide() == Side.A).findFirst().orElseThrow();
-        assertThat(a.getFeeAmount()).isEqualTo(FEE);
-        assertThat(a.getAdvanceAmount()).isEqualTo(ADVANCE);
-        assertThat(a.getRemainderAmount()).isEqualTo(REMAINDER);
+        // One price for joining and one for the remainder, as players pay them.
+        assertThat(a.getPrice()).isEqualTo(TestPrices.card(FEE + ADVANCE));
+        assertThat(a.getRemainderAmount()).isEqualTo(TestPrices.card(REMAINDER));
         assertThat(a.getRemainderStatus()).isEqualTo("paid");
         assertThat(a.getTeamName()).isEqualTo("Team A");
-
-        // Joining cost fee + advance by card, grossed up; settled, nothing is left to pay.
-        assertThat(a.getPrice()).isEqualTo(TestPrices.card(FEE + ADVANCE));
-        assertThat(a.getCardFee()).isEqualTo(TestPrices.card(FEE + ADVANCE) - FEE - ADVANCE);
-        assertThat(a.getRemainderByCard()).isZero();
-        assertThat(a.getRemainderInCash()).isZero();
+        // No breakdown for players.
+        assertThat(a.getPlatformFee()).isNull();
+        assertThat(a.getOwnerAdvance()).isNull();
+        assertThat(a.getOwnerRemainder()).isNull();
+        assertThat(a.getOwnerReceives()).isNull();
+        assertThat(a.getAtmosFee()).isNull();
 
         GameTeamResponse b = teams.stream().filter(t -> t.getSide() == Side.B).findFirst().orElseThrow();
         assertThat(b.getRemainderStatus()).isEqualTo("unpaid");
-        // Still owed: as it is in cash, grossed up by card.
-        assertThat(b.getRemainderInCash()).isEqualTo(b.getRemainderAmount());
-        assertThat(b.getRemainderByCard()).isEqualTo(TestPrices.card(b.getRemainderAmount()));
+    }
+
+    @Test
+    void theAdminSeesEachTeamsBreakdown() {
+        when(paymentService.teamPayments(any())).thenReturn(List.of());
+
+        GameTeamResponse a = service.teamsForAdmin(game).stream()
+                .filter(t -> t.getSide() == Side.A).findFirst().orElseThrow();
+
+        assertThat(a.getPrice()).isEqualTo(TestPrices.card(FEE + ADVANCE));
+        assertThat(a.getPlatformFee()).isEqualTo(FEE);
+        assertThat(a.getOwnerAdvance()).isEqualTo(ADVANCE);
+        assertThat(a.getOwnerRemainder()).isEqualTo(REMAINDER);
+        assertThat(a.getOwnerReceives()).isZero();
+        assertThat(a.getAtmosFee()).isZero();
     }
 }

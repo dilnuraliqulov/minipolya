@@ -95,36 +95,57 @@ class AvailabilityServiceTest {
                 .findFirst().orElseThrow();
     }
 
-    // ---- an hour that has already started is no longer offered ----
+    // ---- an hour that has already started is listed as past, never free ----
 
     @Test
-    void todayHidesHoursThatHaveAlreadyStarted() {
+    void todayListsHoursThatHaveAlreadyStartedAsPast() {
         stubStadium();
         LocalDate today = LocalDate.of(2026, 10, 27);
         AvailabilityService atTwentyPast = newServiceWithClock(clockAt(today, LocalTime.of(14, 20)));
 
         AvailabilityResponse response = atTwentyPast.getAvailability(STADIUM_ID, today);
 
-        List<LocalTime> starts = response.getSlots().stream().map(TimeSlot::getStartTime).toList();
-        // 14:00 has already started at 14:20, so it is gone; 15:00 onwards remain.
-        assertThat(starts).doesNotContain(LocalTime.of(8, 0), LocalTime.of(13, 0), LocalTime.of(14, 0));
-        assertThat(starts).contains(LocalTime.of(15, 0), LocalTime.of(22, 0));
-        assertThat(starts).startsWith(LocalTime.of(15, 0));
-        assertThat(response.getSlots()).hasSize(8); // 15:00-23:00
-        assertThat(response.getSlots()).allMatch(TimeSlot::isAvailable);
+        // Every opening hour is listed; 08:00-14:00 have started at 14:20.
+        assertThat(response.getSlots()).hasSize(15);
+        List<TimeSlot> past = response.getSlots().stream()
+                .filter(s -> s.getStartTime().isBefore(LocalTime.of(15, 0))).toList();
+        assertThat(past).hasSize(7).allSatisfy(s -> {
+            assertThat(s.getStatus()).isEqualTo("past");
+            assertThat(s.isAvailable()).isFalse();
+            assertThat(s.getPricePerHour()).isNull();
+        });
+        List<TimeSlot> later = response.getSlots().stream()
+                .filter(s -> !s.getStartTime().isBefore(LocalTime.of(15, 0))).toList();
+        assertThat(later).hasSize(8).allSatisfy(s -> {
+            assertThat(s.getStatus()).isEqualTo("free");
+            assertThat(s.isAvailable()).isTrue();
+        });
     }
 
     @Test
-    void anHourStartingExactlyNowIsAlreadyGone() {
+    void anHourStartingExactlyNowIsAlreadyPast() {
         stubStadium();
         LocalDate today = LocalDate.of(2026, 10, 27);
         AvailabilityService atFourteenSharp = newServiceWithClock(clockAt(today, LocalTime.of(14, 0)));
 
         AvailabilityResponse response = atFourteenSharp.getAvailability(STADIUM_ID, today);
 
-        List<LocalTime> starts = response.getSlots().stream().map(TimeSlot::getStartTime).toList();
-        assertThat(starts).doesNotContain(LocalTime.of(14, 0));
-        assertThat(starts).startsWith(LocalTime.of(15, 0));
+        assertThat(slotAt(response, LocalTime.of(14, 0)).getStatus()).isEqualTo("past");
+        assertThat(slotAt(response, LocalTime.of(15, 0)).getStatus()).isEqualTo("free");
+    }
+
+    @Test
+    void aPastHourStaysPastEvenWhenItWasBooked() {
+        stubStadium();
+        LocalDate today = LocalDate.of(2026, 10, 27);
+        OffsetDateTime tenOClock = today.atTime(10, 0).atZone(TASHKENT).toOffsetDateTime();
+        when(bookingRepository.findActiveForStadiumBetween(eq(STADIUM_ID), any(), any()))
+                .thenReturn(List.of(Booking.builder().startsAt(tenOClock).endsAt(tenOClock.plusHours(1)).build()));
+        AvailabilityService atNoon = newServiceWithClock(clockAt(today, LocalTime.of(12, 0)));
+
+        AvailabilityResponse response = atNoon.getAvailability(STADIUM_ID, today);
+
+        assertThat(slotAt(response, LocalTime.of(10, 0)).getStatus()).isEqualTo("past");
     }
 
     @Test
@@ -140,14 +161,14 @@ class AvailabilityServiceTest {
     }
 
     @Test
-    void afterClosingTimeTodayOffersNothing() {
+    void afterClosingTimeTodayEveryHourIsPast() {
         stubStadium();
         LocalDate today = LocalDate.of(2026, 10, 27);
         AvailabilityService atNight = newServiceWithClock(clockAt(today, LocalTime.of(23, 30)));
 
         AvailabilityResponse response = atNight.getAvailability(STADIUM_ID, today);
 
-        assertThat(response.getSlots()).isEmpty();
+        assertThat(response.getSlots()).hasSize(15).allMatch(s -> "past".equals(s.getStatus()));
     }
 
     @Test
@@ -184,7 +205,9 @@ class AvailabilityServiceTest {
         AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
         assertThat(slotAt(response, LocalTime.of(10, 0)).isAvailable()).isFalse();
+        assertThat(slotAt(response, LocalTime.of(10, 0)).getStatus()).isEqualTo("booked");
         assertThat(slotAt(response, LocalTime.of(9, 0)).isAvailable()).isTrue();
+        assertThat(slotAt(response, LocalTime.of(9, 0)).getStatus()).isEqualTo("free");
     }
 
     @Test
@@ -197,6 +220,7 @@ class AvailabilityServiceTest {
         AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
         assertThat(slotAt(response, LocalTime.of(15, 0)).isAvailable()).isFalse();
+        assertThat(slotAt(response, LocalTime.of(15, 0)).getStatus()).isEqualTo("booked");
     }
 
     @Test
@@ -208,6 +232,7 @@ class AvailabilityServiceTest {
         AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
         assertThat(slotAt(response, LocalTime.of(12, 0)).isAvailable()).isFalse();
+        assertThat(slotAt(response, LocalTime.of(12, 0)).getStatus()).isEqualTo("closed");
         assertThat(slotAt(response, LocalTime.of(8, 0)).isAvailable()).isTrue();
     }
 
@@ -221,10 +246,9 @@ class AvailabilityServiceTest {
 
         AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
-        // Slots show what the player pays by card.
+        // Slots show the one price the player pays.
         assertThat(slotAt(response, LocalTime.of(18, 0)).getPricePerHour()).isEqualTo(TestPrices.card(80_000));
         assertThat(slotAt(response, LocalTime.of(8, 0)).getPricePerHour()).isEqualTo(TestPrices.card(50_000));
-        assertThat(slotAt(response, LocalTime.of(18, 0)).getCardFee()).isEqualTo(TestPrices.card(80_000) - 80_000);
     }
 
     @Test
@@ -234,7 +258,6 @@ class AvailabilityServiceTest {
         AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
 
         assertThat(slotAt(response, LocalTime.of(8, 0)).getPricePerHour()).isEqualTo(TestPrices.card(50_000));
-        assertThat(slotAt(response, LocalTime.of(8, 0)).getPrice()).isEqualTo(TestPrices.card(50_000));
     }
 
     @Test
@@ -314,5 +337,52 @@ class AvailabilityServiceTest {
 
         assertThatThrownBy(() -> service.getAvailability(STADIUM_ID, date))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // ---- E3: each free slot quotes the deposit and remainder the booking would charge ----
+
+    @Test
+    void aFreeSlotQuotesTheDepositAndRemainderWhenTheStadiumHasAMinimum() {
+        stadium.setPricePerHour(15_000_000L);       // 150 000 so'm -> 155 000 for the player
+        stadium.setMinBookingAmount(5_000_000L);    // 50 000 so'm -> 55 000 deposit
+        stubStadium();
+
+        TimeSlot slot = slotAt(service.getAvailability(STADIUM_ID, date), LocalTime.of(18, 0));
+
+        assertThat(slot.getPricePerHour()).isEqualTo(15_500_000L);
+        assertThat(slot.getDepositAmount()).isEqualTo(5_500_000L);
+        assertThat(slot.getRemainderAmount()).isEqualTo(10_000_000L);
+        assertThat(slot.getDepositAmount()).isEqualTo(
+                CardPricing.withDefaults().deposit(5_000_000L, slot.getPricePerHour()));
+    }
+
+    @Test
+    void withoutItsOwnMinimumTheDefaultIsQuotedButNoneWhenTheDepositCoversTheSlot() {
+        stadium.setPricePerHour(15_000_000L);
+        stubStadium();
+        // T3: no minimum of its own → the platform default (50 000 so'm → 55 000).
+        TimeSlot byDefault = slotAt(service.getAvailability(STADIUM_ID, date), LocalTime.of(18, 0));
+        assertThat(byDefault.getDepositAmount()).isEqualTo(5_500_000L);
+        assertThat(byDefault.getRemainderAmount()).isEqualTo(byDefault.getPricePerHour() - 5_500_000L);
+
+        // A minimum equal to the price: the deposit is the whole price, nothing to choose.
+        stadium.setMinBookingAmount(15_000_000L);
+        TimeSlot covered = slotAt(service.getAvailability(STADIUM_ID, date), LocalTime.of(18, 0));
+        assertThat(covered.getDepositAmount()).isNull();
+        assertThat(covered.getRemainderAmount()).isNull();
+    }
+
+    @Test
+    void aBookedSlotHasNoQuote() {
+        stadium.setPricePerHour(15_000_000L);
+        stadium.setMinBookingAmount(5_000_000L);
+        stubStadium();
+        Booking taken = Booking.builder().startsAt(at(LocalTime.of(18, 0))).endsAt(at(LocalTime.of(19, 0))).build();
+        when(bookingRepository.findActiveForStadiumBetween(eq(STADIUM_ID), any(), any())).thenReturn(List.of(taken));
+
+        TimeSlot slot = slotAt(service.getAvailability(STADIUM_ID, date), LocalTime.of(18, 0));
+
+        assertThat(slot.getDepositAmount()).isNull();
+        assertThat(slot.getRemainderAmount()).isNull();
     }
 }

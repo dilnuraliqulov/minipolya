@@ -109,7 +109,7 @@ class TeamGameOperationMappingTest {
                 paymentService, mock(SavedCardService.class), platformSettingsService,
                 mock(NotificationService.class), mock(AuditService.class),
                 new CancellationPolicy(), new AppProperties(),
-                mock(TeamMemberRepository.class), mock(TeamRepository.class));
+                mock(TeamMemberRepository.class), mock(TeamRepository.class), org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         User owner = User.builder().id(UUID.randomUUID()).name("Owner").build();
         User leaderA = User.builder().id(LEADER_A_ID).name("Leader A").build();

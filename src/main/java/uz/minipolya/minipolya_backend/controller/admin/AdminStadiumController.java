@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.AddStadiumNoteRequest;
+import uz.minipolya.minipolya_backend.dto.request.AdminStadiumBookingTermsRequest;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateStadiumStatusRequest;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumResponse;
@@ -64,6 +65,14 @@ public class AdminStadiumController {
     @GetMapping("/api/admin/stadiums/{id}")
     public ApiResponse<AdminStadiumDetailResponse> detail(@PathVariable UUID id) {
         return ApiResponse.ok(adminStadiumService.get(id));
+    }
+
+    /** D3: the deposit and the cancellation window, agreed with the owner. Any status. */
+    @PutMapping("/api/admin/stadiums/{id}/booking-terms")
+    public ApiResponse<AdminStadiumDetailResponse> updateBookingTerms(@AuthenticationPrincipal UUID adminUserId,
+                                                                      @PathVariable UUID id,
+                                                                      @RequestBody AdminStadiumBookingTermsRequest request) {
+        return ApiResponse.ok(adminStadiumService.updateBookingTerms(id, request, adminUserId), "Booking terms updated");
     }
 
     @PutMapping("/api/admin/stadiums/{id}/status")

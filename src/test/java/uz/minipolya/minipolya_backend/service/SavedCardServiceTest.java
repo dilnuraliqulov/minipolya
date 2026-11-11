@@ -5,6 +5,13 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import uz.minipolya.minipolya_backend.dto.request.AddCardRequest;
 import uz.minipolya.minipolya_backend.dto.request.ConfirmCardRequest;
+import uz.minipolya.minipolya_backend.dto.request.ResendCardCodeRequest;
+import uz.minipolya.minipolya_backend.exception.CardBindingException;
+import uz.minipolya.minipolya_backend.exception.ProviderUnavailableException;
+import uz.minipolya.minipolya_backend.provider.AtmosCodes;
+import uz.minipolya.minipolya_backend.provider.PaymentProviderException;
+import uz.minipolya.minipolya_backend.provider.ProviderTimeoutException;
+import org.springframework.http.HttpStatus;
 import uz.minipolya.minipolya_backend.dto.response.CardBindingResponse;
 import uz.minipolya.minipolya_backend.dto.response.SavedCardResponse;
 import uz.minipolya.minipolya_backend.entity.SavedCard;
@@ -79,6 +86,58 @@ class SavedCardServiceTest {
         assertThat(response.getMaskedPhone()).isEqualTo("********9999");
         // Nothing is persisted until the SMS code confirms the binding.
         verify(repository, never()).save(any());
+    }
+
+    @Test
+    void aRefusedBindingIsA400WithACodeThePlayerCanActOn() {
+        when(paymentProvider.bindCardInit(any(), any()))
+                .thenThrow(new PaymentProviderException(AtmosCodes.WRONG_CARD_NUMBER, "Неправильный номер карты"));
+
+        assertThatThrownBy(() -> service.addCard(USER_ID,
+                AddCardRequest.builder().cardNumber("4111111111111111").expiry("12/29").build()))
+                .isInstanceOfSatisfying(CardBindingException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(ex.getCode()).isEqualTo("CARD_NOT_SUPPORTED");
+                    assertThat(ex.getMessage()).isEqualTo("Faqat Uzcard va Humo kartalari qabul qilinadi");
+                });
+    }
+
+    @Test
+    void everyBindingCodeHasItsOwnAnswer() {
+        assertThat(SavedCardService.bindingError(AtmosCodes.WRONG_EXPIRY).getCode()).isEqualTo("CARD_EXPIRY_INVALID");
+        assertThat(SavedCardService.bindingError(AtmosCodes.CARD_EXPIRED).getCode()).isEqualTo("CARD_EXPIRED");
+        assertThat(SavedCardService.bindingError(AtmosCodes.WRONG_OTP).getCode()).isEqualTo("SMS_CODE_WRONG");
+        assertThat(SavedCardService.bindingError(AtmosCodes.OTP_EXPIRED).getCode()).isEqualTo("SMS_CODE_EXPIRED");
+        assertThat(SavedCardService.bindingError(AtmosCodes.OTP_RESEND_TOO_EARLY).getCode()).isEqualTo("SMS_RESEND_TOO_EARLY");
+        assertThat(SavedCardService.bindingError(AtmosCodes.RESEND_UNSUPPORTED).getCode()).isEqualTo("SMS_RESEND_UNAVAILABLE");
+        assertThat(SavedCardService.bindingError(AtmosCodes.BINDING_NOT_FOUND).getCode()).isEqualTo("BINDING_NOT_FOUND");
+        assertThat(SavedCardService.bindingError("STPIMS-ERR-999").getCode()).isEqualTo("CARD_BINDING_FAILED");
+    }
+
+    @Test
+    void anUnreachableProviderIs502WhileBinding() {
+        when(paymentProvider.bindCardConfirm(any(), any()))
+                .thenThrow(new PaymentProviderException(AtmosCodes.SERVICE_UNAVAILABLE, "ATMOS refused"));
+        when(paymentProvider.bindCardInit(any(), any()))
+                .thenThrow(new ProviderTimeoutException("bind-card/init", null));
+
+        assertThatThrownBy(() -> service.confirmCard(USER_ID,
+                ConfirmCardRequest.builder().bindingId("bind-1").smsCode("123456").build()))
+                .isInstanceOf(ProviderUnavailableException.class);
+        assertThatThrownBy(() -> service.addCard(USER_ID,
+                AddCardRequest.builder().cardNumber(PAN).expiry("12/29").build()))
+                .isInstanceOf(ProviderUnavailableException.class);
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void theCodeCanBeResent() {
+        when(paymentProvider.resendBindingCode("bind-1")).thenReturn(new CardBindingStart("bind-1", "+998 ** *** ** 58"));
+
+        CardBindingResponse response = service.resendCode(USER_ID, ResendCardCodeRequest.builder().bindingId("bind-1").build());
+
+        assertThat(response.getBindingId()).isEqualTo("bind-1");
+        assertThat(response.getMaskedPhone()).isEqualTo("+998 ** *** ** 58");
     }
 
     @Test

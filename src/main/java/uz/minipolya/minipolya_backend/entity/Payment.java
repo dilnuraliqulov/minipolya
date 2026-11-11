@@ -6,6 +6,8 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Converter;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import org.hibernate.annotations.UuidGenerator;
 import java.util.UUID;
@@ -152,6 +154,11 @@ public class Payment {
     @Column(name = "failure_reason", length = 500)
     private String failureReason;
 
+    /** R44: why the provider refused this charge or hold, in the player's terms; null otherwise. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "decline_reason", length = 30)
+    private uz.minipolya.minipolya_backend.provider.DeclineReason declineReason;
+
     /** A failed refund an admin marked as returned outside the platform (cash, bank transfer). */
     @Builder.Default
     @Column(name = "refunded_manually", nullable = false)
@@ -265,7 +272,13 @@ public class Payment {
          * the reconcile job leaves it alone.
          */
         REFUND_FAILED,
-        HELD, CAPTURED, RELEASED, PAID, REFUNDED, FAILED, PENDING, COMPLETED;
+        HELD, CAPTURED, RELEASED, PAID, REFUNDED, FAILED, PENDING, COMPLETED,
+        /**
+         * E5: a cash row voided because the owner (or an admin) undid the "cash received"
+         * mark. No money moved through the platform, so it is not a refund; it no longer
+         * counts as money that arrived. Changeset 050.
+         */
+        CANCELLED;
 
         @JsonValue
         public String getValue() {

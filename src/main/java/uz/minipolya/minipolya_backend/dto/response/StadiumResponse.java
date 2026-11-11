@@ -11,8 +11,9 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 /**
- * Lean summary used in listings. Deliberately omits photos and amenities to
- * avoid lazy-loading per row — clients fetch those via the detail endpoint.
+ * Lean summary used in listings: one cover photo instead of the whole gallery, no
+ * amenities. Everything per row (rating, cover photo, favorite flag) is loaded for the
+ * whole page at once.
  */
 @Data
 @Builder
@@ -26,31 +27,42 @@ public class StadiumResponse {
     private String address;
     /** The Tashkent district; absent for stadiums added before it existed. */
     private String district;
+    /** "Moʻljal": a landmark near the pitch; absent when none. */
+    private String landmark;
     private BigDecimal latitude;
     private BigDecimal longitude;
     private String format;
     private String surfaceType;
+    /** The stadium's first photo (lowest position); absent when it has none. */
+    private String coverPhotoUrl;
     /**
-     * One hour at the stadium's default price. Public responses: what the player pays by
-     * card. Owner responses: the owner's net price, as they set it.
+     * Tiyin, one hour at the stadium's default price. Player responses: the one price the
+     * player pays. Owner and admin responses: the owner's own price, as they set it.
      */
     private Long pricePerHour;
 
-    /** One hour at the default price by card, in tiyin: the net price grossed up by the card fee and rounded. */
-    private Long price;
-    /** The owner's own net price. Owner and admin responses only. */
-    private Long netPrice;
-    /** price − netPrice. */
-    private Long cardFee;
+    /** Owner and admin responses only: what players see and pay for that hour. */
+    private Long playerPrice;
+    /** Admin responses only: what the owner receives of one hour paid by card, after ATMOS. */
+    private Long ownerReceives;
+    /** Admin responses only: what ATMOS takes of one hour paid by card. */
+    private Long atmosFee;
     private String status;
-    /** Why the stadium is rejected or blocked — for its owner and admins; absent otherwise. */
+    /** Why the stadium is rejected or blocked â for its owner and admins; absent otherwise. */
     private String statusReason;
     private String ownerName;
 
     @JsonProperty("isActive")
     private boolean isActive;
 
-    /** Computed from reviews — null when the stadium has no reviews yet. */
+    /** Computed from reviews â null when the stadium has no reviews yet. */
     private Double averageRating;
     private Integer reviewCount;
+
+    /** The player search only: how many hours of the requested date can still be booked. */
+    private Integer freeSlotsCount;
+
+    /** Player lists, for a signed-in caller only: whether they have favorited this stadium. */
+    @JsonProperty("isFavorited")
+    private Boolean favorited;
 }

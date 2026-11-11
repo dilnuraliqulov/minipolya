@@ -69,47 +69,49 @@ class CardFeeTest {
     // ---- The split ----
 
     @Test
-    void anOrdinaryBookingSplitLeavesTheOwnerExactlyTheirPrice() {
-        CardFeeSplit split = CardFeeSplit.forNet(20_000_000L, 0L, BPS, STEP);
+    void anOrdinaryBookingIsAllTheOwners() {
+        // 150 000 so'm at a 5 000 so'm step: the player pays 155 000, the owner receives 152 675.
+        long player = PriceCalculator.playerAmount(15_000_000L, BPS, 500_000L);
+        CardFeeSplit split = CardFeeSplit.toOwner(player, BPS);
 
-        assertThat(split.playerAmount()).isEqualTo(20_310_000L);
-        assertThat(split.ownerGross()).isEqualTo(20_304_569L);
-        assertThat(split.platformGross()).isEqualTo(5_431L); // only the rounding remainder
-        assertThat(split.ownerGross() + split.platformGross()).isEqualTo(split.playerAmount());
-        assertThat(split.cardFee()).isEqualTo(310_000L);
-        // After a 1.5% fee on the owner's split, the owner nets at least their price.
-        assertThat(split.ownerGross() - split.ownerGross() * BPS / 10_000).isGreaterThanOrEqualTo(20_000_000L);
+        assertThat(split.playerAmount()).isEqualTo(15_500_000L);
+        assertThat(split.ownerAmount()).isEqualTo(15_500_000L);
+        assertThat(split.platformAmount()).isZero();
+        assertThat(split.ownerReceives(BPS)).isEqualTo(15_267_500L);
+        assertThat(split.atmosFee()).isEqualTo(232_500L);
     }
 
     @Test
-    void aTeamGameSplitGrossesUpTheAdvanceAndThePlatformFee() {
+    void aTeamGameSplitGivesThePlatformExactlyItsFee() {
         long advance = 5_000_000L;      // 50 000 so'm to the owner
         long fee = 2_500_000L;          // 25 000 so'm to the platform
-        CardFeeSplit split = CardFeeSplit.forNet(advance, fee, BPS, STEP);
+        long player = PriceCalculator.playerAmount(advance + fee, BPS, STEP);
+        CardFeeSplit split = CardFeeSplit.withPlatformFee(player, fee, BPS);
 
-        assertThat(split.playerAmount()).isEqualTo(PriceCalculator.playerAmount(advance + fee, BPS, STEP));
-        assertThat(split.ownerGross()).isEqualTo(PriceCalculator.grossUp(advance, BPS));
-        assertThat(split.ownerGross() + split.platformGross()).isEqualTo(split.playerAmount());
-        // The platform's split, less the same fee, still covers its 25 000 so'm.
-        long platformAfterFee = split.platformGross() - split.platformGross() * BPS / 10_000;
-        assertThat(platformAfterFee).isGreaterThanOrEqualTo(fee);
+        assertThat(split.platformAmount()).isEqualTo(PriceCalculator.grossUp(fee, BPS));
+        assertThat(split.ownerAmount() + split.platformAmount()).isEqualTo(player);
+        assertThat(split.platformReceives(BPS)).isEqualTo(fee);
+        assertThat(split.ownerReceives(BPS)).isGreaterThanOrEqualTo(advance - 1);
     }
 
     @Test
-    void aBookingPaidInFullUsesTheSumOfSlotPrices() {
-        // Two slots of 150 000 and 180 000 so'm: the player pays the two prices they saw.
-        long slotA = PriceCalculator.playerAmount(15_000_000L, BPS, STEP);
-        long slotB = PriceCalculator.playerAmount(18_000_000L, BPS, STEP);
-        CardFeeSplit split = CardFeeSplit.of(slotA + slotB, 33_000_000L, 0L, BPS);
-
-        assertThat(split.playerAmount()).isEqualTo(slotA + slotB);
-        assertThat(split.ownerGross() + split.platformGross()).isEqualTo(slotA + slotB);
-        assertThat(split.platformGross()).isNotNegative();
+    void aZeroPlatformFeeIsAnOrdinarySplit() {
+        assertThat(CardFeeSplit.withPlatformFee(1_000_000L, 0L, BPS))
+                .isEqualTo(CardFeeSplit.toOwner(1_000_000L, BPS));
     }
 
     @Test
-    void aSplitThatDoesNotAddUpCannotExist() {
-        assertThatThrownBy(() -> new CardFeeSplit(100, 100, 0, 200, 150, 40, 100))
+    void netAfterFeeUndoesGrossUp() {
+        for (long net = 0; net < 5_000_000L; net += 997L) {
+            assertThat(PriceCalculator.netAfterFee(PriceCalculator.grossUp(net, BPS), BPS)).isEqualTo(net);
+        }
+    }
+
+    @Test
+    void aSplitThatDoesNotAddUpOrIsNegativeCannotExist() {
+        assertThatThrownBy(() -> new CardFeeSplit(200, 150, 40, 3))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new CardFeeSplit(100, 110, -10, 1))
                 .isInstanceOf(IllegalStateException.class);
     }
 }

@@ -92,11 +92,12 @@ class BookingRemainderTest {
     private Booking booking(String status, Booking.PaymentStatus paymentStatus, long paidAmount) {
         Booking booking = Booking.builder()
                 .id(BOOKING_ID).stadium(stadium).user(player).status(status)
-                .price(PRICE).paidAmount(paidAmount).paymentStatus(paymentStatus)
+                .price(PRICE).cardPrice(PRICE).paidAmount(paidAmount).paymentStatus(paymentStatus)
                 .startsAt(OffsetDateTime.now(ZoneOffset.UTC).plusDays(2))
                 .endsAt(OffsetDateTime.now(ZoneOffset.UTC).plusDays(2).plusHours(2))
                 .build();
         when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findForUpdate(BOOKING_ID)).thenReturn(Optional.of(booking));
         return booking;
     }
 
@@ -117,7 +118,7 @@ class BookingRemainderTest {
 
         service.payRemainder(USER_ID, BOOKING_ID, CARD_ID);
 
-        verify(paymentService).chargeForBooking(booking, card, TestPrices.net(REMAINDER), Payment.PaymentType.REMAINDER);
+        verify(paymentService).chargeForBooking(booking, card, TestPrices.charge(REMAINDER), Payment.PaymentType.REMAINDER);
     }
 
     @Test
@@ -127,7 +128,7 @@ class BookingRemainderTest {
 
         service.payRemainder(USER_ID, BOOKING_ID, CARD_ID);
 
-        verify(paymentService).chargeForBooking(booking, card, TestPrices.net(REMAINDER), Payment.PaymentType.REMAINDER);
+        verify(paymentService).chargeForBooking(booking, card, TestPrices.charge(REMAINDER), Payment.PaymentType.REMAINDER);
     }
 
     @Test
@@ -211,15 +212,30 @@ class BookingRemainderTest {
     }
 
     @Test
-    void theRemainderByCardIsTheNetRemainderGrossedUp() {
+    void theRemainderByCardIsTheSameAmountAsInCashAndAllTheOwners() {
         Booking booking = booking("confirmed", Booking.PaymentStatus.PARTIALLY_PAID, PAID);
         chargeSucceeds(booking);
 
         service.payRemainder(USER_ID, BOOKING_ID, CARD_ID);
 
         verify(paymentService).chargeForBooking(any(Booking.class), any(SavedCard.class),
-                argThat(split -> split != null && split.net() == REMAINDER
-                        && split.playerAmount() == TestPrices.card(REMAINDER)),
+                argThat(split -> split != null && split.playerAmount() == REMAINDER
+                        && split.ownerAmount() == REMAINDER && split.platformAmount() == 0),
+                eq(Payment.PaymentType.REMAINDER));
+    }
+
+    @Test
+    void aBookingFromBeforeTheRulePaysItsOwnersRemainderConverted() {
+        Booking booking = booking("confirmed", Booking.PaymentStatus.PARTIALLY_PAID, PAID);
+        booking.setPricingModel(Booking.PricingModel.NET);
+        booking.setCardPrice(null);
+        chargeSucceeds(booking);
+
+        service.payRemainder(USER_ID, BOOKING_ID, CARD_ID);
+
+        verify(paymentService).chargeForBooking(any(Booking.class), any(SavedCard.class),
+                argThat(split -> split != null && split.playerAmount() == TestPrices.card(REMAINDER)
+                        && split.playerAmount() - split.atmosFee() == REMAINDER),
                 eq(Payment.PaymentType.REMAINDER));
     }
 }

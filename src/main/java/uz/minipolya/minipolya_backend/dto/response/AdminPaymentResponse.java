@@ -13,8 +13,8 @@ import java.util.UUID;
 
 /**
  * A payment or a refund for the admin panel. Money is tiyin and negative on a refund;
- * {@code amount = ownerAmount + platformAmount}. {@code cardFee} is what the card fee and
- * the price rounding added to the net ({@code card_fee_expected}); {@code providerCommission}
+ * {@code amount = ownerAmount + platformAmount}. {@code atmosFee} is what ATMOS was expected
+ * to take ({@code card_fee_expected}); {@code providerCommission}
  * is what ATMOS reports having taken, absent until it does. Absent fields are omitted.
  * {@code linkedPayments} is only on the detail.
  */
@@ -42,7 +42,12 @@ public class AdminPaymentResponse {
     private Long amount;
     private Long ownerAmount;
     private Long platformAmount;
-    private Long cardFee;
+    /** What ATMOS was expected to take when the payment was made (the card fee and rounding on rows from before the one-player-price rule). */
+    private Long atmosFee;
+    /** What the owner keeps after ATMOS; {@code ownerNet + platformNet + atmosFee = amount}. */
+    private Long ownerNet;
+    /** What the platform keeps after ATMOS: exactly the fee on a team payment. */
+    private Long platformNet;
     private Long providerCommission;
     private Integer commissionPercent;
 
@@ -56,6 +61,8 @@ public class AdminPaymentResponse {
 
     /** A refund the provider declined: its error, for the admin. */
     private String failureReason;
+    /** R44: a failed charge or hold the provider refused: why, in the player's terms. */
+    private uz.minipolya.minipolya_backend.provider.DeclineReason declineReason;
     private Boolean refundedManually;
     private String manualRefundReason;
 

@@ -96,6 +96,18 @@ public class TestData {
                 .build());
     }
 
+    /** Adds {@code count} photos after the stadium's last one (approval needs 3, D7). */
+    public Stadium photos(Stadium stadium, int count) {
+        int next = stadium.getPhotos().stream().mapToInt(uz.minipolya.minipolya_backend.entity.StadiumPhoto::getPosition)
+                .max().orElse(-1) + 1;
+        for (int i = 0; i < count; i++) {
+            stadium.addPhoto(uz.minipolya.minipolya_backend.entity.StadiumPhoto.builder()
+                    .url("/api/uploads/stadiums/" + stadium.getId() + "/" + java.util.UUID.randomUUID() + ".jpg")
+                    .position(next + i).build());
+        }
+        return stadiums.saveAndFlush(stadium);
+    }
+
     public Booking booking(Stadium stadium, User user, OffsetDateTime startsAt, String status) {
         return bookings.save(Booking.builder()
                 .stadium(stadium)

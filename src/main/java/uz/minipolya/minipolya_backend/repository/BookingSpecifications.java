@@ -1,5 +1,6 @@
 package uz.minipolya.minipolya_backend.repository;
 
+import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
@@ -7,17 +8,53 @@ import org.springframework.data.jpa.domain.Specification;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.User;
 
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import static uz.minipolya.minipolya_backend.repository.SearchPredicates.containsIgnoreCase;
 import static uz.minipolya.minipolya_backend.repository.SearchPredicates.hasText;
 import static uz.minipolya.minipolya_backend.repository.SearchPredicates.phoneContains;
 
-/** Criteria for the admin booking list. The stadium and the booking user come in the same query. */
+/** Criteria for booking lists. The stadium (and for admins the booking user) come in the same query. */
 public final class BookingSpecifications {
 
     private BookingSpecifications() {
+    }
+
+    /** Bookings that are still live: not cancelled in any way, not expired. */
+    public static final List<String> LIVE_STATUSES = List.of("pending", "confirmed", "completed");
+
+    /**
+     * R38: one stadium's live bookings with something still owed, optionally starting in
+     * {@code [from, to)} (either bound may be null). "Owed" is {@code remainingAmount > 0},
+     * computed in the query exactly as {@link Booking#getRemainingAmount()} does:
+     * {@code totalDue - paidAmount}, where totalDue is {@code card_price} under the player
+     * price and {@code price} otherwise.
+     */
+    public static Specification<Booking> ownerUnpaid(UUID stadiumId, OffsetDateTime from, OffsetDateTime to) {
+        return (root, query, cb) -> {
+            FetchJoins.fetchStadium(root, query);
+            Expression<Long> due = cb.<Long>selectCase()
+                    .when(cb.and(cb.equal(root.get("pricingModel"), Booking.PricingModel.PLAYER_PRICE),
+                                    cb.isNotNull(root.get("cardPrice"))),
+                            root.<Long>get("cardPrice"))
+                    .otherwise(cb.coalesce(root.<Long>get("price"), 0L));
+            Expression<Long> paid = cb.coalesce(root.<Long>get("paidAmount"), 0L);
+
+            List<Predicate> where = new ArrayList<>();
+            where.add(cb.equal(root.get("stadium").get("id"), stadiumId));
+            where.add(root.get("status").in(LIVE_STATUSES));
+            where.add(cb.greaterThan(cb.diff(due, paid), 0L));
+            if (from != null) {
+                where.add(cb.greaterThanOrEqualTo(root.get("startsAt"), from));
+            }
+            if (to != null) {
+                where.add(cb.lessThan(root.get("startsAt"), to));
+            }
+            return cb.and(where.toArray(Predicate[]::new));
+        };
     }
 
     public static Specification<Booking> adminFilter(AdminBookingFilter filter) {

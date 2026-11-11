@@ -28,8 +28,18 @@ import java.lang.annotation.Target;
         "logging.level.org.hibernate.engine.internal.StatisticalLoggingSessionEventListener=WARN",
         "app.scheduling.enabled=false",
         "app.payments.provider=fake",
+        // The fake provider answers at once in tests.
+        "app.payments.fake.delay-min-ms=0",
+        "app.payments.fake.delay-max-ms=0",
+        // Uploaded photos land under target/, never in the project's uploads/.
+        "app.uploads.dir=target/test-uploads",
         "app.jwt.secret=${JWT_SECRET:test-secret-test-secret-test-secret-0123456789}",
-        "app.bot.token=${BOT_TOKEN:test-bot-token}"
+        "app.bot.token=test-bot-token",
+        // Never call the real Telegram API from a test, whatever .env says.
+        "app.bot.enabled=false",
+        "app.bot.mode=webhook",
+        "app.bot.setup-on-startup=false",
+        "app.bot.webhook-secret=test-webhook-secret-test-webhook-secret"
 })
 @AutoConfigureMockMvc
 @Transactional

@@ -2,6 +2,7 @@ package uz.minipolya.minipolya_backend.repository;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
@@ -35,6 +36,14 @@ public interface GameRepository extends JpaRepository<Game, UUID>, JpaSpecificat
     /** Every other game type, which still times out at its start time. */
     List<Game> findByStatusAndTypeNotAndStartsAtBefore(String status, String type, OffsetDateTime time);
 
+    /**
+     * E9: the cover photo of each of several stadiums — rows {@code [stadiumId, url]}, each
+     * stadium's photos in position order (the first is the cover). One query for a page of
+     * challenges.
+     */
+    @Query("SELECT p.stadium.id, p.url FROM StadiumPhoto p WHERE p.stadium.id IN :ids ORDER BY p.position ASC")
+    List<Object[]> findStadiumPhotoUrls(@Param("ids") java.util.Collection<UUID> ids);
+
     /** Public games discoverable in the app (the "open — find players" listing). */
     List<Game> findByIsPublicTrueAndStatus(String status);
 
@@ -44,7 +53,8 @@ public interface GameRepository extends JpaRepository<Game, UUID>, JpaSpecificat
 
     /**
      * Waiting team games an opponent could still join: before the 3-hour point,
-     * and not one the viewer's own team is waiting on.
+     * not one the viewer's own team is waiting on, and not one another team is
+     * half-way through joining (R45: {@code joining}; it is back once that join fails).
      *
      * <p>{@code excludedTeamIds} is never empty — an empty {@code IN (...)} is
      * not valid SQL — so the caller pads it with a sentinel id.
@@ -59,6 +69,8 @@ public interface GameRepository extends JpaRepository<Game, UUID>, JpaSpecificat
      * non-null bind compared against a column is fine — the column gives the
      * type — which is why the remaining comparisons need no casts.
      */
+    // The stadium comes with the page (each card shows its name and location): no load per row.
+    @EntityGraph(attributePaths = "stadium")
     @Query("""
             SELECT g FROM Game g
             WHERE g.type = 'team_vs_team'
@@ -72,6 +84,10 @@ public interface GameRepository extends JpaRepository<Game, UUID>, JpaSpecificat
                   WHERE t.game = g
                     AND t.status = :activeStatus
                     AND t.team.id IN :excludedTeamIds)
+              AND NOT EXISTS (
+                  SELECT 1 FROM GameTeam j
+                  WHERE j.game = g
+                    AND j.status = :joiningStatus)
             ORDER BY g.startsAt ASC
             """)
     Page<Game> findChallenges(@Param("from") OffsetDateTime from,
@@ -82,7 +98,8 @@ public interface GameRepository extends JpaRepository<Game, UUID>, JpaSpecificat
                               @Param("format") String format,
                               Pageable pageable,
                               @Param("excludedTeamIds") List<UUID> excludedTeamIds,
-                              @Param("activeStatus") GameTeam.Status activeStatus);
+                              @Param("activeStatus") GameTeam.Status activeStatus,
+                              @Param("joiningStatus") GameTeam.Status joiningStatus);
 
     /** True if either side of any game still references the team (blocks team deletion). */
     boolean existsByTeamAIdOrTeamBId(UUID teamAId, UUID teamBId);

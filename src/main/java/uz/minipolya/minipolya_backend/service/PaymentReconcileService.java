@@ -47,7 +47,7 @@ import java.util.UUID;
 public class PaymentReconcileService {
 
     /** A row must have been stuck this long before the job touches it. */
-    static final Duration STUCK_AFTER = Duration.ofMinutes(5);
+    public static final Duration STUCK_AFTER = Duration.ofMinutes(5);
     /** An unconfirmed charge or hold this old was abandoned: the provider never took the money. */
     static final Duration ABANDONED_AFTER = Duration.ofMinutes(30);
     static final EnumSet<Payment.Status> STUCK = EnumSet.of(
@@ -73,8 +73,8 @@ public class PaymentReconcileService {
     @Transactional
     public void reconcile(UUID paymentId) {
         Payment payment = paymentRepository.findById(paymentId).orElse(null);
-        if (payment == null || !STUCK.contains(payment.getStatus())) {
-            return; // settled meanwhile
+        if (payment == null || !STUCK.contains(payment.getStatus()) || !paymentService.stillAsSeen(payment)) {
+            return; // settled meanwhile (the row is locked from here on, so nobody settles it twice)
         }
         switch (payment.getStatus()) {
             case PROCESSING -> {
@@ -107,9 +107,11 @@ public class PaymentReconcileService {
         Long commission = null;
         String ofdUrl = null;
         ProviderStatus overall = ProviderStatus.SUCCESS;
+        String declinedWith = null;
         for (String id : ids) {
             ChargeOutcome one = paymentProvider.getCharge(id);
             if (one.status() == ProviderStatus.FAILED) {
+                declinedWith = one.errorCode();
                 overall = ProviderStatus.FAILED;
                 break;
             }
@@ -128,7 +130,7 @@ public class PaymentReconcileService {
         }
         ChargeOutcome outcome = overall == ProviderStatus.SUCCESS
                 ? new ChargeOutcome(ProviderStatus.SUCCESS, successIds, commission, ofdUrl, null)
-                : overall == ProviderStatus.FAILED ? ChargeOutcome.failed("RECONCILED") : ChargeOutcome.pending();
+                : overall == ProviderStatus.FAILED ? ChargeOutcome.failed(declinedWith) : ChargeOutcome.pending();
         paymentService.applyChargeOutcome(payment, outcome);
         log.info("Reconciled charge {}: {}", payment.getId(), payment.getStatus().getValue());
         if (payment.getStatus() == Payment.Status.PAID) {
@@ -147,6 +149,11 @@ public class PaymentReconcileService {
         }
         GameTeam team = payment.getGameTeam();
         if (team != null) {
+            if (team.getStatus() == GameTeam.Status.JOINING) {
+                // A join still in progress: its driver (resumeJoin, run after this job's
+                // payment pass) carries it on from this payment's new status.
+                return;
+            }
             if (team.getStatus() == GameTeam.Status.ACTIVE && payment.getPaymentType() == Payment.PaymentType.REMAINDER) {
                 teamGameService.settleRemainderPaidLate(team);
             } else {
@@ -174,10 +181,10 @@ public class PaymentReconcileService {
         }
         HoldOutcome outcome = paymentProvider.getHold(holdId);
         if (outcome.status() == ProviderStatus.PENDING && abandoned(payment)) {
-            outcome = new HoldOutcome(holdId, ProviderStatus.FAILED, null, null, "RECONCILED");
+            outcome = new HoldOutcome(holdId, ProviderStatus.FAILED, null, null, null);
         }
         if (outcome.status() == ProviderStatus.RELEASED) {
-            outcome = new HoldOutcome(holdId, ProviderStatus.FAILED, null, null, "RECONCILED");
+            outcome = new HoldOutcome(holdId, ProviderStatus.FAILED, null, null, null);
         }
         paymentService.applyHoldOutcome(payment, outcome);
         log.info("Reconciled hold {}: {}", payment.getId(), payment.getStatus().getValue());
@@ -208,26 +215,10 @@ public class PaymentReconcileService {
 
     // ---- return_pending / capture_pending ----
 
+    /** The same way every return is finished: {@link PaymentService#completeReturn}. */
     private void finishReturn(Payment payment) {
-        if (isHold(payment)) {
-            HoldOutcome where = paymentProvider.getHold(payment.getProviderTxnId());
-            if (where.status() == ProviderStatus.CAPTURED) {
-                reverseOrRecordFailure(payment, Payment.Status.CAPTURED);
-                return;
-            }
-            if (where.status() == ProviderStatus.HELD) {
-                try {
-                    paymentProvider.releaseHold(payment.getProviderTxnId());
-                } catch (HoldCancelledException | HoldExpiredException ex) {
-                    // already let go
-                }
-            }
-            payment.setStatus(Payment.Status.RELEASED);
-            log.info("Reconciled return of hold {}: released", payment.getId());
-            return;
-        }
-        reverseOrRecordFailure(payment, Payment.Status.PAID);
-        log.info("Reconciled return of charge {}: {}", payment.getId(), payment.getStatus().getValue());
+        paymentService.completeReturn(payment.getId(), "Returned by reconciliation");
+        log.info("Reconciled return of payment {}: {}", payment.getId(), payment.getStatus().getValue());
     }
 
     /**

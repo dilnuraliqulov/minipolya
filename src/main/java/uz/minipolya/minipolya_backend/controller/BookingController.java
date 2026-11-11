@@ -13,14 +13,17 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.CreateBookingRequest;
 import uz.minipolya.minipolya_backend.dto.request.CreateManualBookingRequest;
+import uz.minipolya.minipolya_backend.dto.request.PayBookingRequest;
 import uz.minipolya.minipolya_backend.dto.request.PayRemainderRequest;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.BookingResponse;
+import uz.minipolya.minipolya_backend.dto.response.ManualBookingPriceResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.service.BookingService;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @RestController
@@ -39,11 +42,29 @@ public class BookingController {
     public ApiResponse<BookingResponse> create(@AuthenticationPrincipal UUID userId,
                                                @Valid @RequestBody CreateBookingRequest request) {
         BookingResponse booking = bookingService.createBooking(userId, request);
-        return ApiResponse.ok(booking, switch (booking.getPaymentStatus()) {
+        return ApiResponse.ok(booking, paymentMessage(booking));
+    }
+
+    /**
+     * R28: pays a pending booking again (another card after a decline), for the same amount
+     * as when it was created. A decline is still 200, with the booking pending and its
+     * declineReason; 409 BOOKING_NOT_PENDING / BOOKING_EXPIRED / PAYMENT_IN_PROGRESS.
+     */
+    @PostMapping("/api/bookings/{id}/pay")
+    public ApiResponse<BookingResponse> pay(@AuthenticationPrincipal UUID userId,
+                                            @PathVariable UUID id,
+                                            @Valid @RequestBody PayBookingRequest request) {
+        BookingResponse booking = bookingService.retryPayment(userId, id, request.getCardId());
+        return ApiResponse.ok(booking, paymentMessage(booking));
+    }
+
+    /** The same message for a booking's first payment and a retried one. */
+    private static String paymentMessage(BookingResponse booking) {
+        return switch (booking.getPaymentStatus()) {
             case PAID -> "Booking confirmed and paid in full";
             case PARTIALLY_PAID -> "Booking confirmed; the remainder is still due";
             case UNPAID -> "Payment failed — the booking is held until it expires; try paying again";
-        });
+        };
     }
 
     /**
@@ -61,11 +82,13 @@ public class BookingController {
                 : "Payment failed — the remainder is still due");
     }
 
+    /** R29: {@code when=upcoming} (soonest first) or {@code past} (newest first); absent = all, latest first. */
     @GetMapping("/api/bookings")
     public ApiResponse<PageResponse<BookingResponse>> myBookings(@AuthenticationPrincipal UUID userId,
+                                                                 @RequestParam(required = false) String when,
                                                                  @RequestParam(defaultValue = "0") int page,
                                                                  @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(bookingService.getMyBookings(userId, page, size));
+        return ApiResponse.ok(bookingService.getMyBookings(userId, when, page, size));
     }
 
     @GetMapping("/api/bookings/{id}")
@@ -89,6 +112,16 @@ public class BookingController {
         return ApiResponse.ok(bookingService.createManualBooking(request, ownerId), "Manual booking created");
     }
 
+    /** What the walk-in form prefills: the owner's own price for that hour. */
+    @GetMapping("/api/owner/stadiums/{stadiumId}/bookings/suggested-price")
+    public ApiResponse<ManualBookingPriceResponse> suggestedPrice(
+            @AuthenticationPrincipal UUID ownerId,
+            @PathVariable UUID stadiumId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime startsAt) {
+        return ApiResponse.ok(new ManualBookingPriceResponse(
+                bookingService.manualBookingPrice(ownerId, stadiumId, startsAt)));
+    }
+
     @GetMapping("/api/owner/stadiums/{stadiumId}/bookings")
     public ApiResponse<PageResponse<BookingResponse>> stadiumBookings(
             @AuthenticationPrincipal UUID ownerId,
@@ -98,6 +131,33 @@ public class BookingController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         return ApiResponse.ok(bookingService.getStadiumBookings(ownerId, stadiumId, from, to, page, size));
+    }
+
+    /**
+     * R37: the owner took the rest of a booking in cash. Answers the owner's view of the
+     * booking; the player's app payment and this are first-come, first-served.
+     */
+    @PostMapping("/api/owner/bookings/{bookingId}/cash")
+    public ApiResponse<BookingResponse> recordCash(@AuthenticationPrincipal UUID ownerId,
+                                                   @PathVariable UUID bookingId) {
+        return ApiResponse.ok(bookingService.recordCashByOwner(ownerId, bookingId), "Cash recorded");
+    }
+
+    /** E5: the owner marks the rest as not paid by the player (no charge, no penalty). */
+    @PostMapping("/api/owner/bookings/{bookingId}/not-paid")
+    public ApiResponse<BookingResponse> markNotPaid(@AuthenticationPrincipal UUID ownerId,
+                                                    @PathVariable UUID bookingId) {
+        return ApiResponse.ok(bookingService.markNotPaidByOwner(ownerId, bookingId), "Marked as not paid");
+    }
+
+    /**
+     * E6: the owner undoes their remainder mark the same Tashkent day; later 409 "Only an
+     * admin can change this mark". Undoing "cash received" voids that cash row.
+     */
+    @DeleteMapping("/api/owner/bookings/{bookingId}/remainder-mark")
+    public ApiResponse<BookingResponse> undoRemainderMark(@AuthenticationPrincipal UUID ownerId,
+                                                          @PathVariable UUID bookingId) {
+        return ApiResponse.ok(bookingService.undoRemainderMarkByOwner(ownerId, bookingId), "Mark undone");
     }
 
     @DeleteMapping("/api/owner/bookings/{bookingId}")

@@ -7,13 +7,12 @@ import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.config.JwtProvider;
 import uz.minipolya.minipolya_backend.dto.response.AuthResponse;
 import uz.minipolya.minipolya_backend.entity.User;
-import uz.minipolya.minipolya_backend.exception.ForbiddenException;
+import uz.minipolya.minipolya_backend.exception.AccountBlockedException;
 import uz.minipolya.minipolya_backend.mapper.UserMapper;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.TelegramAuthValidator;
 import uz.minipolya.minipolya_backend.util.TelegramUserData;
 
-import java.util.Set;
 
 /**
  * Authentication flows. Currently: Telegram Mini App {@code initData} →
@@ -24,48 +23,60 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class AuthService {
 
-    private static final Set<String> SUPPORTED_LANGUAGES = Set.of("uz", "ru", "en");
+    /** Every new user starts in Uzbek, whatever Telegram's language is; they change it themselves. */
+    static final String DEFAULT_LANGUAGE = "uz";
 
     private final TelegramAuthValidator telegramAuthValidator;
     private final UserRepository userRepository;
     private final UserMapper userMapper;
     private final JwtProvider jwtProvider;
+    private final AccountBlockService accountBlockService;
 
     @Transactional
     public AuthResponse authenticateTelegram(String initData) {
         TelegramUserData data = telegramAuthValidator.validate(initData);
 
-        User user = userRepository.findByTelegramId(data.telegramId())
-                .orElseGet(() -> createFromTelegram(data));
+        User user = findOrCreateFromTelegram(data);
 
+        AuthResponse response = signIn(user);
+        log.info("Telegram auth succeeded for userId={} telegramId={}", user.getId(), user.getTelegramId());
+        return response;
+    }
+
+    /**
+     * The token and user for a sign-in — the Telegram one and the dev-only one alike. A
+     * blocked user is refused with 403 ACCOUNT_BLOCKED and why and when.
+     */
+    public AuthResponse signIn(User user) {
         if (user.isBlocked()) {
             log.warn("Blocked user attempted to sign in: userId={} telegramId={}", user.getId(), user.getTelegramId());
-            throw new ForbiddenException("Account is blocked");
+            throw new AccountBlockedException(accountBlockService.details(user.getId()));
         }
-
-        String token = jwtProvider.generateToken(user);
-        log.info("Telegram auth succeeded for userId={} telegramId={}", user.getId(), user.getTelegramId());
         return AuthResponse.builder()
-                .token(token)
+                .token(jwtProvider.generateToken(user))
                 .user(userMapper.toResponse(user))
                 .build();
+    }
+
+    /**
+     * The user with this Telegram id, created on first sight (name from Telegram, language
+     * uz). The only place a Telegram user is created: the Mini App sign-in and the bot's
+     * /start both come here.
+     */
+    @Transactional
+    public User findOrCreateFromTelegram(TelegramUserData data) {
+        return userRepository.findByTelegramId(data.telegramId())
+                .orElseGet(() -> createFromTelegram(data));
     }
 
     private User createFromTelegram(TelegramUserData data) {
         User user = User.builder()
                 .telegramId(data.telegramId())
                 .name(data.displayName())
-                .language(resolveLanguage(data.languageCode()))
+                .language(DEFAULT_LANGUAGE)
                 .build();
         User saved = userRepository.save(user);
         log.info("Created new user from Telegram: userId={} telegramId={}", saved.getId(), saved.getTelegramId());
         return saved;
-    }
-
-    private String resolveLanguage(String languageCode) {
-        if (languageCode != null && SUPPORTED_LANGUAGES.contains(languageCode.toLowerCase())) {
-            return languageCode.toLowerCase();
-        }
-        return "uz";
     }
 }

@@ -30,6 +30,8 @@ public class GameDetailResponse {
 
     private UUID stadiumId;
     private String stadiumName;
+    /** Where the game is played: address, district, Moʻljal, coordinates, cover photo, format. */
+    private StadiumLocationResponse location;
     private UUID creatorId;
     private String creatorName;
 
@@ -40,16 +42,17 @@ public class GameDetailResponse {
     private OffsetDateTime startsAt;
     private OffsetDateTime endsAt;
 
+    /**
+     * What the players pay for this game altogether: every share of a casual or open game,
+     * both teams' joining prices and remainders of a team game.
+     */
     private Long totalPrice;
-    private Long serviceFeePerPerson;
 
     /**
-     * A casual or open game: what one player's share costs by card (pitch share plus
-     * service fee, grossed up). Absent on a team game, whose teams[] carry their own.
+     * A casual or open game: what one player pays for their share. Absent on a team game,
+     * whose teams[] carry their own.
      */
     private Long price;
-    /** price − the share's net. */
-    private Long cardFee;
 
     private UUID teamAId;
     private String teamAName;
@@ -66,6 +69,8 @@ public class GameDetailResponse {
 
     /** team_vs_team only: each team's fee, advance, remainder and refund position. */
     private List<GameTeamResponse> teams;
+    /** R45, team games only: a team is half-way through joining (its payment being confirmed). */
+    private Boolean joinPending;
 
     private List<GameParticipantResponse> participants;
 

@@ -13,14 +13,15 @@ import uz.minipolya.minipolya_backend.entity.PlatformSettings;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.mapper.PlatformSettingsMapper;
 import uz.minipolya.minipolya_backend.repository.PlatformSettingsRepository;
+import uz.minipolya.minipolya_backend.util.Soum;
 
 import java.util.UUID;
 
 /**
  * Reads and updates the single {@code platform_settings} row. Every money rule
- * that is not per-stadium lives here: the booking commission the platform
- * keeps, the per-team fee on a team game and the per-player service fee on a
- * casual game.
+ * that is not per-stadium lives here: the per-team fee on a team game, the
+ * per-player service fee on a casual game and the card fee and rounding step
+ * that turn an owner's price into the player price.
  *
  * <p>An update validates every supplied field before writing any of them, so a
  * rejected value leaves the row untouched, and records one audit entry naming
@@ -56,13 +57,8 @@ public class PlatformSettingsService {
         validate(request);
 
         PlatformSettings settings = current();
+        validateMinimumAboveFee(request, settings);
         AuditEntry audit = AuditEntry.admin(adminUserId, AuditAction.SETTINGS_CHANGED);
-
-        Integer commission = request.getBookingCommissionPercent();
-        if (commission != null && commission != settings.getBookingCommissionPercent()) {
-            audit.change("bookingCommissionPercent", settings.getBookingCommissionPercent(), commission);
-            settings.setBookingCommissionPercent(commission);
-        }
 
         Long teamFee = request.getTeamGamePlatformFee();
         if (teamFee != null && teamFee != settings.getTeamGamePlatformFee()) {
@@ -88,6 +84,12 @@ public class PlatformSettingsService {
             settings.setPaymentRoundingStep(roundingStep);
         }
 
+        Long defaultMinimum = request.getDefaultMinBookingAmount();
+        if (defaultMinimum != null && defaultMinimum != settings.getDefaultMinBookingAmount()) {
+            audit.change("defaultMinBookingAmount", settings.getDefaultMinBookingAmount(), defaultMinimum);
+            settings.setDefaultMinBookingAmount(defaultMinimum);
+        }
+
         if (audit.getChanges().isEmpty()) {
             return mapper.toResponse(settings);
         }
@@ -102,14 +104,9 @@ public class PlatformSettingsService {
 
     /** All-or-nothing: every supplied value is checked before the first write. */
     private void validate(UpdatePlatformSettingsRequest request) {
-        Integer commission = request.getBookingCommissionPercent();
-        if (commission != null
-                && (commission < 0 || commission > PlatformSettings.MAX_BOOKING_COMMISSION_PERCENT)) {
-            throw new BadRequestException("bookingCommissionPercent must be between 0 and "
-                    + PlatformSettings.MAX_BOOKING_COMMISSION_PERCENT);
-        }
         requireNotNegative("teamGamePlatformFee", request.getTeamGamePlatformFee());
         requireNotNegative("casualGameServiceFee", request.getCasualGameServiceFee());
+        requireNotNegative("defaultMinBookingAmount", request.getDefaultMinBookingAmount());
         Integer bps = request.getCardFeeBps();
         if (bps != null && (bps < 0 || bps > PlatformSettings.MAX_CARD_FEE_BPS)) {
             throw new BadRequestException("cardFeeBps must be between 0 and " + PlatformSettings.MAX_CARD_FEE_BPS);
@@ -119,6 +116,27 @@ public class PlatformSettingsService {
             throw new BadRequestException("paymentRoundingStep must be between 1 and "
                     + PlatformSettings.MAX_PAYMENT_ROUNDING_STEP);
         }
+    }
+
+    /**
+     * T2: the default minimum booking amount must stay above the team-game fee — a team's
+     * minimum payment is the fee plus the owner's part, so a minimum at or below the fee
+     * would leave the owner nothing. Checked on the values the row would have afterwards.
+     */
+    private void validateMinimumAboveFee(UpdatePlatformSettingsRequest request, PlatformSettings current) {
+        long fee = request.getTeamGamePlatformFee() != null
+                ? request.getTeamGamePlatformFee() : current.getTeamGamePlatformFee();
+        long minimum = request.getDefaultMinBookingAmount() != null
+                ? request.getDefaultMinBookingAmount() : current.getDefaultMinBookingAmount();
+        if (minimum > fee) {
+            return;
+        }
+        if (request.getDefaultMinBookingAmount() != null) {
+            throw new BadRequestException("defaultMinBookingAmount must be more than the team game platform fee ("
+                    + Soum.of(fee) + ")");
+        }
+        throw new BadRequestException("teamGamePlatformFee must be less than the default minimum booking amount ("
+                + Soum.of(minimum) + ")");
     }
 
     private void requireNotNegative(String field, Long value) {

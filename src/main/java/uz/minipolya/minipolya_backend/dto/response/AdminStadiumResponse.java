@@ -24,10 +24,14 @@ public class AdminStadiumResponse {
     private String district;
     /** The first photo by position; absent when there are none. */
     private String photoUrl;
-    /** Tiyin: the stadium's base hourly price, net — what the owner set. */
+    /** Tiyin: the stadium's base hourly price — the owner's own price, as they set it. */
     private Long pricePerHour;
-    /** Tiyin: what a player pays for that hour by card. */
-    private Long price;
+    /** Tiyin: what players see and pay for that hour. */
+    private Long playerPrice;
+    /** Tiyin: what the owner receives of that hour paid by card, after ATMOS. */
+    private Long ownerReceives;
+    /** Tiyin: what ATMOS takes of that hour paid by card. */
+    private Long atmosFee;
     /** The owner's ATMOS contract: none, pending or signed. Approval needs signed. */
     private OwnerLegalDetails.ContractStatus ownerContractStatus;
     private String ownerName;

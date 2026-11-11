@@ -22,7 +22,50 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
 
     List<Payment> findByBookingId(UUID bookingId);
 
+    /**
+     * R38: money that arrived for one stadium's bookings — and for its team games, whose
+     * money sits on the teams' payments ({@code game_team_id}), never on a booking — by
+     * method: one row per method ({@code [method, today, week, month]}, tiyin, as players
+     * paid it), counted when the payment was taken. {@code from}/{@code to} span all three
+     * periods.
+     */
+    @Query("""
+            SELECT p.method,
+                   COALESCE(SUM(CASE WHEN p.createdAt >= :todayFrom AND p.createdAt < :todayTo THEN p.amount ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN p.createdAt >= :weekFrom AND p.createdAt < :weekTo THEN p.amount ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN p.createdAt >= :monthFrom AND p.createdAt < :monthTo THEN p.amount ELSE 0 END), 0)
+            FROM Payment p LEFT JOIN p.booking b LEFT JOIN p.gameTeam gt LEFT JOIN gt.game g
+            WHERE (b.stadium.id = :stadiumId OR g.stadium.id = :stadiumId) AND p.status IN :statuses
+              AND p.createdAt >= :from AND p.createdAt < :to
+            GROUP BY p.method
+            """)
+    List<Object[]> sumStadiumPaymentsByMethod(@Param("stadiumId") UUID stadiumId,
+                                              @Param("statuses") Collection<Payment.Status> statuses,
+                                              @Param("todayFrom") OffsetDateTime todayFrom,
+                                              @Param("todayTo") OffsetDateTime todayTo,
+                                              @Param("weekFrom") OffsetDateTime weekFrom,
+                                              @Param("weekTo") OffsetDateTime weekTo,
+                                              @Param("monthFrom") OffsetDateTime monthFrom,
+                                              @Param("monthTo") OffsetDateTime monthTo,
+                                              @Param("from") OffsetDateTime from,
+                                              @Param("to") OffsetDateTime to);
+
+    /** Whether a booking has a payment in one of these statuses — e.g. a charge still being confirmed. */
+    boolean existsByBookingIdAndStatusIn(UUID bookingId, Collection<Payment.Status> statuses);
+
     List<Payment> findByGameId(UUID gameId);
+
+    /**
+     * The payments of the teams currently in the game whose booking this is ({@code active}
+     * teams, the ones {@code TeamGameService.refreshBookingPayment} counts): a team game's
+     * money lives on its teams, never on the booking. Empty for any other booking.
+     */
+    @Query("""
+            SELECT p FROM Payment p JOIN p.gameTeam gt JOIN gt.game g
+            WHERE g.bookingId = :bookingId AND gt.status = :status
+            """)
+    List<Payment> findTeamPaymentsOfGameBooking(@Param("bookingId") UUID bookingId,
+                                                @Param("status") uz.minipolya.minipolya_backend.entity.GameTeam.Status status);
 
     /** Every payment of several bookings in one query — for a list of bookings. */
     List<Payment> findByBookingIdIn(Collection<UUID> bookingIds);
@@ -31,6 +74,14 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM Payment p WHERE p.id = :id")
     Optional<Payment> findForUpdate(@Param("id") UUID id);
+
+    /**
+     * Locks the row until the transaction ends and answers its status as committed — read
+     * straight from the database, so a payment this transaction loaded earlier (and another
+     * one has refunded since) cannot be acted on from its stale copy. Null when no such row.
+     */
+    @Query(value = "SELECT status FROM payments WHERE id = :id FOR UPDATE", nativeQuery = true)
+    String lockStatus(@Param("id") UUID id);
 
     /** Failed refunds still waiting for an admin: how many, and since when. */
     long countByPaymentTypeAndStatus(Payment.PaymentType paymentType, Payment.Status status);

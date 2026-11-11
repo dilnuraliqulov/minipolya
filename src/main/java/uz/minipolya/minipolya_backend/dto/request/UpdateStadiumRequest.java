@@ -1,11 +1,7 @@
 package uz.minipolya.minipolya_backend.dto.request;
 
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.DecimalMax;
-import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.PositiveOrZero;
-import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -13,12 +9,13 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalTime;
-import java.util.List;
 
 /**
- * Partial update for a stadium. All fields optional — only non-null values are
- * applied. {@code status} is intentionally absent (managed by the admin
- * approval flow, not by owners).
+ * Partial update for a stadium. All fields optional — only non-null values are applied,
+ * each checked by {@code StadiumRules} as on create. {@code status} is absent (the admin's
+ * approval flow), and so are the booking terms ({@code minBookingAmount},
+ * {@code cancellationHours}: the admin's {@code PUT /api/admin/stadiums/{id}/booking-terms})
+ * and the photo URLs (the upload endpoint): a client still sending them is ignored.
  */
 @Data
 @Builder
@@ -26,25 +23,21 @@ import java.util.List;
 @AllArgsConstructor
 public class UpdateStadiumRequest {
 
-    @Size(max = 150)
     private String name;
 
-    @Size(max = 300)
     private String address;
 
-    /** Optional: one of the twelve Tashkent districts, spelt exactly as listed in {@code Districts}. */
-    @Size(max = 30)
+    /** One of the twelve Tashkent districts, spelt exactly as listed in {@code Districts}. */
     private String district;
 
-    @DecimalMin(value = "-90.0")
-    @DecimalMax(value = "90.0")
+    /** At most 150 characters; trimmed. Blank clears it. */
+    private String landmark;
+
+    /** With {@code longitude}, both or neither. */
     private BigDecimal latitude;
 
-    @DecimalMin(value = "-180.0")
-    @DecimalMax(value = "180.0")
     private BigDecimal longitude;
 
-    @Size(max = 20)
     private String phone;
 
     private String description;
@@ -59,20 +52,9 @@ public class UpdateStadiumRequest {
 
     private LocalTime closeTime;
 
-    @PositiveOrZero
     private Long pricePerHour;
 
-    /** Tiyin; null means the player must pay in full. At least 50 000 (500 so.m). */
-    @PositiveOrZero
-    private Long minBookingAmount;
-
-    /** Hours before kick-off up to which a player can cancel and be refunded in full. */
-    @PositiveOrZero
-    private Integer cancellationHours;
-
     private Boolean isActive;
-
-    private List<@jakarta.validation.constraints.NotBlank @Size(max = 500) String> photos;
 
     @Valid
     private AmenitiesRequest amenities;

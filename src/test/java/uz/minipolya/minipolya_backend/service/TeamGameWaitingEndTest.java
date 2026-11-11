@@ -87,7 +87,7 @@ class TeamGameWaitingEndTest {
                 paymentService, mock(SavedCardService.class), platformSettingsService,
                 mock(NotificationService.class), auditService,
                 new CancellationPolicy(), new AppProperties(),
-                mock(TeamMemberRepository.class), mock(TeamRepository.class));
+                mock(TeamMemberRepository.class), mock(TeamRepository.class), org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         leaderA = User.builder().id(LEADER_A_ID).name("Leader A").build();
         stadium = Stadium.builder().id(UUID.randomUUID()).name("Chilonzor Arena").cancellationHours(24)

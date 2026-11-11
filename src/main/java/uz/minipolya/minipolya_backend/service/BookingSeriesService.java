@@ -64,6 +64,7 @@ public class BookingSeriesService {
     private final AuditService auditService;
     private final AppProperties appProperties;
     private final StadiumClosureService closureService;
+    private final CardPricing cardPricing;
 
     @Transactional
     public BookingSeriesResponse createSeries(CreateBookingSeriesRequest request, UUID userId) {
@@ -73,17 +74,14 @@ public class BookingSeriesService {
 
         requireNotOwnStadium(stadium, userId);
 
-        int duration = request.getDuration();
+        BookingWindowValidator.requireOneHour(request.getDuration());
         LocalTime startTime = request.getStartTime();
-        if (duration < 1) {
-            throw new BadRequestException("Duration must be at least 1 hour");
-        }
         if (startTime.getMinute() != 0 || startTime.getSecond() != 0 || startTime.getNano() != 0) {
             throw new BadRequestException("Booking must start on the hour");
         }
         LocalTime open = stadium.getOpenTime();
         LocalTime close = stadium.getCloseTime();
-        LocalTime endTime = startTime.plusHours(duration);
+        LocalTime endTime = startTime.plusHours(Booking.HOURS);
         boolean fitsWindow = open.isBefore(close)
                 && !startTime.isBefore(open)
                 && endTime.isAfter(startTime) // no midnight wrap
@@ -100,7 +98,7 @@ public class BookingSeriesService {
                 .stadium(stadium)
                 .dayOfWeek(request.getDayOfWeek())
                 .startTime(startTime)
-                .durationHours(duration)
+                .durationHours(Booking.HOURS)
                 .isActive(true)
                 .build());
 
@@ -184,18 +182,20 @@ public class BookingSeriesService {
     /** @return true if a booking was created, false if the slot was taken or closed. */
     private boolean tryGenerateBooking(BookingSeries series, LocalDate date) {
         Stadium stadium = series.getStadium();
-        int duration = series.getDurationHours();
+        // One hour, whatever an older series row says: every booking is one slot.
         OffsetDateTime startsAt = date.atTime(series.getStartTime()).atZone(TASHKENT).toOffsetDateTime();
-        OffsetDateTime endsAt = startsAt.plusHours(duration);
+        OffsetDateTime endsAt = startsAt.plusHours(Booking.HOURS);
 
         if (bookingRepository.existsActiveOverlap(stadium.getId(), startsAt, endsAt)) {
             return false;
         }
-        if (isClosed(stadium.getId(), date, series.getStartTime(), duration)) {
-            return false; // a closure covers one of the hours — skip, same as availability
+        if (closureService.isClosedAt(stadium.getId(), date, series.getStartTime())) {
+            return false; // a closure covers the hour — skip, same as availability
         }
 
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        // CURRENT pricing: the owner's price of the slot, and its player price.
+        long price = bookingPriceCalculator.hourPrice(stadium, startsAt);
         Booking booking = Booking.builder()
                 .stadium(stadium)
                 .user(series.getUser())
@@ -203,8 +203,9 @@ public class BookingSeriesService {
                 .status("pending")
                 .startsAt(startsAt)
                 .endsAt(endsAt)
-                .durationHours(duration)
-                .price(bookingPriceCalculator.totalPrice(stadium, startsAt, duration)) // CURRENT pricing
+                .durationHours(Booking.HOURS)
+                .price(price)
+                .cardPrice(cardPricing.playerAmount(price))
                 .bookingSeriesId(series.getId())
                 .expiresAt(now.plusMinutes(appProperties.getBooking().getHoldExpiryMinutes()))
                 .build();
@@ -251,16 +252,6 @@ public class BookingSeriesService {
         } catch (Exception ex) {
             log.warn("Series notification failed: {}", ex.toString());
         }
-    }
-
-    /** True if any of the booking's 1-hour slots falls within a closure. */
-    private boolean isClosed(UUID stadiumId, LocalDate date, LocalTime startTime, int duration) {
-        for (int hour = 0; hour < duration; hour++) {
-            if (closureService.isClosedAt(stadiumId, date, startTime.plusHours(hour))) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private BookingSeriesResponse toResponse(BookingSeries series, LocalDate nextBookingDate) {

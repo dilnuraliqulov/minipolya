@@ -77,3 +77,29 @@ databaseChangeLog:
       file: db/changelog/changes/038-stadium-rejected.sql
   - include:
       file: db/changelog/changes/039-stadium-notes.sql
+  - include:
+      file: db/changelog/changes/040-player-price.sql
+  - include:
+      file: db/changelog/changes/041-user-profile-names.sql
+  - include:
+      file: db/changelog/changes/042-telegram-bot.sql
+  - include:
+      file: db/changelog/changes/043-team-invite-code.sql
+  - include:
+      file: db/changelog/changes/044-fake-payment-provider.sql
+  - include:
+      file: db/changelog/changes/045-booking-status-length.sql
+  - include:
+      file: db/changelog/changes/046-game-team-joining.sql
+  - include:
+      file: db/changelog/changes/047-payment-decline-reason.sql
+  - include:
+      file: db/changelog/changes/048-stadium-wizard-fields.sql
+  - include:
+      file: db/changelog/changes/049-rounding-5000.sql
+  - include:
+      file: db/changelog/changes/050-remainder-marks.sql
+  - include:
+      file: db/changelog/changes/051-default-min-booking-amount.sql
+  - include:
+      file: db/changelog/changes/052-game-team-payment-option.sql

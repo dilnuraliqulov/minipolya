@@ -234,6 +234,42 @@ class AtmosPaymentProviderTest {
     }
 
     @Test
+    void reversingAnAlreadyReversedTransactionIsTransactionClosedToo() {
+        expectToken();
+        server.expect(requestTo(BASE + "/merchant/pay/reverse"))
+                .andRespond(withSuccess("{\"result\":{\"code\":\"STPIMS-ERR-100\",\"description\":\"ранее была отменена\"}}",
+                        MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> provider.reverse("5001", "again")).isInstanceOf(TransactionClosedException.class);
+    }
+
+    @Test
+    void aBindingCodeCannotBeResentAtAtmos() {
+        assertThatThrownBy(() -> provider.resendBindingCode("442"))
+                .isInstanceOf(uz.minipolya.minipolya_backend.provider.PaymentProviderException.class)
+                .extracting("code").isEqualTo(uz.minipolya.minipolya_backend.provider.AtmosCodes.RESEND_UNSUPPORTED);
+    }
+
+    @Test
+    void aConfirmedBindingGivesTheTokenMaskedNumberExpiryAndHolder() {
+        expectToken();
+        server.expect(requestTo(BASE + "/partner/bind-card/confirm"))
+                .andRespond(withSuccess("{\"result\":{\"code\":\"OK\"},\"data\":{\"card_id\":1579076,"
+                                + "\"pan\":\"986009******1840\",\"expiry\":\"2505\",\"card_holder\":\"TEST\","
+                                + "\"balance\":1000000000,\"phone\":\"********9999\",\"card_token\":\"tok-x\"},"
+                                + "\"transaction_id\":4789}",
+                        MediaType.APPLICATION_JSON));
+
+        var card = provider.bindCardConfirm("383", "123456");
+
+        assertThat(card.cardToken()).isEqualTo("tok-x");
+        assertThat(card.cardId()).isEqualTo("1579076");
+        assertThat(card.maskedPan()).isEqualTo("9860 •••• •••• 1840");
+        assertThat(card.expiry()).isEqualTo("05/25");
+        assertThat(card.cardHolder()).isEqualTo("TEST");
+    }
+
+    @Test
     void anUnknownCodeIsAProviderExceptionCarryingIt() {
         expectToken();
         server.expect(requestTo(BASE + "/merchant/pay/reverse"))
@@ -316,7 +352,7 @@ class AtmosPaymentProviderTest {
     void expiriesAndMasksAreConverted() {
         assertThat(AtmosPaymentProvider.toAtmosExpiry("09/27")).isEqualTo("2709");
         assertThat(AtmosPaymentProvider.fromAtmosExpiry("2505")).isEqualTo("05/25");
-        assertThat(AtmosPaymentProvider.maskPan("986009******1840")).isEqualTo("9860 •••• 1840");
+        assertThat(AtmosPaymentProvider.maskPan("986009******1840")).isEqualTo("9860 •••• •••• 1840");
     }
 
     /** A clock the test moves forward by hand. */

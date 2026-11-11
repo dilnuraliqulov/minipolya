@@ -111,32 +111,35 @@ public class PricingService {
         return mapActive(stadiumId).stream().map(this::publicPrices).toList();
     }
 
-    /** A stadium's active rules for an admin reviewing it, in any status: net and card price both. */
+    /**
+     * A stadium's active rules for an admin reviewing it, in any status: the owner's price,
+     * the player price, what the owner receives of it and what ATMOS takes.
+     */
     @Transactional(readOnly = true)
     public List<PricingRuleResponse> listForAdmin(UUID stadiumId) {
-        return mapActive(stadiumId).stream().map(this::ownerPrices).toList();
+        CardPricing pricing = cardPricing.snapshot();
+        return mapActive(stadiumId).stream().map(this::ownerPrices).peek(r -> {
+            if (r.getPlayerPrice() != null) {
+                r.setOwnerReceives(pricing.ownerReceives(r.getPlayerPrice()));
+                r.setAtmosFee(r.getPlayerPrice() - r.getOwnerReceives());
+            }
+        }).toList();
     }
 
     // ---- Helpers ----
 
-    /** Players see the hour's card price. */
+    /** Players see one price: the hour as they pay it. */
     private PricingRuleResponse publicPrices(PricingRuleResponse r) {
         if (r != null && r.getPricePerHour() != null) {
-            CardPricing.Quote q = cardPricing.quote(r.getPricePerHour());
-            r.setPricePerHour(q.price());
-            r.setPrice(q.price());
-            r.setCardFee(q.cardFee());
+            r.setPricePerHour(cardPricing.playerAmount(r.getPricePerHour()));
         }
         return r;
     }
 
-    /** The owner keeps their net price; the card price is alongside. */
+    /** The owner keeps their own price; the player price is alongside. */
     private PricingRuleResponse ownerPrices(PricingRuleResponse r) {
         if (r != null && r.getPricePerHour() != null) {
-            CardPricing.Quote q = cardPricing.quote(r.getPricePerHour());
-            r.setPrice(q.price());
-            r.setNetPrice(q.netPrice());
-            r.setCardFee(q.cardFee());
+            r.setPlayerPrice(cardPricing.playerAmount(r.getPricePerHour()));
         }
         return r;
     }

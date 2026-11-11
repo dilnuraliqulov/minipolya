@@ -95,7 +95,7 @@ class TeamGameConfirmedCancelTest {
                 paymentService, mock(SavedCardService.class), platformSettingsService,
                 mock(NotificationService.class), mock(AuditService.class),
                 new CancellationPolicy(), new AppProperties(),
-                mock(TeamMemberRepository.class), mock(TeamRepository.class));
+                mock(TeamMemberRepository.class), mock(TeamRepository.class), org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         User leaderA = User.builder().id(LEADER_A_ID).name("Leader A").build();
         User leaderB = User.builder().id(LEADER_B_ID).name("Leader B").build();

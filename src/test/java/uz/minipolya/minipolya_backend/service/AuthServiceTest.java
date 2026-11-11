@@ -7,9 +7,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import uz.minipolya.minipolya_backend.config.JwtProvider;
 import uz.minipolya.minipolya_backend.dto.response.AuthResponse;
+import uz.minipolya.minipolya_backend.dto.response.BlockedAccountResponse;
 import uz.minipolya.minipolya_backend.dto.response.UserResponse;
 import uz.minipolya.minipolya_backend.entity.User;
-import uz.minipolya.minipolya_backend.exception.ForbiddenException;
+import uz.minipolya.minipolya_backend.exception.AccountBlockedException;
 import uz.minipolya.minipolya_backend.mapper.UserMapper;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.TelegramAuthValidator;
@@ -40,6 +41,9 @@ class AuthServiceTest {
     @Mock
     private JwtProvider jwtProvider;
 
+    @Mock
+    private AccountBlockService accountBlockService;
+
     @InjectMocks
     private AuthService authService;
 
@@ -59,7 +63,28 @@ class AuthServiceTest {
 
         assertThat(result.getToken()).isEqualTo("jwt-token");
         assertThat(result.getUser()).isEqualTo(mapped);
-        verify(userRepository).save(any(User.class));
+        // Telegram says "ru"; a new user still starts in Uzbek.
+        org.mockito.ArgumentCaptor<User> created = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(created.capture());
+        assertThat(created.getValue().getLanguage()).isEqualTo("uz");
+        assertThat(created.getValue().getName()).isEqualTo("Ali Valiyev");
+    }
+
+    @Test
+    void aNewUserStartsInUzbekWhateverTheirTelegramLanguage() {
+        for (String telegramLanguage : new String[] {"ru", "en", "uz", "de", null}) {
+            org.mockito.Mockito.reset(userRepository);
+            when(telegramAuthValidator.validate("init"))
+                    .thenReturn(new TelegramUserData(778L, "Vali", null, "vali", telegramLanguage));
+            when(userRepository.findByTelegramId(778L)).thenReturn(Optional.empty());
+            when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            authService.authenticateTelegram("init");
+
+            org.mockito.ArgumentCaptor<User> created = org.mockito.ArgumentCaptor.forClass(User.class);
+            verify(userRepository).save(created.capture());
+            assertThat(created.getValue().getLanguage()).as("Telegram %s", telegramLanguage).isEqualTo("uz");
+        }
     }
 
     @Test
@@ -83,10 +108,16 @@ class AuthServiceTest {
         when(telegramAuthValidator.validate("init")).thenReturn(data);
         User blocked = User.builder().id(USER_ID_5).telegramId(777L).name("Ali").isBlocked(true).build();
         when(userRepository.findByTelegramId(777L)).thenReturn(Optional.of(blocked));
+        BlockedAccountResponse why = BlockedAccountResponse.builder().reason("Spam").build();
+        when(accountBlockService.details(USER_ID_5)).thenReturn(why);
 
         assertThatThrownBy(() -> authService.authenticateTelegram("init"))
-                .isInstanceOf(ForbiddenException.class)
-                .hasMessage("Account is blocked");
+                .isInstanceOf(AccountBlockedException.class)
+                .hasMessage("Account is blocked")
+                .satisfies(ex -> {
+                    assertThat(((AccountBlockedException) ex).getCode()).isEqualTo("ACCOUNT_BLOCKED");
+                    assertThat(((AccountBlockedException) ex).getData()).isSameAs(why);
+                });
 
         verify(jwtProvider, never()).generateToken(any(User.class));
     }

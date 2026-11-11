@@ -19,4 +19,8 @@ public class AmenitiesResponse {
     private boolean cafe;
     private boolean equipmentRental;
     private boolean tribune;
+    private boolean toilet;
+    private boolean covered;
+    private boolean bibs;
+    private boolean drinkingWater;
 }

@@ -27,6 +27,7 @@ import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
+import java.math.BigDecimal;
 import java.time.LocalTime;
 import java.util.Optional;
 import java.util.UUID;
@@ -72,7 +73,7 @@ class StadiumServiceTest {
         User owner = User.builder().id(OWNER_ID).name("Owner").build();
         when(userRepository.findById(OWNER_ID)).thenReturn(Optional.of(owner));
 
-        CreateStadiumRequest request = CreateStadiumRequest.builder().name("Yunusobod Arena").build();
+        CreateStadiumRequest request = validCreate();
         Stadium entity = new Stadium();
         when(stadiumMapper.toEntity(request)).thenReturn(entity);
         when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -122,8 +123,8 @@ class StadiumServiceTest {
         org.mockito.Mockito.doAnswer(inv -> {
             Stadium target = inv.getArgument(1);
             target.setName("Arena");                 // sent, but the same value
-            target.setMinBookingAmount(5_000_000L);  // null → 50 000 so'm
-            target.setCancellationHours(12);         // 24 → 12
+            target.setPricePerHour(18_000_000L);     // 150 000 → 180 000 so'm
+            target.setDescription("Covered");        // null → "Covered"
             return null;
         }).when(stadiumMapper).updateStadiumFromRequest(any(), any());
 
@@ -133,8 +134,8 @@ class StadiumServiceTest {
         assertThat(entry.getActorType()).isEqualTo(AuditActorType.OWNER);
         assertThat(entry.getEntityLabel()).isEqualTo("Arena");
         assertThat(entry.getChanges()).containsExactly(
-                AuditChange.of("minBookingAmount", null, 5_000_000L),
-                AuditChange.of("cancellationHours", 24, 12));
+                AuditChange.of("description", null, "Covered"),
+                AuditChange.of("pricePerHour", 15_000_000L, 18_000_000L));
     }
 
     @Test
@@ -186,74 +187,47 @@ class StadiumServiceTest {
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
-    // ---- min_booking_amount ----
+    // ---- The add-stadium rules (StadiumRules) ----
 
     @Test
-    void createRejectsAMinimumBelowTheAtmosFloor() {
-        CreateStadiumRequest request = CreateStadiumRequest.builder()
-                .name("Arena").address("Tashkent").format("5x5").surfaceType("artificial")
-                .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0))
-                .pricePerHour(10_000_000L)
-                .minBookingAmount(49_999L) // one tiyin under 500 so'm
-                .build();
+    void createRefusesAnInvalidRequestBeforeWritingAnything() {
+        CreateStadiumRequest request = validCreate();
+        request.setPhone(null);
 
         assertThatThrownBy(() -> stadiumService.create(OWNER_ID, request))
                 .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("50000");
+                .hasMessage("phone is required");
 
         verify(stadiumRepository, never()).save(any());
     }
 
     @Test
-    void createAcceptsAMinimumExactlyAtTheFloor() {
-        when(userRepository.findById(OWNER_ID)).thenReturn(Optional.of(User.builder().id(OWNER_ID).build()));
-        CreateStadiumRequest request = CreateStadiumRequest.builder()
-                .name("Arena").address("Tashkent").format("5x5").surfaceType("artificial")
-                .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0))
-                .pricePerHour(10_000_000L)
-                .minBookingAmount(Stadium.MIN_BOOKING_AMOUNT_FLOOR)
-                .build();
-        Stadium entity = Stadium.builder().id(STADIUM_ID).build();
-        when(stadiumMapper.toEntity(request)).thenReturn(entity);
-        when(stadiumRepository.save(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        stadiumService.create(OWNER_ID, request);
-
-        verify(stadiumRepository).save(any(Stadium.class));
-    }
-
-    @Test
-    void updateRejectsAMinimumBelowTheAtmosFloor() {
-        Stadium existing = Stadium.builder().id(STADIUM_ID)
-                .owner(User.builder().id(OWNER_ID).build()).build();
+    void updateRefusesHoursThatWouldCloseAfterMidnight() {
+        Stadium existing = Stadium.builder().id(STADIUM_ID).owner(User.builder().id(OWNER_ID).build())
+                .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).build();
         when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(existing));
 
-        UpdateStadiumRequest request = UpdateStadiumRequest.builder().minBookingAmount(1_000L).build();
-
-        assertThatThrownBy(() -> stadiumService.update(OWNER_ID, STADIUM_ID, request))
+        assertThatThrownBy(() -> stadiumService.update(OWNER_ID, STADIUM_ID,
+                UpdateStadiumRequest.builder().closeTime(LocalTime.of(2, 0)).build()))
                 .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("50000");
+                .hasMessage("closeTime must be after openTime; closing after midnight is not supported");
 
         verify(stadiumRepository, never()).saveAndFlush(any());
     }
 
-    @Test
-    void aNullMinimumIsAllowedAndMeansFullPaymentUpFront() {
-        Stadium existing = Stadium.builder().id(STADIUM_ID)
-                .owner(User.builder().id(OWNER_ID).build()).minBookingAmount(100_000L).build();
-        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(existing));
-        when(stadiumRepository.saveAndFlush(any(Stadium.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        // A null field on a partial update means "leave it alone", so this must not throw.
-        stadiumService.update(OWNER_ID, STADIUM_ID, UpdateStadiumRequest.builder().build());
-
-        verify(stadiumRepository).saveAndFlush(existing);
+    private static CreateStadiumRequest validCreate() {
+        return CreateStadiumRequest.builder()
+                .name("Yunusobod Arena").address("Yunusobod 4, 12").district("Yunusobod")
+                .phone("+998901234567").latitude(new BigDecimal("41.365")).longitude(new BigDecimal("69.285"))
+                .format("5x5").surfaceType("artificial")
+                .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).pricePerHour(15_000_000L)
+                .build();
     }
 
     // ---- Card prices ----
 
     @Test
-    void playersSeeTheCardPriceAndOwnersTheirNetPrice() {
+    void playersSeeOnePriceAndOwnersTheirOwnPriceWithThePlayerPrice() {
         User owner = User.builder().id(OWNER_ID).name("Owner").build();
         Stadium stadium = Stadium.builder().id(STADIUM_ID).owner(owner).status("approved").isActive(true)
                 .pricePerHour(20_000_000L).minBookingAmount(5_000_000L).build();
@@ -266,15 +240,16 @@ class StadiumServiceTest {
         StadiumDetailResponse player = stadiumService.getPublicDetail(STADIUM_ID, null);
         StadiumDetailResponse forOwner = stadiumService.update(OWNER_ID, STADIUM_ID, new UpdateStadiumRequest());
 
-        assertThat(player.getPricePerHour()).isEqualTo(20_310_000L);
-        assertThat(player.getPrice()).isEqualTo(20_310_000L);
-        assertThat(player.getCardFee()).isEqualTo(310_000L);
-        assertThat(player.getNetPrice()).isNull();
+        assertThat(player.getPricePerHour()).isEqualTo(20_500_000L);
         assertThat(player.getMinBookingAmount()).isEqualTo(TestPrices.card(5_000_000L));
+        assertThat(player.getPlayerPrice()).isNull();
+        assertThat(player.getPlayerMinBookingAmount()).isNull();
+        assertThat(player.getOwnerReceives()).isNull();
+        assertThat(player.getAtmosFee()).isNull();
 
         assertThat(forOwner.getPricePerHour()).isEqualTo(20_000_000L);
-        assertThat(forOwner.getNetPrice()).isEqualTo(20_000_000L);
-        assertThat(forOwner.getPrice()).isEqualTo(20_310_000L);
+        assertThat(forOwner.getPlayerPrice()).isEqualTo(20_500_000L);
         assertThat(forOwner.getMinBookingAmount()).isEqualTo(5_000_000L);
+        assertThat(forOwner.getPlayerMinBookingAmount()).isEqualTo(TestPrices.card(5_000_000L));
     }
 }

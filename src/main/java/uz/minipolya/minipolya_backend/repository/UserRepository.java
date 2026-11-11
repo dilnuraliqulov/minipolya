@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 import uz.minipolya.minipolya_backend.entity.User;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -19,6 +20,9 @@ public interface UserRepository extends JpaRepository<User, UUID>, JpaSpecificat
     Optional<User> findByTelegramId(Long telegramId);
 
     Optional<User> findByPhone(String phone);
+
+    /** The newest users first, at most 50 — the dev-only sign-in picker. */
+    List<User> findTop50ByOrderByCreatedAtDesc();
 
     /**
      * The user holding this username, case-insensitively. Locks the row so concurrent

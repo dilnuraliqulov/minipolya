@@ -45,7 +45,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -110,7 +109,7 @@ class GameServiceTest {
                 teamRepository, bookingPriceCalculator, bookingRepository,
                 gameMapper, participantMapper, new AppProperties(), paymentService, notificationService,
                 auditService, new BookingWindowValidator(closureService), platformSettingsService, teamGameService,
-                mock(SavedCardService.class));
+                mock(SavedCardService.class), org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         creator = User.builder().id(CREATOR_ID).name("Creator").build();
         stadium = Stadium.builder().id(STADIUM_ID).status("approved").isActive(true).pricePerHour(50_000L)
@@ -130,7 +129,7 @@ class GameServiceTest {
     private void stubCreate() {
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(CREATOR_ID)).thenReturn(Optional.of(creator));
-        when(bookingPriceCalculator.totalPrice(any(Stadium.class), any(OffsetDateTime.class), anyInt())).thenReturn(100_000L);
+        when(bookingPriceCalculator.hourPrice(any(Stadium.class), any(OffsetDateTime.class))).thenReturn(100_000L);
         when(gameRepository.save(any(Game.class))).thenAnswer(inv -> {
             Game g = inv.getArgument(0);
             if (g.getId() == null) {
@@ -211,15 +210,30 @@ class GameServiceTest {
 
     @Test
     void createGameRejectsEndingAfterClosingTime() {
+        stadium.setCloseTime(LocalTime.of(22, 30));
         when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
         when(userRepository.findById(CREATOR_ID)).thenReturn(Optional.of(creator));
 
         CreateGameRequest req = CreateGameRequest.builder()
-                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(22, 1)).duration(2).build();
+                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(22, 1)).build();
 
         assertThatThrownBy(() -> service.createGame(req, CREATOR_ID))
                 .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("must end by 23:00");
+                .hasMessageContaining("must end by 22:30");
+        verify(gameRepository, never()).save(any());
+    }
+
+    @Test
+    void createGameRejectsAnyLengthButOneHour() {
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(userRepository.findById(CREATOR_ID)).thenReturn(Optional.of(creator));
+
+        CreateGameRequest req = CreateGameRequest.builder()
+                .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(18, 1)).duration(2).build();
+
+        assertThatThrownBy(() -> service.createGame(req, CREATOR_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("A booking is exactly one hour");
         verify(gameRepository, never()).save(any());
     }
 
@@ -259,7 +273,7 @@ class GameServiceTest {
                 teamRepository, bookingPriceCalculator, bookingRepository,
                 gameMapper, participantMapper, props, paymentService, notificationService,
                 auditService, new BookingWindowValidator(closureService), platformSettingsService, teamGameService,
-                mock(SavedCardService.class));
+                mock(SavedCardService.class), org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
         stubCreate();
         CreateGameRequest req = CreateGameRequest.builder()
                 .stadiumId(STADIUM_ID).type("casual").maxPlayers(10).startsAt(startAt(18, 1)).duration(1).build();
@@ -398,20 +412,23 @@ class GameServiceTest {
     }
 
     @Test
-    void anInvitedMemberJoinsWithoutASideAndWithoutATeamId() {
+    void nobodyButTheJoiningTeamsLeaderMayJoinATeamGame() {
         Game game = tvtGameWithTeamA();
         when(participantRepository.findByGameIdAndUserId(GAME_ID, JOINER_ID)).thenReturn(Optional.empty());
-        when(userRepository.findById(JOINER_ID))
-                .thenReturn(Optional.of(User.builder().id(JOINER_ID).name("Member").build()));
-        when(participantRepository.save(any(GameParticipant.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(participantMapper.toResponse(any())).thenReturn(new GameParticipantResponse());
 
-        service.joinGame(GAME_ID, JOINER_ID, null, null, null);
+        // Without a team, or with a team the caller does not lead: never a free, side-less member.
+        assertThatThrownBy(() -> service.joinGame(GAME_ID, JOINER_ID, null, null, null))
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.ForbiddenException.class)
+                .hasMessage(GameService.ONLY_LEADERS_JOIN);
+        when(teamRepository.findById(TEAM_B_ID)).thenReturn(Optional.of(
+                uz.minipolya.minipolya_backend.entity.Team.builder().id(TEAM_B_ID)
+                        .leader(User.builder().id(LEADER_B_ID).build()).build()));
+        assertThatThrownBy(() -> service.joinGame(GAME_ID, JOINER_ID, "b", TEAM_B_ID, UUID.randomUUID()))
+                .isInstanceOf(uz.minipolya.minipolya_backend.exception.ForbiddenException.class);
 
         assertThat(game.getTeamB()).isNull();
-        ArgumentCaptor<GameParticipant> captor = ArgumentCaptor.forClass(GameParticipant.class);
-        verify(participantRepository).save(captor.capture());
-        assertThat(captor.getValue().getSide()).isNull();
+        verify(participantRepository, never()).save(any());
+        verify(teamGameService, never()).join(any(), any(), any(), any());
     }
 
     @Test
@@ -558,8 +575,15 @@ class GameServiceTest {
         when(userRepository.findById(LEADER_B_ID)).thenReturn(Optional.of(
                 User.builder().id(LEADER_B_ID).name("Leader B").build()));
         when(teamRepository.findById(TEAM_B_ID)).thenReturn(Optional.of(
-                Team.builder().id(TEAM_B_ID).name("Team B").build()));
+                Team.builder().id(TEAM_B_ID).name("Team B").leader(User.builder().id(LEADER_B_ID).build()).build()));
+        when(teamGameService.freeSide(game)).thenReturn(GameParticipant.Side.B);
+        when(teamGameService.join(any(), any(), any(), any())).thenReturn(
+                uz.minipolya.minipolya_backend.entity.GameTeam.builder().side(GameParticipant.Side.B).build());
         when(gameRepository.findByStadiumIdAndStatus(STADIUM_ID, "open")).thenReturn(List.of());
+        // The confirmed join leaves the leader's participant row behind (TeamGameService).
+        when(participantRepository.findByGameIdAndUserId(GAME_ID, LEADER_B_ID))
+                .thenReturn(Optional.empty(), Optional.of(GameParticipant.builder().side(GameParticipant.Side.B).build()));
+        when(participantMapper.toResponse(any())).thenReturn(new GameParticipantResponse());
 
         service.joinGame(GAME_ID, LEADER_B_ID, "b", TEAM_B_ID, UUID.randomUUID());
 

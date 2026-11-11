@@ -24,9 +24,18 @@ spring:
         default_schema: public
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.yaml
+  servlet:
+    multipart:
+      # Stadium photos: 5 MB a file. Larger is 413 "File too large" (GlobalExceptionHandler).
+      max-file-size: 5MB
+      max-request-size: 6MB
 
 server:
   port: 8080
+  tomcat:
+    # Read (and drop) an over-limit upload up to this size, so the client gets the 413
+    # rather than a reset connection.
+    max-swallow-size: 32MB
 
 app:
   jwt:
@@ -35,6 +44,17 @@ app:
   bot:
     token: ${BOT_TOKEN}
     username: ${BOT_USERNAME:}
+    # webhook (production: Telegram calls POST /webhooks/telegram) or polling (dev profile
+    # only: a getUpdates loop, no public URL needed). The application refuses to start
+    # with polling outside the dev profile.
+    mode: ${TELEGRAM_BOT_MODE:webhook}
+    # Checked against X-Telegram-Bot-Api-Secret-Token on every webhook call; empty refuses all.
+    webhook-secret: ${TELEGRAM_WEBHOOK_SECRET:}
+    miniapp-url: ${MINIAPP_URL:}
+    support-username: ${SUPPORT_USERNAME:}
+  uploads:
+    # Uploaded files (stadium photos) on the local filesystem, served under /api/uploads/**.
+    dir: ${UPLOADS_DIR:./uploads}
   booking:
     max-weeks-ahead: 4
     hold-expiry-minutes: 10
@@ -49,10 +69,25 @@ app:
     provider: ${PAYMENTS_PROVIDER:fake}
     # The longest a team game's hold may last (30 days); a game needing longer cannot be created.
     hold-max-minutes: 43200
+    # FakePaymentProvider only (dev and tests): see "To simulate X in dev" in CLAUDE.md.
+    fake:
+      otp-length: 6
+      otp-ttl-seconds: 180
+      resend-cooldown-seconds: 60
+      starting-balance: 1000000000   # tiyin = 10 000 000 so'm per fake card
+      min-amount: 50000              # tiyin = 500 so'm per split, as ATMOS
+      refund-window-months: 3
+      delay-min-ms: 300
+      delay-max-ms: 800
   # Browser origins allowed to call the API from another origin (comma-separated, exact,
   # never *). Empty, the default, sends no CORS headers: only same-origin pages can call it.
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+  # The dev-only sign-in (dev profile): every /api/auth/dev/* call must send this value in
+  # X-Dev-Login-Key. At least 16 characters; with the dev profile active and no such key the
+  # application refuses to start.
+  dev:
+    login-key: ${DEV_LOGIN_KEY:}
   # The real ATMOS client, active only under the "atmos" profile (it then refuses to start
   # unless every value except the two OFD codes is set). Never commit real values.
   security:

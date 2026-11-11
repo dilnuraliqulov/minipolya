@@ -35,4 +35,10 @@ public class JoinGameRequest {
      * games and for invited members, who pay nothing for the pitch.
      */
     private UUID cardId;
+
+    /**
+     * team_vs_team only (T6): {@code MINIMUM} (the default when absent) or {@code FULL} — how
+     * much the joining team pays now. A minimum the stadium cannot offer is taken as full.
+     */
+    private PaymentOption paymentOption;
 }

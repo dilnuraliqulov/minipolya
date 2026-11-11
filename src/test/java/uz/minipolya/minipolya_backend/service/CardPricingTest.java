@@ -1,6 +1,7 @@
 package uz.minipolya.minipolya_backend.service;
 
 import org.junit.jupiter.api.Test;
+import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.PlatformSettings;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -19,24 +20,27 @@ class CardPricingTest {
     }
 
     @Test
-    void aQuoteCarriesBothPricesAndTheirDifference() {
-        CardPricing.Quote q = pricing.quote(20_000_000L);
+    void theDepositIsTheMinimumAsPlayersPayItButNeverMoreThanTheBooking() {
+        CardPricing coarse = new CardPricing(() -> PlatformSettings.builder().paymentRoundingStep(500_000L).build());
 
-        assertThat(q.price()).isEqualTo(20_310_000L);
-        assertThat(q.netPrice()).isEqualTo(20_000_000L);
-        assertThat(q.cardFee()).isEqualTo(310_000L);
+        assertThat(coarse.deposit(5_000_000L, 15_500_000L)).isEqualTo(5_500_000L);   // 50 000 → 55 000
+        assertThat(coarse.deposit(20_000_000L, 15_500_000L)).isEqualTo(15_500_000L); // capped at D
     }
 
     @Test
-    void aBookingSplitTakesTheCommissionOffTheOwnersNet() {
-        CardPricing withCommission = new CardPricing(
-                () -> PlatformSettings.builder().bookingCommissionPercent(10).build());
+    void aBookingChargeIsAllTheOwners() {
+        var split = pricing.toOwner(15_230_000L);
 
-        var split = withCommission.bookingSplit(20_000_000L);
+        assertThat(split.ownerAmount()).isEqualTo(15_230_000L);
+        assertThat(split.platformAmount()).isZero();
+    }
 
-        assertThat(split.ownerNet()).isEqualTo(18_000_000L);
-        assertThat(split.platformNet()).isEqualTo(2_000_000L);
-        assertThat(split.playerAmount()).isEqualTo(20_310_000L);
-        assertThat(split.ownerGross() + split.platformGross()).isEqualTo(split.playerAmount());
+    @Test
+    void aWalkInIsPricedAtTheOwnersOwnPrice() {
+        Booking walkIn = Booking.builder().price(15_000_000L).isWalkin(true).build();
+        Booking app = Booking.builder().price(15_000_000L).cardPrice(15_230_000L).build();
+
+        assertThat(pricing.playerPrice(walkIn)).isEqualTo(15_000_000L);
+        assertThat(pricing.playerPrice(app)).isEqualTo(15_230_000L);
     }
 }

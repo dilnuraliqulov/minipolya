@@ -24,9 +24,12 @@ import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
+import uz.minipolya.minipolya_backend.exception.ProviderUnavailableException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
+import uz.minipolya.minipolya_backend.provider.AtmosCodes;
 import uz.minipolya.minipolya_backend.provider.ChargeOutcome;
+import uz.minipolya.minipolya_backend.provider.DeclineReason;
 import uz.minipolya.minipolya_backend.provider.ChargeRequest;
 import uz.minipolya.minipolya_backend.provider.HoldCancelledException;
 import uz.minipolya.minipolya_backend.provider.HoldExpiredException;
@@ -36,6 +39,7 @@ import uz.minipolya.minipolya_backend.provider.LegacyCheckoutProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProviderException;
 import uz.minipolya.minipolya_backend.provider.PendingCharge;
+import uz.minipolya.minipolya_backend.provider.ProviderStatus;
 import uz.minipolya.minipolya_backend.provider.ProviderTimeoutException;
 import uz.minipolya.minipolya_backend.provider.Split;
 import uz.minipolya.minipolya_backend.provider.TransactionClosedException;
@@ -77,6 +81,13 @@ public class PaymentService {
      */
     private static final Set<Payment.Status> REFUNDABLE_STATUSES =
             Set.of(Payment.Status.PAID, Payment.Status.CAPTURED, Payment.Status.COMPLETED);
+
+    /**
+     * A hold whose money is still reserved on the card: confirmed and not yet captured
+     * ({@code held}), or being captured ({@code capture_pending}). Only holds take these.
+     */
+    private static final Set<Payment.Status> STILL_HELD =
+            Set.of(Payment.Status.HELD, Payment.Status.CAPTURE_PENDING);
 
     /** Statuses that mean the money is the platform's and is not coming back. */
     private static final Set<Payment.Status> KEPT_STATUSES =
@@ -137,8 +148,8 @@ public class PaymentService {
      * answer leaves the row {@code processing} for the reconcile job — never assumed
      * failed, never charged again.
      *
-     * @param charge what the card is charged and how it splits — the stadium minimum or
-     *               the full price, grossed up by the card fee
+     * @param charge what the card is charged — the deposit, the player price D or the
+     *               remainder — all of it the owner's: the platform takes nothing from a booking
      */
     @Transactional
     public Payment chargeForBooking(Booking booking, SavedCard card, CardFeeSplit charge) {
@@ -148,15 +159,14 @@ public class PaymentService {
     /** As {@link #chargeForBooking(Booking, SavedCard, CardFeeSplit)}, for a chosen payment type. */
     @Transactional
     public Payment chargeForBooking(Booking booking, SavedCard card, CardFeeSplit charge, Payment.PaymentType type) {
-        int commissionPercent = platformSettingsService.current().getBookingCommissionPercent();
         Payment row = Payment.builder()
                 .booking(booking)
                 .user(booking.getUser())
                 .amount(charge.playerAmount())
-                .ownerAmount(charge.ownerGross())
-                .platformAmount(charge.platformGross())
-                .cardFeeExpected(charge.cardFee())
-                .commissionPercent(commissionPercent)
+                .ownerAmount(charge.ownerAmount())
+                .platformAmount(charge.platformAmount())
+                .cardFeeExpected(charge.atmosFee())
+                .commissionPercent(0)
                 .method(Payment.Method.CARD)
                 .paymentType(type)
                 .provider(Payment.Provider.ATMOS)
@@ -218,7 +228,7 @@ public class PaymentService {
     @Transactional
     public Payment chargeForTeamGame(GameTeam gameTeam, SavedCard card, Payment.PaymentType type) {
         CardFeeSplit split = type == Payment.PaymentType.REMAINDER
-                ? cardPricing.split(gameTeam.getRemainderAmount(), 0L)
+                ? cardPricing.teamRemainderSplit(gameTeam)
                 : joinSplit(gameTeam);
 
         Payment payment = chargeCard(teamGameRow(gameTeam, split, type), card, split, ownerOf(gameTeam));
@@ -229,14 +239,272 @@ public class PaymentService {
         return payment;
     }
 
-    /** What the player pays by card for this net amount (no split): a quote. */
+    // ---- Committed steps: each call is its own step, committed before the next one ----
+    //
+    // A team joining a game moves money in several provider calls. Each step below records
+    // where it got to before (or right after) talking to the provider, and the join commits
+    // after every step, so a crash half-way leaves rows the reconcile job can finish —
+    // never money that moved with no record of it.
+
+    /** How one committed step ended. */
+    public enum StepOutcome {
+        /** The provider did it. */
+        DONE,
+        /** The provider refused outright; nothing exists there. */
+        REFUSED,
+        /** The provider could not be reached; nothing exists there. */
+        UNAVAILABLE,
+        /** No answer: it may or may not have happened. The row says where it stands. */
+        UNKNOWN
+    }
+
+    /** Step 0 of a join: the joining team's {@code processing} row, written before any provider call. */
+    @Transactional
+    public Payment openJoinCharge(GameTeam joining) {
+        CardFeeSplit split = joinSplit(joining);
+        Payment row = paymentRepository.save(teamGameRow(joining, split, Payment.PaymentType.TEAM_GAME));
+        log.info("Join charge opened: gameTeamId={} paymentId={} amount={}",
+                joining.getId(), row.getId(), split.playerAmount());
+        return row;
+    }
+
+    /**
+     * Step 1: the provider creates the charge, and its transaction ids are saved — so that
+     * once the next step has taken the money, the reconcile job can always ask about it.
+     */
+    @Transactional
+    public StepOutcome createCommittedCharge(UUID paymentId, SavedCard card) {
+        Payment row = paymentRepository.findForUpdate(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        try {
+            PendingCharge pending = paymentProvider.charge(ChargeRequest.withToken(
+                    splitsOf(row), card.getProviderToken(), row.getId().toString()));
+            row.setProviderTxnId(String.join(",", pending.transactionIds()));
+            paymentRepository.save(row);
+            return StepOutcome.DONE;
+        } catch (ProviderTimeoutException ex) {
+            // Never acknowledged: the reconcile job marks a row without transaction ids failed.
+            log.warn("Charge creation for payment {} unanswered", paymentId);
+            return StepOutcome.UNKNOWN;
+        } catch (PaymentProviderException ex) {
+            row.setStatus(Payment.Status.FAILED);
+            row.setFailureReason(failureReason(ex));
+            if (!AtmosCodes.isUnavailable(ex.getCode())) {
+                row.setDeclineReason(DeclineReason.of(ex.getCode()));
+            }
+            paymentRepository.save(row);
+            log.info("Charge for payment {} refused while being created: code={}", paymentId, ex.getCode());
+            return AtmosCodes.isUnavailable(ex.getCode()) ? StepOutcome.UNAVAILABLE : StepOutcome.REFUSED;
+        }
+    }
+
+    /** Step 2: the money is taken. A lost or unclear answer leaves the row {@code processing}. */
+    @Transactional
+    public Payment confirmCommittedCharge(UUID paymentId) {
+        Payment row = paymentRepository.findForUpdate(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (!stillAsSeen(row)) {
+            return row; // moved by another transaction meanwhile
+        }
+        if (row.getStatus() != Payment.Status.PROCESSING || row.getProviderTxnId() == null) {
+            return row;
+        }
+        try {
+            applyChargeOutcome(row, paymentProvider.confirmCharge(
+                    Arrays.asList(row.getProviderTxnId().split(",")), null));
+        } catch (ProviderTimeoutException ex) {
+            log.warn("Payment {} left processing: confirmation unanswered", paymentId);
+        } catch (PaymentProviderException ex) {
+            log.warn("Payment {} left processing: confirmation refused, code={}", paymentId, ex.getCode());
+        }
+        return paymentRepository.save(row);
+    }
+
+    /**
+     * Before a capture is asked for: the held row becomes {@code capture_pending}, committed,
+     * so a capture whose answer is lost is finished by the reconcile job.
+     *
+     * @return false when the row is not {@code held} (someone else is settling it)
+     */
+    @Transactional
+    public boolean markCapturePending(UUID paymentId) {
+        Payment row = paymentRepository.findForUpdate(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (!stillAsSeen(row)) {
+            return false; // moved by another transaction meanwhile
+        }
+        if (row.getStatus() != Payment.Status.HELD) {
+            return false;
+        }
+        row.setStatus(Payment.Status.CAPTURE_PENDING);
+        paymentRepository.save(row);
+        return true;
+    }
+
+    /**
+     * Asks for a {@code capture_pending} hold to be captured and records a definite answer:
+     * {@code captured}; {@code released} when the hold lapsed or was cancelled; back to
+     * {@code held} (with the reason) when the provider refused with any other code — the
+     * money is still reserved and whoever undoes the join releases it. No answer, or an
+     * unreachable provider, leaves it {@code capture_pending} for the reconcile job.
+     */
+    @Transactional
+    public Payment captureCommitted(UUID paymentId) {
+        Payment row = paymentRepository.findForUpdate(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (!stillAsSeen(row)) {
+            return row; // moved by another transaction meanwhile
+        }
+        if (row.getStatus() != Payment.Status.CAPTURE_PENDING) {
+            return row;
+        }
+        try {
+            HoldOutcome outcome = paymentProvider.captureHold(row.getProviderTxnId());
+            row.setStatus(Payment.Status.CAPTURED);
+            if (outcome.commission() != null) {
+                row.setProviderCommission(outcome.commission());
+            }
+            log.info("Hold captured: paymentId={} amount={}", row.getId(), row.getAmount());
+        } catch (HoldCancelledException | HoldExpiredException ex) {
+            row.setStatus(Payment.Status.RELEASED);
+            row.setFailureReason(failureReason(ex));
+            log.error("Hold of payment {} could not be captured: {}", row.getId(), ex.getCode());
+        } catch (ProviderTimeoutException ex) {
+            log.warn("Capture of payment {} unanswered; left capture_pending", row.getId());
+        } catch (PaymentProviderException ex) {
+            if (AtmosCodes.isUnavailable(ex.getCode())) {
+                log.warn("Capture of payment {} not answered (provider unavailable, {}); left capture_pending",
+                        row.getId(), ex.getCode());
+            } else {
+                row.setStatus(Payment.Status.HELD);
+                row.setFailureReason(failureReason(ex));
+                log.error("Capture of payment {} refused: {}", row.getId(), ex.getCode());
+            }
+        }
+        return paymentRepository.save(row);
+    }
+
+    /**
+     * The intent to give a payment back, committed before the provider is asked: a settled
+     * or held row becomes {@code return_pending}, which {@link #completeReturn} (or, after a
+     * crash, the reconcile job) carries out.
+     *
+     * @return true when there is something to give back
+     */
+    @Transactional
+    public boolean markReturnPending(UUID paymentId) {
+        Payment row = paymentRepository.findForUpdate(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (!stillAsSeen(row)) {
+            return false; // moved by another transaction meanwhile
+        }
+        if (row.getAmount() == null || row.getAmount() <= 0 || row.getMethod() == Payment.Method.CASH) {
+            return false;
+        }
+        boolean returnable = row.getStatus() == Payment.Status.HELD
+                || row.getStatus() == Payment.Status.CAPTURE_PENDING
+                || REFUNDABLE_STATUSES.contains(row.getStatus());
+        if (!returnable) {
+            return row.getStatus() == Payment.Status.RETURN_PENDING;
+        }
+        row.setStatus(Payment.Status.RETURN_PENDING);
+        paymentRepository.save(row);
+        return true;
+    }
+
+    /**
+     * Carries out a {@code return_pending}: a hold still held is released, money that was
+     * taken is reversed in full (a reverse the provider declines becomes a failed refund for
+     * an admin). Shared with the reconcile job, so a return is finished the same way whoever
+     * gets there.
+     */
+    @Transactional
+    public void completeReturn(UUID paymentId, String reason) {
+        Payment row = paymentRepository.findForUpdate(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (!stillAsSeen(row)) {
+            return; // moved by another transaction meanwhile
+        }
+        if (row.getStatus() != Payment.Status.RETURN_PENDING) {
+            return; // done meanwhile
+        }
+        if (row.getHoldExpiresAt() != null) {
+            HoldOutcome where = paymentProvider.getHold(row.getProviderTxnId());
+            if (where.status() == ProviderStatus.CAPTURED) {
+                reverseOrRecordFailure(row, Payment.Status.CAPTURED, reason);
+                return;
+            }
+            if (where.status() == ProviderStatus.HELD) {
+                try {
+                    paymentProvider.releaseHold(row.getProviderTxnId());
+                } catch (HoldCancelledException | HoldExpiredException ex) {
+                    // already let go
+                }
+            }
+            row.setStatus(Payment.Status.RELEASED);
+            paymentRepository.save(row);
+            auditService.record(AuditEntry.system(AuditAction.PAYMENT_RELEASED)
+                    .entity(AuditEntityType.PAYMENT, row.getId(), AuditLabels.payment(row))
+                    .change("status", Payment.Status.RETURN_PENDING, row.getStatus())
+                    .created("releasedAmount", row.getAmount())
+                    .reason(reason));
+            log.info("Return of hold {}: released", row.getId());
+            return;
+        }
+        reverseOrRecordFailure(row, Payment.Status.PAID, reason);
+        log.info("Return of charge {}: {}", row.getId(), row.getStatus().getValue());
+    }
+
+    private void reverseOrRecordFailure(Payment row, Payment.Status statusBefore, String reason) {
+        try {
+            reverseInFull(row, reason);
+        } catch (PaymentProviderException ex) {
+            recordFailedRefund(row, statusBefore, reason, ex);
+            return;
+        }
+        recordRefund(row, statusBefore, reason);
+    }
+
+    /**
+     * Locks the payment's row (until this transaction ends) and checks that its committed
+     * status is still the one this copy shows. False means another transaction moved it
+     * meanwhile — refunded it, started giving it back, captured it — and nothing here may act
+     * on the stale copy: above all, never ask the provider to reverse it a second time.
+     * Every give-back, capture and return goes through this before calling the provider.
+     */
+    boolean stillAsSeen(Payment payment) {
+        if (payment.getId() == null) {
+            return true; // not saved yet: nobody else can have touched it
+        }
+        String committed = paymentRepository.lockStatus(payment.getId());
+        if (committed == null || Payment.Status.fromValue(committed) == payment.getStatus()) {
+            return true;
+        }
+        log.info("Payment {} is {} by now, not {}: left to whoever moved it",
+                payment.getId(), committed, payment.getStatus().getValue());
+        return false;
+    }
+
+    /** The provider splits of a row: the owner's to the owner's recipient, the platform's to the platform. */
+    private List<Split> splitsOf(Payment row) {
+        List<Split> splits = new ArrayList<>(2);
+        if (row.getOwnerAmount() != null && row.getOwnerAmount() > 0) {
+            splits.add(Split.owner(recipientIdOf(ownerOf(row.getGameTeam())), row.getOwnerAmount()));
+        }
+        if (row.getPlatformAmount() != null && row.getPlatformAmount() > 0) {
+            splits.add(Split.platform(row.getPlatformAmount()));
+        }
+        return splits;
+    }
+
+    /** What players pay for this owner price: a quote. */
     public long cardPrice(long net) {
         return cardPricing.playerAmount(net);
     }
 
     /**
-     * What a team's card is charged (or held) on joining: {@code playerAmount(advance + fee)},
-     * split so the owner nets the advance and the platform nets its fee after the card fee.
+     * What a team's card is charged (or held) on joining: {@code playerAmount(advance + fee)};
+     * the platform's split nets exactly the fee after ATMOS, the rest is the owner's.
      */
     public CardFeeSplit joinSplit(GameTeam gameTeam) {
         return cardPricing.joinSplit(gameTeam);
@@ -289,13 +557,14 @@ public class PaymentService {
     }
 
     /**
-     * The owner took one team's remainder in cash. Cash never passes through
-     * the provider, so it carries no commission and is never refunded through
-     * the platform — the owner settles that directly.
+     * The owner took one team's remainder in cash: the same amount the team would pay
+     * in the app, {@code playerAmount(remainder)}, all of it the owner's. Cash never
+     * passes through the provider and is never refunded through the platform — the
+     * owner settles that directly.
      */
     @Transactional
     public Payment recordCashTeamRemainder(GameTeam gameTeam, User owner) {
-        long amount = gameTeam.getRemainderAmount();
+        long amount = cardPricing.teamRemainderPrice(gameTeam);
         Payment payment = paymentRepository.save(Payment.builder()
                 .game(gameTeam.getGame())
                 .gameTeam(gameTeam)
@@ -314,10 +583,41 @@ public class PaymentService {
         return payment;
     }
 
+    /**
+     * T10: undoing a team's "cash received" mark voids the cash row it recorded — the team's
+     * latest arrived cash payment becomes {@code cancelled} (never a refund: the money never
+     * passed through the platform). Returns it, or null when there was none.
+     */
+    @Transactional
+    public Payment voidLatestTeamCashPayment(GameTeam gameTeam) {
+        Payment cash = paymentRepository.findByGameTeamId(gameTeam.getId()).stream()
+                .filter(p -> p.getMethod() == Payment.Method.CASH)
+                .filter(p -> p.getStatus() == Payment.Status.PAID)
+                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .max(java.util.Comparator.comparing(Payment::getCreatedAt,
+                                java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder()))
+                        .thenComparing(Payment::getId, java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())))
+                .orElse(null);
+        if (cash == null) {
+            return null;
+        }
+        cash.setStatus(Payment.Status.CANCELLED);
+        paymentRepository.save(cash);
+        log.info("Team cash payment voided: id={} gameTeamId={}", cash.getId(), gameTeam.getId());
+        return cash;
+    }
+
     /** Every payment one team made on one game. */
     @Transactional(readOnly = true)
     public List<Payment> teamPayments(UUID gameTeamId) {
         return paymentRepository.findByGameTeamId(gameTeamId);
+    }
+
+    /** One payment as it stands now. */
+    @Transactional(readOnly = true)
+    public Payment teamPaymentById(UUID paymentId) {
+        return paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
     }
 
     /**
@@ -350,6 +650,9 @@ public class PaymentService {
      */
     @Transactional
     public Payment giveBackInFull(Payment original, String reason) {
+        if (!stillAsSeen(original)) {
+            return null; // another transaction is giving it back, or already has
+        }
         if (original.getStatus() == Payment.Status.CAPTURE_PENDING) {
             // Whether the capture went through is unknown; giving back is now the intent, and
             // the reconcile job reverses it if it was taken or releases it if it was not.
@@ -463,6 +766,24 @@ public class PaymentService {
                 .sum();
     }
 
+    /**
+     * What is on hold on this team's card at {@code now}: its holds that are {@code held} or
+     * {@code capture_pending} and have not lapsed ({@code hold_expires_at} still ahead).
+     * Not a hold still being created ({@code processing}), nor one being given back
+     * ({@code return_pending}: by its status alone that could as well be captured money
+     * being reversed), captured or released. 0 when nothing is held.
+     */
+    @Transactional(readOnly = true)
+    public long heldTeamTotal(UUID gameTeamId, java.time.OffsetDateTime now) {
+        return paymentRepository.findByGameTeamId(gameTeamId).stream()
+                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .filter(p -> p.getMethod() != Payment.Method.CASH)
+                .filter(p -> STILL_HELD.contains(p.getStatus()))
+                .filter(p -> p.getHoldExpiresAt() == null || p.getHoldExpiresAt().isAfter(now))
+                .mapToLong(Payment::getAmount)
+                .sum();
+    }
+
     /** One team-game payment row, before the provider is called. Amounts and split never change. */
     private Payment teamGameRow(GameTeam gameTeam, CardFeeSplit split, Payment.PaymentType type) {
         return Payment.builder()
@@ -470,9 +791,9 @@ public class PaymentService {
                 .gameTeam(gameTeam)
                 .user(gameTeam.getLeader())
                 .amount(split.playerAmount())
-                .ownerAmount(split.ownerGross())
-                .platformAmount(split.platformGross())
-                .cardFeeExpected(split.cardFee())
+                .ownerAmount(split.ownerAmount())
+                .platformAmount(split.platformAmount())
+                .cardFeeExpected(split.atmosFee())
                 .commissionPercent(0)
                 .method(Payment.Method.CARD)
                 .paymentType(type)
@@ -491,15 +812,45 @@ public class PaymentService {
      */
     private Payment chargeCard(Payment row, SavedCard card, CardFeeSplit split, User owner) {
         Payment saved = paymentRepository.save(row);
+        PendingCharge pending = null;
         try {
-            PendingCharge pending = paymentProvider.charge(ChargeRequest.withToken(
+            pending = paymentProvider.charge(ChargeRequest.withToken(
                     splitsFor(owner, split), card.getProviderToken(), saved.getId().toString()));
             saved.setProviderTxnId(String.join(",", pending.transactionIds()));
             applyChargeOutcome(saved, paymentProvider.confirmCharge(pending.transactionIds(), null));
         } catch (ProviderTimeoutException ex) {
             log.warn("Payment {} left processing: {}", saved.getId(), ex.getMessage());
+        } catch (PaymentProviderException ex) {
+            refusedByProvider(saved, pending != null, ex);
         }
         return paymentRepository.save(saved);
+    }
+
+    static final String PROVIDER_UNAVAILABLE =
+            "To'lov tizimi vaqtincha ishlamayapti. Birozdan so'ng qayta urinib ko'ring";
+
+    /**
+     * The provider refused a charge or hold outright (not a decline, which is an outcome).
+     * Refused while being created: nothing exists at the provider, so an unreachable provider
+     * is a 502 the player may retry (this transaction, the row included, rolls back) and any
+     * other refusal (a removed card, an amount under the minimum) a failed row. Refused once
+     * created: whether the money moved is unknown, so the row stays {@code processing} for
+     * the reconcile job, like a lost answer.
+     */
+    private void refusedByProvider(Payment payment, boolean created, PaymentProviderException ex) {
+        if (created) {
+            log.warn("Payment {} left processing: provider refused the confirmation, code={}",
+                    payment.getId(), ex.getCode());
+            return;
+        }
+        if (AtmosCodes.isUnavailable(ex.getCode())) {
+            log.warn("Payment {} not attempted: provider unavailable, code={}", payment.getId(), ex.getCode());
+            throw new ProviderUnavailableException(PROVIDER_UNAVAILABLE);
+        }
+        payment.setStatus(Payment.Status.FAILED);
+        payment.setFailureReason(failureReason(ex));
+        payment.setDeclineReason(DeclineReason.of(ex.getCode()));
+        log.info("Payment {} refused by the provider: code={}", payment.getId(), ex.getCode());
     }
 
     /** As {@link #chargeCard}, for a hold of {@code minutes}. */
@@ -507,14 +858,17 @@ public class PaymentService {
         // Set before the call, so even a hold whose creation went unanswered is known to be a hold.
         row.setHoldExpiresAt(java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(minutes));
         Payment saved = paymentRepository.save(row);
+        HoldOutcome created = null;
         try {
-            HoldOutcome created = paymentProvider.hold(new HoldRequest(
+            created = paymentProvider.hold(new HoldRequest(
                     splitsFor(owner, split), card.getProviderToken(), saved.getId().toString(), minutes));
             saved.setProviderTxnId(created.holdId());
             saved.setHoldExpiresAt(created.holdTill());
             applyHoldOutcome(saved, paymentProvider.confirmHold(created.holdId(), null));
         } catch (ProviderTimeoutException ex) {
             log.warn("Payment {} left processing: {}", saved.getId(), ex.getMessage());
+        } catch (PaymentProviderException ex) {
+            refusedByProvider(saved, created != null, ex);
         }
         return paymentRepository.save(saved);
     }
@@ -530,6 +884,7 @@ public class PaymentService {
             }
             case FAILED -> {
                 payment.setStatus(Payment.Status.FAILED);
+                payment.setDeclineReason(DeclineReason.of(outcome.errorCode()));
                 log.info("Payment {} declined by the provider: code={}", payment.getId(), outcome.errorCode());
             }
             case REVERSED -> payment.setStatus(Payment.Status.REFUNDED);
@@ -553,6 +908,7 @@ public class PaymentService {
             case RELEASED -> payment.setStatus(Payment.Status.RELEASED);
             case FAILED -> {
                 payment.setStatus(Payment.Status.FAILED);
+                payment.setDeclineReason(DeclineReason.of(outcome.errorCode()));
                 log.info("Hold {} declined by the provider: code={}", payment.getId(), outcome.errorCode());
             }
             default -> {
@@ -587,11 +943,11 @@ public class PaymentService {
      */
     private List<Split> splitsFor(User owner, CardFeeSplit split) {
         List<Split> splits = new ArrayList<>(2);
-        if (split.ownerGross() > 0) {
-            splits.add(Split.owner(recipientIdOf(owner), split.ownerGross()));
+        if (split.ownerAmount() > 0) {
+            splits.add(Split.owner(recipientIdOf(owner), split.ownerAmount()));
         }
-        if (split.platformGross() > 0) {
-            splits.add(Split.platform(split.platformGross()));
+        if (split.platformAmount() > 0) {
+            splits.add(Split.platform(split.platformAmount()));
         }
         return splits;
     }
@@ -629,13 +985,15 @@ public class PaymentService {
             return refundBecauseSlotIsGone(booking, payment);
         }
 
-        // The booking counts what the payment is worth to the owner, not what the card fee added.
+        // Under the player price the booking counts what the player paid, against D; an
+        // older booking counts what the payment is worth to the owner, against their price.
+        long credit = booking.creditOf(payment);
         long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
-        long paid = paidBefore + payment.netAmount();
+        long paid = paidBefore + credit;
         String previousStatus = booking.getStatus();
         Booking.PaymentStatus paymentStatusBefore = booking.getPaymentStatus();
         booking.setPaidAmount(paid);
-        booking.setPaymentStatus(paid >= booking.getPrice()
+        booking.setPaymentStatus(paid >= booking.totalDue()
                 ? Booking.PaymentStatus.PAID
                 : Booking.PaymentStatus.PARTIALLY_PAID);
         // A remainder can arrive after the game was played: paying it must not
@@ -644,13 +1002,19 @@ public class PaymentService {
             booking.setStatus("confirmed");
         }
         booking.setExpiresAt(null);
+        // E7: the player paying the rest in the app settles a "not paid" mark.
+        if (payment.getMethod() != Payment.Method.CASH
+                && booking.getRemainderMark() == Booking.RemainderMark.NOT_PAID
+                && booking.getPaymentStatus() == Booking.PaymentStatus.PAID) {
+            booking.clearRemainderMark();
+        }
 
         try {
             bookingRepository.saveAndFlush(booking);
         } catch (DataIntegrityViolationException ex) {
             // Someone took the slot between the check above and this write.
             booking.setStatus(previousStatus);
-            booking.setPaidAmount(paid - payment.netAmount());
+            booking.setPaidAmount(paid - credit);
             booking.setPaymentStatus(booking.getPaidAmount() > 0
                     ? Booking.PaymentStatus.PARTIALLY_PAID
                     : Booking.PaymentStatus.UNPAID);
@@ -694,7 +1058,9 @@ public class PaymentService {
             log.info("Cash payment {} is not refunded through the platform", original.getId());
             return null;
         }
-        if (!REFUNDABLE_STATUSES.contains(original.getStatus())) {
+        // Locked and read as committed: a payment refunded (or being refunded) by another
+        // transaction since this one loaded it is never sent to the provider a second time.
+        if (!stillAsSeen(original) || !REFUNDABLE_STATUSES.contains(original.getStatus())) {
             return null; // never settled, or already given back
         }
         if (original.getAmount() == null || original.getAmount() <= 0) {
@@ -857,9 +1223,9 @@ public class PaymentService {
                 .game(game)
                 .user(participant.getUser())
                 .amount(share.playerAmount())
-                .ownerAmount(share.ownerGross())
-                .platformAmount(share.platformGross())
-                .cardFeeExpected(share.cardFee())
+                .ownerAmount(share.ownerAmount())
+                .platformAmount(share.platformAmount())
+                .cardFeeExpected(share.atmosFee())
                 .commissionPercent(0)
                 .method(Payment.Method.CARD)
                 .paymentType(Payment.PaymentType.GAME_SHARE)
@@ -896,9 +1262,9 @@ public class PaymentService {
                 .game(game)
                 .user(participant.getUser())
                 .amount(share.playerAmount())
-                .ownerAmount(share.ownerGross())
-                .platformAmount(share.platformGross())
-                .cardFeeExpected(share.cardFee())
+                .ownerAmount(share.ownerAmount())
+                .platformAmount(share.platformAmount())
+                .cardFeeExpected(share.atmosFee())
                 .commissionPercent(0)
                 .method(Payment.Method.CARD)
                 .paymentType(Payment.PaymentType.GAME_SHARE)
@@ -965,6 +1331,28 @@ public class PaymentService {
                 .created("provider", payment.getProvider()));
     }
 
+    /** Every payment and refund row of one booking. */
+    @Transactional(readOnly = true)
+    public List<Payment> paymentsOf(UUID bookingId) {
+        return paymentRepository.findByBookingId(bookingId);
+    }
+
+    /** The payments of the teams currently in the team game whose booking this is (none for any other booking). */
+    @Transactional(readOnly = true)
+    public List<Payment> activeTeamPaymentsOfGameBooking(UUID bookingId) {
+        return paymentRepository.findTeamPaymentsOfGameBooking(bookingId, GameTeam.Status.ACTIVE);
+    }
+
+    /** Every payment of several bookings, grouped by booking — one query for a list. */
+    @Transactional(readOnly = true)
+    public java.util.Map<UUID, List<Payment>> paymentsOfBookings(java.util.Collection<UUID> bookingIds) {
+        if (bookingIds.isEmpty()) {
+            return java.util.Map.of();
+        }
+        return paymentRepository.findByBookingIdIn(bookingIds).stream()
+                .collect(java.util.stream.Collectors.groupingBy(p -> p.getBooking().getId()));
+    }
+
     @Transactional(readOnly = true)
     public List<Payment> refundableCardPayments(UUID bookingId) {
         return paymentRepository.findByBookingId(bookingId).stream()
@@ -1014,8 +1402,58 @@ public class PaymentService {
         return refunded;
     }
 
+    /**
+     * Whether a card payment of this booking is still being settled with the provider — its
+     * outcome unknown, so money may yet land. The owner must not record the same money in
+     * cash meanwhile.
+     */
+    @Transactional(readOnly = true)
+    public boolean hasPaymentInFlight(UUID bookingId) {
+        return paymentRepository.existsByBookingIdAndStatusIn(bookingId,
+                java.util.List.of(Payment.Status.PROCESSING, Payment.Status.CAPTURE_PENDING));
+    }
+
+    /**
+     * E5: undoing a "cash received" mark voids the cash row it recorded — the latest arrived
+     * cash payment of the booking becomes {@code cancelled} (never a refund: the money never
+     * passed through the platform) — and the booking's paid amount and payment status are
+     * recomputed without it. The booking's own status is left alone. Returns the voided row,
+     * or null when there was none.
+     */
     @Transactional
-    public Payment recordCashPayment(UUID bookingId, UUID ownerUserId) {
+    public Payment voidLatestCashPayment(Booking booking) {
+        Payment cash = paymentRepository.findByBookingId(booking.getId()).stream()
+                .filter(p -> p.getMethod() == Payment.Method.CASH)
+                .filter(p -> p.getStatus() == Payment.Status.PAID)
+                .filter(p -> p.getAmount() != null && p.getAmount() > 0)
+                .max(java.util.Comparator.comparing(Payment::getCreatedAt,
+                                java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder()))
+                        .thenComparing(Payment::getId, java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())))
+                .orElse(null);
+        if (cash == null) {
+            return null;
+        }
+        cash.setStatus(Payment.Status.CANCELLED);
+        paymentRepository.save(cash);
+
+        long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
+        long paid = Math.max(0L, paidBefore - booking.creditOf(cash));
+        booking.setPaidAmount(paid);
+        booking.setPaymentStatus(paid > 0 && paid >= booking.totalDue()
+                ? Booking.PaymentStatus.PAID
+                : paid > 0 ? Booking.PaymentStatus.PARTIALLY_PAID : Booking.PaymentStatus.UNPAID);
+        bookingRepository.save(booking);
+        log.info("Cash payment voided: id={} bookingId={} paid={}", cash.getId(), booking.getId(), paid);
+        return cash;
+    }
+
+    /**
+     * Records the cash the owner took. With {@code markRemainder} (the owner's "Naqd olindi",
+     * E5) the booking also gets the {@code cash_received} mark, recorded in the same
+     * {@code CASH_RECEIVED} entry. A walk-in added as paid is marked too, so the owner can undo it.
+     */
+    @Transactional
+    public Payment recordCashPayment(UUID bookingId, UUID ownerUserId, boolean markRemainder) {
         Booking booking = bookingRepository.findById(bookingId)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
         if (!booking.getStadium().getOwner().getId().equals(ownerUserId)) {
@@ -1031,7 +1469,8 @@ public class PaymentService {
 
         // Cash never passes through the provider, so it carries no commission:
         // the owner has the money in hand already.
-        long amount = booking.getRemainingAmount() > 0 ? booking.getRemainingAmount() : booking.getPrice();
+        // The same remainder the player would pay in the app: D minus what was paid.
+        long amount = booking.getRemainingAmount() > 0 ? booking.getRemainingAmount() : booking.totalDue();
         Payment payment = Payment.builder()
                 .booking(booking)
                 .user(owner)
@@ -1048,11 +1487,18 @@ public class PaymentService {
 
         long paidBefore = booking.getPaidAmount() == null ? 0L : booking.getPaidAmount();
         Booking.PaymentStatus statusBefore = booking.getPaymentStatus();
+        Booking.RemainderMark markBefore = booking.getRemainderMark();
         applySuccessfulBookingPayment(booking, saved);
+        if (markRemainder) {
+            booking.markRemainder(Booking.RemainderMark.CASH_RECEIVED, ownerUserId,
+                    java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC));
+            bookingRepository.save(booking);
+        }
         auditService.record(AuditEntry.owner(ownerUserId, AuditAction.CASH_RECEIVED)
                 .entity(AuditEntityType.BOOKING, booking.getId(), AuditLabels.booking(booking))
                 .change("paidAmount", paidBefore, booking.getPaidAmount())
-                .change("paymentStatus", statusBefore, booking.getPaymentStatus()));
+                .change("paymentStatus", statusBefore, booking.getPaymentStatus())
+                .change("remainderMark", markBefore, booking.getRemainderMark()));
         log.info("Cash payment recorded: id={} bookingId={} ownerId={}", saved.getId(), bookingId, ownerUserId);
         return saved;
     }

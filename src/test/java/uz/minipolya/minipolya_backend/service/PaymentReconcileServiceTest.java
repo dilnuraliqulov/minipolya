@@ -89,13 +89,14 @@ class PaymentReconcileServiceTest {
                 .createdAt(OffsetDateTime.ofInstant(NOW, ZoneOffset.UTC).minusMinutes(minutesOld))
                 .build();
         when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
+        org.mockito.Mockito.lenient().when(paymentRepository.findForUpdate(payment.getId())).thenReturn(Optional.of(payment));
         return payment;
     }
 
     private Booking pendingBooking() {
         OffsetDateTime start = OffsetDateTime.ofInstant(NOW, ZoneOffset.UTC).plusDays(2);
         return Booking.builder().id(UUID.randomUUID()).stadium(stadium).user(player).status("pending")
-                .price(20_000_000L).paidAmount(0L).paymentStatus(Booking.PaymentStatus.UNPAID)
+                .price(20_000_000L).cardPrice(20_310_000L).paidAmount(0L).paymentStatus(Booking.PaymentStatus.UNPAID)
                 .startsAt(start).endsAt(start.plusHours(1)).build();
     }
 
@@ -137,7 +138,7 @@ class PaymentReconcileServiceTest {
         assertThat(payment.getProviderCommission()).isEqualTo(304_646L);
         assertThat(payment.getOfdUrl()).isEqualTo("https://ofd/1");
         assertThat(booking.getStatus()).isEqualTo("confirmed");
-        assertThat(booking.getPaidAmount()).isEqualTo(20_000_000L);   // the net, not the gross
+        assertThat(booking.getPaidAmount()).isEqualTo(20_310_000L);   // what the player paid, against D
     }
 
     @Test
@@ -318,7 +319,7 @@ class PaymentReconcileServiceTest {
         when(reconciler.due()).thenReturn(List.of(bad, good));
         doThrow(new IllegalStateException("provider down")).when(reconciler).reconcile(bad);
 
-        new PaymentReconcileJob(reconciler).reconcileStuckPayments();
+        new PaymentReconcileJob(reconciler, mock(GameService.class), java.time.Clock.systemUTC()).reconcileStuckPayments();
 
         verify(reconciler).reconcile(good);
     }

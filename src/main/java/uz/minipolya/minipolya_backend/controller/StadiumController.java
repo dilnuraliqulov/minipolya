@@ -34,14 +34,18 @@ public class StadiumController {
 
     // ---- Public (players) ----
 
+    /** Public; a signed-in caller also gets {@code isFavorited} on each stadium. */
     @GetMapping("/api/stadiums")
     public ApiResponse<PageResponse<StadiumResponse>> list(
+            @AuthenticationPrincipal UUID userId,
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String format,
             @RequestParam(required = false) Long maxPrice,
+            @RequestParam(required = false) String district,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(stadiumService.searchPublic(q, format, maxPrice, page, size));
+        return ApiResponse.ok(stadiumService.searchPublic(q, format, maxPrice, district, date, userId, page, size));
     }
 
     @GetMapping("/api/stadiums/{id}")
@@ -63,6 +67,13 @@ public class StadiumController {
     public ApiResponse<StadiumDetailResponse> create(@AuthenticationPrincipal UUID ownerId,
                                                      @Valid @RequestBody CreateStadiumRequest request) {
         return ApiResponse.ok(stadiumService.create(ownerId, request), "Stadium submitted for review");
+    }
+
+    /** R35: the owner's own stadium, any status, exactly as {@code PUT} answers it. */
+    @GetMapping("/api/owner/stadiums/{id}")
+    public ApiResponse<StadiumDetailResponse> ownerDetail(@AuthenticationPrincipal UUID ownerId,
+                                                          @PathVariable UUID id) {
+        return ApiResponse.ok(stadiumService.getOwnerDetail(ownerId, id));
     }
 
     @PutMapping("/api/owner/stadiums/{id}")

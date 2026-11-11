@@ -109,12 +109,17 @@ class AdminActivityControllerTest {
                 .andExpect(jsonPath("$.data.stadiumName").value("Arena R15"))
                 .andExpect(jsonPath("$.data.userName").value("Dilshod Karimov"))
                 .andExpect(jsonPath("$.data.userPhone").value(player.getPhone()))
-                .andExpect(jsonPath("$.data.netPrice").value(20_000_000))
-                // playerAmount(20 000 000) at 150 bps, rounded up to 10 000 tiyin
-                .andExpect(jsonPath("$.data.price").value(20_310_000))
-                .andExpect(jsonPath("$.data.cardFee").value(310_000))
+                .andExpect(jsonPath("$.data.ownerPrice").value(20_000_000))
+                // playerAmount(20 000 000) at 150 bps, rounded up to 500 000 tiyin
+                .andExpect(jsonPath("$.data.price").value(20_500_000))
+                .andExpect(jsonPath("$.data.cardFee").doesNotExist())
+                .andExpect(jsonPath("$.data.netPrice").doesNotExist())
                 // the refunded payment no longer counts
                 .andExpect(jsonPath("$.data.paidInApp").value(10_160_000))
+                // the owner's split less 1.5% (10 000 000), plus the cash
+                .andExpect(jsonPath("$.data.ownerReceives").value(10_000_000 + 5_000_000))
+                // 1.5% of each split: 10 160 000 − 10 000 000 − 7 599
+                .andExpect(jsonPath("$.data.atmosFee").value(152_401))
                 .andExpect(jsonPath("$.data.cashReceived").value(5_000_000))
                 .andExpect(jsonPath("$.data.cashReceivedAt").exists())
                 .andExpect(jsonPath("$.data.booking").doesNotExist());
@@ -257,7 +262,10 @@ class AdminActivityControllerTest {
                 .andExpect(jsonPath("$.data.type").value("team_vs_team"))
                 .andExpect(jsonPath("$.data.teams", hasSize(2)))
                 .andExpect(jsonPath("$.data.teams[?(@.side=='a')].teamName").value("Lions"))
-                .andExpect(jsonPath("$.data.teams[?(@.side=='a')].advanceAmount").value(5_000_000))
+                .andExpect(jsonPath("$.data.teams[?(@.side=='a')].ownerAdvance").value(5_000_000))
+                .andExpect(jsonPath("$.data.teams[?(@.side=='a')].platformFee").value(2_500_000))
+                // playerAmount(5 000 000 + 2 500 000)
+                .andExpect(jsonPath("$.data.teams[?(@.side=='a')].price").value(8_000_000))
                 .andExpect(jsonPath("$.data.teams[?(@.side=='b')].players[0].userName").value("Leader B"))
                 .andExpect(jsonPath("$.data.participants").doesNotExist())
                 .andExpect(jsonPath("$.data.cancelledAt").doesNotExist());

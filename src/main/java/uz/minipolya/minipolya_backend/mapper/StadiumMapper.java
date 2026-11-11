@@ -12,6 +12,7 @@ import uz.minipolya.minipolya_backend.dto.request.UpdateStadiumRequest;
 import uz.minipolya.minipolya_backend.dto.response.AmenitiesResponse;
 import uz.minipolya.minipolya_backend.dto.response.PhotoResponse;
 import uz.minipolya.minipolya_backend.dto.response.StadiumDetailResponse;
+import uz.minipolya.minipolya_backend.dto.response.StadiumLocationResponse;
 import uz.minipolya.minipolya_backend.dto.response.StadiumResponse;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.StadiumAmenities;
@@ -30,6 +31,9 @@ public interface StadiumMapper {
     @Mapping(target = "status", ignore = true)
     @Mapping(target = "statusReason", ignore = true)
     @Mapping(target = "active", ignore = true)
+    @Mapping(target = "landmark", ignore = true)
+    // Booking terms are the admin's (PUT /api/admin/stadiums/{id}/booking-terms).
+    @Mapping(target = "minBookingAmount", ignore = true)
     @Mapping(target = "cancellationHours", ignore = true)
     @Mapping(target = "photos", ignore = true)
     @Mapping(target = "amenities", ignore = true)
@@ -37,19 +41,27 @@ public interface StadiumMapper {
     @Mapping(target = "updatedAt", ignore = true)
     Stadium toEntity(CreateStadiumRequest request);
 
-    // averageRating / reviewCount are computed by the service after mapping.
+    // averageRating / reviewCount / coverPhotoUrl / favorited are filled by the service for a whole page.
     @Mapping(target = "averageRating", ignore = true)
     @Mapping(target = "reviewCount", ignore = true)
+    @Mapping(target = "coverPhotoUrl", ignore = true)
+    @Mapping(target = "favorited", ignore = true)
     @Mapping(source = "owner.name", target = "ownerName")
     StadiumResponse toResponse(Stadium stadium);
 
-    // favorited is set by the service for an authenticated viewer.
+    // favorited is set by the service for an authenticated viewer; the rating by the public detail.
     @Mapping(target = "favorited", ignore = true)
+    @Mapping(target = "averageRating", ignore = true)
+    @Mapping(target = "reviewCount", ignore = true)
     @Mapping(source = "owner.id", target = "ownerId")
     @Mapping(source = "owner.name", target = "ownerName")
     @Mapping(source = "owner.phone", target = "ownerPhone")
     @Mapping(source = "cancellationHours", target = "cancellationPolicy.cancellationHours")
     StadiumDetailResponse toDetailResponse(Stadium stadium);
+
+    /** Where a game is played (team game screens, the challenge board); the cover photo is the service's. */
+    @Mapping(target = "coverPhotoUrl", ignore = true)
+    StadiumLocationResponse toLocationResponse(Stadium stadium);
 
     AmenitiesResponse toAmenitiesResponse(StadiumAmenities amenities);
 
@@ -61,6 +73,9 @@ public interface StadiumMapper {
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     @Mapping(source = "isActive", target = "active")
+    @Mapping(target = "minBookingAmount", ignore = true)
+    @Mapping(target = "cancellationHours", ignore = true)
+    @Mapping(target = "landmark", ignore = true) // blank clears it: the service applies it
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "owner", ignore = true)
     @Mapping(target = "status", ignore = true)

@@ -27,6 +27,8 @@ public enum AuditAction {
     REFUND_MARKED_MANUAL,
     OWNER_LEGAL_DETAILS_CHANGED,
     STADIUM_NOTE_ADDED,
+    /** The deposit and cancellation window, agreed with the owner by phone (D3). */
+    STADIUM_BOOKING_TERMS_CHANGED,
     SETTINGS_CHANGED,
 
     // ---- Owner ----
@@ -41,12 +43,18 @@ public enum AuditAction {
     PROMOTION_DEACTIVATED,
     MANUAL_BOOKING_CREATED,
     CASH_RECEIVED,
+    /** E5: the owner marked a booking's remainder as not paid by the player. */
+    REMAINDER_NOT_PAID,
+    /** E6: a remainder mark undone — by the owner the same Tashkent day, or by an admin. */
+    REMAINDER_MARK_UNDONE,
     BOOKING_CANCELLED_BY_OWNER,
 
     // ---- Player ----
     BOOKING_CREATED,
     BOOKING_CANCELLED_BY_USER,
     BOOKING_REMAINDER_PAID,
+    /** R28: the player paid a pending booking again (another card after a decline). */
+    BOOKING_PAYMENT_RETRIED,
     BOOKING_SERIES_CREATED,
     BOOKING_SERIES_CANCELLED,
     GAME_CREATED,
@@ -55,6 +63,9 @@ public enum AuditAction {
     GAME_CANCELLED,
     GAME_OPPONENT_LEFT,
     GAME_REMAINDER_PAID,
+    PROFILE_UPDATED,
+    /** The user shared their own Telegram contact with the bot; the number itself is never logged. */
+    PHONE_SHARED_VIA_BOT,
 
     // ---- System ----
     BOOKING_CONFIRMED,
