@@ -1848,7 +1848,54 @@ ATMOS_OFD_CODE_SERVICE=
   don't use `export KEY=...`.
 - **Real environment variables always win** over `.env`, so production sets them
   in the environment and needs no `.env` file at all (`optional:` means a missing
-  file is fine).
+  file is fine). `.env` is git-ignored and never deployed.
+
+### A managed database's own variables
+
+A hosted PostgreSQL does not describe itself the way Spring wants. It publishes
+either one URL — `DATABASE_URL=postgresql://user:password@host:5432/railway`,
+which is **not** a JDBC URL — or the libpq variables `PGHOST`, `PGPORT`,
+`PGDATABASE`, `PGUSER`, `PGPASSWORD`.
+
+`config/env/HostDatabaseEnvironmentPostProcessor` reads both and fills in
+whichever of `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` is not set directly, so
+there are three equally good ways to configure the database and the rest of the
+app still sees only those three names:
+
+1. set them yourself (on Railway with variable references, e.g.
+   `DB_URL=jdbc:postgresql://${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}`);
+2. set `DATABASE_URL` alone;
+3. set the five `PG*` variables.
+
+What it derives is added as the **lowest**-precedence property source, so a value
+set directly always wins. It never guesses a host or a database name: with none of
+those variables present it adds nothing and the check below speaks up.
+
+### Required settings on a deployed server
+
+`config/env/RequiredEnvironmentPostProcessor` refuses to start — before any bean
+exists — when a deployment profile (`staging`, `prod`, `atmos`) is active and a
+required setting is missing, naming **all** of them at once with what each one is:
+
+```
+The staging profile needs 2 settings that are not set:
+
+  JWT_SECRET
+      at least 32 bytes of random text (openssl rand -base64 48), different from …
+  UPLOADS_DIR
+      an absolute path on a mounted volume, e.g. /data/uploads. The default …
+```
+
+Required everywhere: `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` (after the derivation
+above), `JWT_SECRET`, `BOT_TOKEN`, `CARD_TOKEN_KEY`. `staging` additionally
+requires `UPLOADS_DIR`, because the default `./uploads` is inside the container and
+every redeploy would take the photos with it while their rows stayed in the
+database. Nothing is checked under `dev` or in the tests, which take their values
+from `.env` or from test properties.
+
+Without this the first missing value surfaced as `Could not resolve placeholder
+'DB_URL'` inside a long stack trace, one variable per restart, and a missing
+`CARD_TOKEN_KEY` was found only when the first card was saved.
 
 ## Profiles
 
