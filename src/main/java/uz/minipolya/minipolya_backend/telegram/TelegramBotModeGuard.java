@@ -12,13 +12,18 @@ import java.util.regex.Pattern;
  * Refuses to start with a bot configuration that would be unsafe or silently broken:
  * <ul>
  *   <li>TELEGRAM_BOT_MODE other than {@code webhook} or {@code polling};</li>
- *   <li>{@code polling} outside the {@code dev} profile (so never in prod);</li>
- *   <li>under {@code prod} with the bot active: a TELEGRAM_WEBHOOK_SECRET shorter than 32
- *       characters or with characters Telegram does not allow, or a MINIAPP_URL that is not
- *       https (Telegram refuses web_app buttons without it).</li>
+ *   <li>{@code polling} outside the {@code dev} and {@code staging} profiles (so never in
+ *       prod). Staging is a test deployment with no public webhook URL, so it polls — with a
+ *       TEST bot: polling deletes that bot's webhook, and two processes must never poll the
+ *       same bot;</li>
+ *   <li>on a deployed server ({@code prod} or {@code staging}) with the bot active: a
+ *       MINIAPP_URL that is not https (Telegram refuses web_app buttons without it), and, in
+ *       webhook mode, a TELEGRAM_WEBHOOK_SECRET shorter than 32 characters or with characters
+ *       Telegram does not allow. Under {@code prod} the mode can only be webhook, so this is
+ *       the same pair of refusals prod has always had.</li>
  * </ul>
- * Outside {@code prod} an unusable MINIAPP_URL is only a warning: the bot still talks, without
- * the open button.
+ * On a developer's machine an unusable MINIAPP_URL is only a warning: the bot still talks,
+ * without the open button.
  */
 @Slf4j
 @Configuration
@@ -26,6 +31,12 @@ public class TelegramBotModeGuard {
 
     /** Telegram's secret_token alphabet; 32 characters is our own floor. */
     static final Pattern SECRET = Pattern.compile("^[A-Za-z0-9_-]{32,256}$");
+
+    /** Profiles where a getUpdates loop is a working setup rather than a production mistake. */
+    private static final Profiles POLLING_ALLOWED = Profiles.of("dev | staging");
+
+    /** Profiles where the bot talks to real Telegram users, so its URL and secret must hold up. */
+    private static final Profiles DEPLOYED = Profiles.of("prod | staging");
 
     public TelegramBotModeGuard(AppProperties appProperties, Environment environment) {
         check(appProperties.getBot(), environment);
@@ -36,13 +47,15 @@ public class TelegramBotModeGuard {
         if (!mode.equals("webhook") && !mode.equals("polling")) {
             throw new IllegalStateException("TELEGRAM_BOT_MODE must be webhook or polling");
         }
-        if (bot.isPolling() && !environment.acceptsProfiles(Profiles.of("dev"))) {
+        if (bot.isPolling() && !environment.acceptsProfiles(POLLING_ALLOWED)) {
             throw new IllegalStateException(
-                    "TELEGRAM_BOT_MODE=polling is for local development only: it needs the dev profile");
+                    "TELEGRAM_BOT_MODE=polling is for development and the staging test deployment: "
+                            + "it needs the dev or staging profile");
         }
-        if (bot.isActive() && environment.acceptsProfiles(Profiles.of("prod"))) {
+        if (bot.isActive() && environment.acceptsProfiles(DEPLOYED)) {
+            // Only webhook mode is told a secret, and prod can only be in webhook mode.
             String secret = bot.getWebhookSecret();
-            if (secret == null || !SECRET.matcher(secret).matches()) {
+            if (!bot.isPolling() && (secret == null || !SECRET.matcher(secret).matches())) {
                 throw new IllegalStateException(
                         "TELEGRAM_WEBHOOK_SECRET must be 32-256 characters of A-Z, a-z, 0-9, _ and -");
             }

@@ -7,8 +7,9 @@ import org.springframework.core.env.Profiles;
 
 /**
  * The {@code dev} profile turns on the dev-only sign-in (DevAuthController), which issues
- * a token for any user without Telegram. It must never run next to real money or real
- * users: with {@code prod} or {@code atmos} also active the application refuses to start.
+ * a token for any user without Telegram. It must never run on a deployed server, where
+ * anyone who finds the path and the key is any user they like: with {@code prod},
+ * {@code staging} or {@code atmos} also active the application refuses to start.
  * It also refuses to start without a {@code DEV_LOGIN_KEY} of at least
  * {@value #MIN_LOGIN_KEY_LENGTH} characters, which every dev sign-in request must send
  * ({@link DevLoginKeyInterceptor}).
@@ -25,9 +26,9 @@ public class DevProfileGuard {
     }
 
     static void refuseWithRealProfiles(Environment environment) {
-        if (environment.acceptsProfiles(Profiles.of("prod | atmos"))) {
+        if (environment.acceptsProfiles(Profiles.of("prod | staging | atmos"))) {
             throw new IllegalStateException(
-                    "The dev profile (dev-only sign-in) must not be active together with prod or atmos");
+                    "The dev profile (dev-only sign-in) must not be active together with prod, staging or atmos");
         }
     }
 

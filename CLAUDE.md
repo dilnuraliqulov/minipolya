@@ -1850,10 +1850,68 @@ ATMOS_OFD_CODE_SERVICE=
   in the environment and needs no `.env` file at all (`optional:` means a missing
   file is fine).
 
+## Profiles
+
+`SPRING_PROFILES_ACTIVE` picks them; several can be active at once
+(`prod,atmos`). Nothing is a profile-specific *file* except
+`application-staging.yaml` — every other difference is a guard that reads the
+active profiles at startup.
+
+| Profile | What it is | Dev sign-in | Payments | Bot mode | Secrets |
+|---|---|---|---|---|---|
+| *(none)* | tests, a plain local run | no | `fake` | webhook | dev fallbacks allowed |
+| `dev` | a developer's machine | **yes** (`DEV_LOGIN_KEY`, 16+) | `fake` | webhook or **polling** | dev fallbacks allowed |
+| `staging` | a deployed **test** server | no | **`fake` allowed** | webhook or **polling** | **required** |
+| `prod` | production | no | `fake` **refused** | webhook only | **required** |
+| `atmos` | the real card provider, next to `prod` | no | `fake` never created | — | **required**, plus every `ATMOS_*` |
+
+### The `staging` profile
+
+A deployed test server: as strict as `prod` about real people and real secrets,
+and loose about exactly the two things a test deployment cannot otherwise have —
+a payment provider contract and a public webhook URL.
+
+As strict as prod:
+
+- **No dev-only sign-in.** `DevProfileGuard` refuses to start when `dev` is
+  active together with `prod`, `staging` or `atmos`, so `/api/auth/dev/*` can
+  never exist on a staging server.
+- **No devtools.** Nothing profile-specific — the packaged jar leaves
+  `spring-boot-devtools` out, and staging runs the jar.
+- **Real secrets, or it does not start.** `CardTokenCipher` demands a real
+  `CARD_TOKEN_KEY` here exactly as under `prod` (no fixed development key), and
+  the required-settings check below refuses to start with any of them missing.
+- **The real client IP.** `application-staging.yaml` sets
+  `server.forward-headers-strategy: native`, so Tomcat's `RemoteIpValve` takes
+  the client IP from `X-Forwarded-For` behind the platform's edge proxy. Without
+  it every admin would share one 20-attempt sign-in budget and every audit entry
+  would name the proxy. The valve trusts the header only from its internal-proxy
+  ranges, which is where a platform proxy reaches the container from.
+- **An https `MINIAPP_URL`.** `TelegramBotModeGuard` refuses a non-https Mini App
+  URL here as under `prod` (Telegram refuses `web_app` buttons without it).
+
+Loosened, on purpose:
+
+- **`app.payments.provider=fake` is allowed.** `FakePaymentProvider` refuses only
+  `prod` and `atmos`, so staging can walk a booking through payment end to end.
+  No real money can move: no real provider is wired in, and the provider logs
+  "no real money will move" on every start.
+- **`TELEGRAM_BOT_MODE=polling` is allowed.** `TelegramBotModeGuard` accepts
+  polling under `dev` **or** `staging`, so the bot works with no public webhook
+  URL and no webhook secret (in webhook mode staging still requires the secret).
+  Use a **test bot**: polling deletes that bot's webhook, and two processes must
+  never poll the same bot — stop the local one while staging runs.
+
+**`prod` keeps every refusal it has today.** None of the above relaxes it: under
+`prod` the mode can only be `webhook`, so requiring the webhook secret in webhook
+mode is the same rule as before.
+
 ## Deployment checklist
 
 Go through this before the first production deploy and again whenever the
 infrastructure changes. The app is built to run as **one instance behind Nginx**.
+For the Railway test deployment (`staging`, no Docker, no Nginx) follow
+`DEPLOYMENT.md` instead.
 
 ### Reverse proxy and client IPs
 

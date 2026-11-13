@@ -32,16 +32,37 @@ class TelegramBotModeGuardTest {
     }
 
     @Test
-    void pollingRunsUnderDev() {
+    void pollingRunsUnderDevAndStaging() {
         assertThatCode(() -> TelegramBotModeGuard.check(bot("polling"), env("dev"))).doesNotThrowAnyException();
+        assertThatCode(() -> TelegramBotModeGuard.check(bot("polling"), env("staging"))).doesNotThrowAnyException();
     }
 
     @Test
-    void pollingRefusesToStartOutsideDev() {
+    void pollingRefusesToStartUnderProd() {
         assertThatThrownBy(() -> TelegramBotModeGuard.check(bot("polling"), env("prod")))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("dev profile");
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("dev or staging profile");
         assertThatThrownBy(() -> TelegramBotModeGuard.check(bot("polling"), env()))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void stagingPollingNeedsAnHttpsMiniAppButNoWebhookSecret() {
+        AppProperties.Bot polling = bot("polling");
+        polling.setWebhookSecret(""); // nothing registers a webhook in polling mode
+        assertThatCode(() -> TelegramBotModeGuard.check(polling, env("staging"))).doesNotThrowAnyException();
+
+        AppProperties.Bot http = bot("polling");
+        http.setMiniappUrl("http://app.example");
+        assertThatThrownBy(() -> TelegramBotModeGuard.check(http, env("staging")))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("MINIAPP_URL");
+    }
+
+    @Test
+    void stagingInWebhookModeStillNeedsTheSecret() {
+        AppProperties.Bot noSecret = bot("webhook");
+        noSecret.setWebhookSecret("too-short");
+        assertThatThrownBy(() -> TelegramBotModeGuard.check(noSecret, env("staging")))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("TELEGRAM_WEBHOOK_SECRET");
     }
 
     @Test

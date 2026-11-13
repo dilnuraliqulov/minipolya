@@ -25,11 +25,12 @@ class DevProfileGuardTest {
     }
 
     @Test
-    void devWithProdOrAtmosRefusesToStart() {
-        for (String[] active : new String[][] {{"dev", "prod"}, {"dev", "atmos"}, {"prod", "atmos", "dev"}}) {
+    void devOnADeployedServerRefusesToStart() {
+        for (String[] active : new String[][] {{"dev", "prod"}, {"dev", "atmos"}, {"prod", "atmos", "dev"},
+                {"dev", "staging"}, {"staging", "dev"}}) {
             assertThatThrownBy(() -> new DevProfileGuard(profiles(active), withKey(GOOD_KEY)))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("must not be active together with prod or atmos");
+                    .hasMessageContaining("must not be active together with prod, staging or atmos");
         }
     }
 
