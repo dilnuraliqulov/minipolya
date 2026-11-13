@@ -22,9 +22,11 @@ import java.util.Set;
  * ciphertext || tag)>}; a value without the prefix is a token written before encryption
  * and is read as it is (it is encrypted the next time the row is written).
  *
- * <p>Under the {@code prod} or {@code atmos} profile a missing or malformed key stops the
- * app at startup. Elsewhere a fixed development key is used, with a warning — fine for
- * the fake provider's tokens, never for real ones.
+ * <p>On a deployed server — the {@code prod}, {@code staging} or {@code atmos} profile — a
+ * missing or malformed key stops the app at startup: a server holds its own real key, and on
+ * staging a key that changed between deploys would leave every card saved against the fake
+ * provider unreadable. On a developer's machine a fixed development key is used, with a
+ * warning — fine for the fake provider's tokens, never for real ones.
  */
 @Slf4j
 @Component
@@ -33,7 +35,8 @@ public class CardTokenCipher {
     private static final String PREFIX = "v1:";
     private static final int IV_BYTES = 12;
     private static final int TAG_BITS = 128;
-    private static final Set<String> REAL_MONEY_PROFILES = Set.of("prod", "atmos");
+    /** Profiles that mean a deployed server, which must supply its own key — real money or not. */
+    private static final Set<String> KEY_REQUIRED_PROFILES = Set.of("prod", "staging", "atmos");
 
     private final SecretKeySpec key;
     private final SecureRandom random = new SecureRandom();
@@ -75,9 +78,10 @@ public class CardTokenCipher {
     }
 
     private static byte[] resolveKey(String configured, Environment environment) {
-        boolean realMoney = Arrays.stream(environment.getActiveProfiles()).anyMatch(REAL_MONEY_PROFILES::contains);
+        boolean keyRequired = Arrays.stream(environment.getActiveProfiles())
+                .anyMatch(KEY_REQUIRED_PROFILES::contains);
         if (configured == null || configured.isBlank()) {
-            if (realMoney) {
+            if (keyRequired) {
                 throw new IllegalStateException("CARD_TOKEN_KEY is not set: saved card tokens cannot be encrypted");
             }
             log.warn("CARD_TOKEN_KEY is not set: using the fixed development key for card tokens");

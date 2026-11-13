@@ -41,6 +41,15 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-security</artifactId>
 		</dependency>
+		<!--
+			Health only (management.endpoints.web.exposure.include: health): the one endpoint
+			a host's health check needs. Nothing else is exposed, so there is no /actuator/env,
+			/actuator/beans or /actuator/heapdump to protect.
+		-->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
+		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-validation</artifactId>
@@ -130,6 +139,14 @@
 	</dependencies>
 
 	<build>
+		<!--
+			A version-independent jar name, so one start command works for every release:
+			target/minipolya-backend.jar (spring-boot-maven-plugin repackages it in place and
+			leaves the plain jar as target/minipolya-backend.jar.original). Railway's start
+			command is `java -jar target/minipolya-backend.jar`; with the default name the
+			version would be part of the path and every bump would break it.
+		-->
+		<finalName>minipolya-backend</finalName>
 		<plugins>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
