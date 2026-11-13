@@ -31,7 +31,15 @@ spring:
       max-request-size: 6MB
 
 server:
-  port: 8080
+  # PORT is how Railway (and most other hosts) tell the app which port to listen on.
+  # Nothing sets it locally, so 8080 stays the development port.
+  port: ${PORT:8080}
+  # Which interface to bind. Railway's private network resolves *.railway.internal to
+  # IPv6 only, so a service other services must reach over it sets SERVER_ADDRESS=::
+  # — a `::` socket on Linux accepts IPv4 connections as well, so that one value
+  # covers both families. The default 0.0.0.0 is the usual every-IPv4-interface bind
+  # and is what local development and a public-domain service want.
+  address: ${SERVER_ADDRESS:0.0.0.0}
   tomcat:
     # Read (and drop) an over-limit upload up to this size, so the client gets the 413
     # rather than a reset connection.
