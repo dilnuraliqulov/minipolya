@@ -1,0 +1,14 @@
+# Environment post-processors, run before any bean exists.
+#
+# HostDatabaseEnvironmentPostProcessor derives DB_URL / DB_USERNAME / DB_PASSWORD from a
+# managed PostgreSQL's own variables (DATABASE_URL, or PGHOST/PGPORT/PGDATABASE/PGUSER/
+# PGPASSWORD) for whichever of them is not set directly.
+#
+# RequiredEnvironmentPostProcessor then refuses to start on a deployed server (the staging,
+# prod or atmos profile) with any required setting missing, naming all of them at once.
+#
+# Both run last (Ordered.LOWEST_PRECEDENCE and one before it), so application.yaml, any
+# .env and the active profiles have already been read.
+org.springframework.boot.EnvironmentPostProcessor=\
+uz.minipolya.minipolya_backend.config.env.HostDatabaseEnvironmentPostProcessor,\
+uz.minipolya.minipolya_backend.config.env.RequiredEnvironmentPostProcessor
