@@ -1,0 +1,25 @@
+# The "staging" profile: a deployed test server.
+#
+# It is as strict as prod everywhere that protects real people and real secrets —
+# no dev-only sign-in (DevProfileGuard refuses dev next to staging), no devtools
+# (the packaged jar leaves them out), real secrets required at startup rather than
+# guessed (CardTokenCipher wants a real CARD_TOKEN_KEY here, as under prod) — and
+# loosens exactly two things, so a test deployment needs neither a payment provider
+# contract nor a public webhook URL:
+#
+#   * app.payments.provider=fake is allowed (FakePaymentProvider refuses only prod
+#     and atmos), so no real money can move: there is no real provider wired in;
+#   * TELEGRAM_BOT_MODE=polling is allowed (TelegramBotModeGuard), so the bot works
+#     without a public webhook URL and without a webhook secret. Use a TEST bot:
+#     polling deletes that bot's webhook, and only one process may poll a bot.
+#
+# Anything prod refuses today, prod still refuses. See CLAUDE.md, "Profiles".
+server:
+  # Behind the host's edge proxy, request.getRemoteAddr() is the proxy unless Tomcat
+  # is told to read the forwarded headers. The admin sign-in limits are per IP and the
+  # audit log records the IP, so without this every admin shares one 20-attempt budget
+  # and every audit entry names the proxy. Tomcat's RemoteIpValve trusts
+  # X-Forwarded-For / X-Forwarded-Proto only from its internal-proxies ranges
+  # (loopback, 10/8, 172.16/12, 192.168/16, ::1 …), which is where a platform proxy
+  # reaches the container from; nothing else can forge the header.
+  forward-headers-strategy: native

@@ -46,6 +46,16 @@ class FakeProviderGuardTest {
                         .getFailure().rootCause().hasMessageContaining("must never run under the prod or atmos profile"));
     }
 
+    /** The staging test deployment runs on it on purpose: no provider contract, no real money. */
+    @Test
+    void itStartsUnderStaging() {
+        withProfiles("staging").withPropertyValues("app.payments.provider=fake")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(FakePaymentProvider.class);
+                });
+    }
+
     @Test
     void underAtmosItIsNeverCreated() {
         withProfiles("dev", "atmos").withPropertyValues("app.payments.provider=fake")

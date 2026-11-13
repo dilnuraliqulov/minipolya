@@ -127,6 +127,11 @@ public class FakePaymentProvider implements PaymentProvider {
     /**
      * A fake payment provider in production would silently approve every charge and take
      * no money, so refuse to come up at all. (It is never created under {@code atmos}.)
+     *
+     * <p>{@code staging} is deliberately not on that list: the staging test deployment runs
+     * this provider on purpose, because a test server must be able to walk through a booking
+     * end to end without a provider contract. No real money can move there — there is no real
+     * provider wired in at all — and the warning below names it in the log on every start.
      */
     @PostConstruct
     public void refuseInProduction() {
