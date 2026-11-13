@@ -45,6 +45,10 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/stadiums/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/reviews/stadium/**").permitAll()
                         .requestMatchers("/webhooks/**").permitAll()
+                        // The host's health check, called without credentials. It answers
+                        // {"status":"UP"} only (management.endpoint.health.show-details: never),
+                        // and health is the one actuator endpoint exposed at all.
+                        .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                         // Dev-only tools (the fake payments view): no JWT, but they exist only under
                         // the dev profile and answer 404 without X-Dev-Login-Key (DevLoginKeyInterceptor).
                         .requestMatchers(HttpMethod.GET, "/api/dev/**").permitAll()
