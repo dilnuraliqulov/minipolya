@@ -45,6 +45,21 @@ server:
     # rather than a reset connection.
     max-swallow-size: 32MB
 
+management:
+  endpoints:
+    web:
+      exposure:
+        # Health and nothing else. Every other actuator endpoint (env, beans, heapdump,
+        # loggers, …) stays unexposed and answers 404, so none of them has to be secured.
+        include: health
+  endpoint:
+    health:
+      # GET /actuator/health answers {"status":"UP"} and nothing more: no component list,
+      # no database or disk detail. It is public (SecurityConfig), so it must say nothing
+      # about the inside of the app.
+      show-details: never
+      show-components: never
+
 app:
   jwt:
     secret: ${JWT_SECRET}
