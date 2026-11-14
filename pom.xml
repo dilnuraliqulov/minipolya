@@ -139,6 +139,14 @@
 	</dependencies>
 
 	<build>
+		<!--
+			A version-independent jar name, so one copy step and one start command work for
+			every release: target/minipolya-backend.jar (spring-boot-maven-plugin repackages
+			it in place and leaves the plain jar as target/minipolya-backend.jar.original).
+			The runtime stage of the Dockerfile copies exactly that path; with the default
+			name the version would be part of it and every bump would break the build.
+		-->
+		<finalName>minipolya-backend</finalName>
 		<plugins>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
