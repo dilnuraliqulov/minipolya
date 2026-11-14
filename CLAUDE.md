@@ -1848,12 +1848,153 @@ ATMOS_OFD_CODE_SERVICE=
   don't use `export KEY=...`.
 - **Real environment variables always win** over `.env`, so production sets them
   in the environment and needs no `.env` file at all (`optional:` means a missing
-  file is fine).
+  file is fine). `.env` is git-ignored and never deployed.
+
+### A managed database's own variables
+
+A hosted PostgreSQL does not describe itself the way Spring wants. It publishes
+either one URL — `DATABASE_URL=postgresql://user:password@host:5432/database`,
+which is **not** a JDBC URL — or the libpq variables `PGHOST`, `PGPORT`,
+`PGDATABASE`, `PGUSER`, `PGPASSWORD`.
+
+`config/env/HostDatabaseEnvironmentPostProcessor` reads both and fills in
+whichever of `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` is not set directly, so
+there are three equally good ways to configure the database and the rest of the
+app still sees only those three names:
+
+1. set them yourself — what the Docker Compose deployment does, pointing `DB_URL`
+   at the `postgres` service on the container network
+   (`jdbc:postgresql://postgres:5432/minipolya`);
+2. set `DATABASE_URL` alone — what a managed database hands out;
+3. set the five `PG*` variables.
+
+What it derives is added as the **lowest**-precedence property source, so a value
+set directly always wins. It never guesses a host or a database name: with none of
+those variables present it adds nothing and the check below speaks up.
+
+### Required settings on a deployed server
+
+`config/env/RequiredEnvironmentPostProcessor` refuses to start — before any bean
+exists — when a deployment profile (`staging`, `prod`, `atmos`) is active and a
+required setting is missing, naming **all** of them at once with what each one is:
+
+```
+The staging profile needs 2 settings that are not set:
+
+  JWT_SECRET
+      at least 32 bytes of random text (openssl rand -base64 48), different from …
+  UPLOADS_DIR
+      an absolute path on a mounted volume, e.g. /data/uploads. The default …
+```
+
+Required everywhere: `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` (after the derivation
+above), `JWT_SECRET`, `BOT_TOKEN`, `CARD_TOKEN_KEY`. `staging` additionally
+requires `UPLOADS_DIR`, because the default `./uploads` is inside the container and
+every redeploy would take the photos with it while their rows stayed in the
+database. Nothing is checked under `dev` or in the tests, which take their values
+from `.env` or from test properties.
+
+Without this the first missing value surfaced as `Could not resolve placeholder
+'DB_URL'` inside a long stack trace, one variable per restart, and a missing
+`CARD_TOKEN_KEY` was found only when the first card was saved.
+
+## Profiles
+
+`SPRING_PROFILES_ACTIVE` picks them; several can be active at once
+(`prod,atmos`). Nothing is a profile-specific *file* except
+`application-staging.yaml` — every other difference is a guard that reads the
+active profiles at startup.
+
+| Profile | What it is | Dev sign-in | Payments | Bot mode | Secrets |
+|---|---|---|---|---|---|
+| *(none)* | tests, a plain local run | no | `fake` | webhook | dev fallbacks allowed |
+| `dev` | a developer's machine | **yes** (`DEV_LOGIN_KEY`, 16+) | `fake` | webhook or **polling** | dev fallbacks allowed |
+| `staging` | a deployed **test** server | no | **`fake` allowed** | webhook or **polling** | **required** |
+| `prod` | production | no | `fake` **refused** | webhook only | **required** |
+| `atmos` | the real card provider, next to `prod` | no | `fake` never created | — | **required**, plus every `ATMOS_*` |
+
+### The `staging` profile
+
+A deployed test server: as strict as `prod` about real people and real secrets,
+and loose about exactly the two things a test deployment cannot otherwise have —
+a payment provider contract and a public webhook URL.
+
+As strict as prod:
+
+- **No dev-only sign-in.** `DevProfileGuard` refuses to start when `dev` is
+  active together with `prod`, `staging` or `atmos`, so `/api/auth/dev/*` can
+  never exist on a staging server.
+- **No devtools.** Nothing profile-specific — the packaged jar leaves
+  `spring-boot-devtools` out, and staging runs the jar.
+- **Real secrets, or it does not start.** `CardTokenCipher` demands a real
+  `CARD_TOKEN_KEY` here exactly as under `prod` (no fixed development key), and
+  the required-settings check below refuses to start with any of them missing.
+- **The real client IP.** `application-staging.yaml` sets
+  `server.forward-headers-strategy: native`, so Tomcat's `RemoteIpValve` takes
+  the client IP from `X-Forwarded-For` behind the platform's edge proxy. Without
+  it every admin would share one 20-attempt sign-in budget and every audit entry
+  would name the proxy. The valve trusts the header only from its internal-proxy
+  ranges, which is where a platform proxy reaches the container from.
+- **An https `MINIAPP_URL`.** `TelegramBotModeGuard` refuses a non-https Mini App
+  URL here as under `prod` (Telegram refuses `web_app` buttons without it).
+
+Loosened, on purpose:
+
+- **`app.payments.provider=fake` is allowed.** `FakePaymentProvider` refuses only
+  `prod` and `atmos`, so staging can walk a booking through payment end to end.
+  No real money can move: no real provider is wired in, and the provider logs
+  "no real money will move" on every start.
+- **`TELEGRAM_BOT_MODE=polling` is allowed.** `TelegramBotModeGuard` accepts
+  polling under `dev` **or** `staging`, so the bot works with no public webhook
+  URL and no webhook secret (in webhook mode staging still requires the secret).
+  Use a **test bot**: polling deletes that bot's webhook, and two processes must
+  never poll the same bot — stop the local one while staging runs.
+
+**`prod` keeps every refusal it has today.** None of the above relaxes it: under
+`prod` the mode can only be `webhook`, so requiring the webhook secret in webhook
+mode is the same rule as before.
+
+## The test deployment (`deploy/`)
+
+One Ubuntu server on AWS EC2, Docker Compose, three containers. `deploy/` holds all
+of it, and `deploy/DEPLOYMENT-AWS.md` is the step-by-step guide — the AWS console,
+the server, the secrets, the first admin, @BotFather, Yandex, backups, costs. It is
+the **only** copy; the frontend repository points at it rather than duplicating it.
+
+| File | What it is |
+|---|---|
+| `deploy/docker-compose.yml` | the three services, the volumes, the memory limits |
+| `deploy/Caddyfile` | routing, automatic HTTPS, caching, the security headers and CSP |
+| `deploy/.env.example` | every variable, with the `openssl` command for each secret |
+| `deploy/backup.sh` | the nightly `pg_dump`, 14 days, run from cron |
+| `deploy/DEPLOYMENT-AWS.md` | the walkthrough |
+| `Dockerfile` (repo root) | Maven on JDK 21 → JRE 21, non-root, container memory flags |
+
+What is worth knowing without reading all of it:
+
+- **`SPRING_PROFILES_ACTIVE=staging`** — see "Profiles". Fake payments, bot polling,
+  no dev sign-in, real secrets required.
+- **Only Caddy publishes ports**, 80 and 443. Neither the backend nor PostgreSQL has a
+  `ports:` entry, so from outside the server they do not exist. Do not add one: Docker
+  writes its own iptables rules and `ufw` would not stop it. That isolation is also
+  what makes `X-Forwarded-For` trustworthy — nothing else can set it.
+- **One origin** for the Mini App, the admin panel and the API, so `CORS_ALLOWED_ORIGINS`
+  stays empty and the frontend is built with `VITE_API_URL` empty.
+- **The frontend image is built from the other repository**, as
+  `../../minipolyaFrontend` — the two checkouts sit side by side in `~/minipolya/`.
+- **The Caddyfile is mounted, not baked in**, so a header or route change is
+  `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`. Its CSP must
+  stay on one line: an HTTP header cannot contain a newline, and Caddy silently drops a
+  header it cannot send.
+- **`/actuator/health`** is the container health check and the only actuator endpoint
+  exposed (`show-details: never`).
 
 ## Deployment checklist
 
-Go through this before the first production deploy and again whenever the
-infrastructure changes. The app is built to run as **one instance behind Nginx**.
+Go through this before the first **production** deploy and again whenever the
+infrastructure changes. The app is built to run as **one instance behind a reverse
+proxy**. For the AWS EC2 **test** deployment follow `deploy/DEPLOYMENT-AWS.md`
+instead — it is a complete walkthrough and supersedes this checklist for that server.
 
 ### Reverse proxy and client IPs
 

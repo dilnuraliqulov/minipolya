@@ -46,3 +46,9 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# JVM crash dumps. They appear beside the pom when a JVM runs out of memory (running the
+# test suite next to the Compose stack will do it), they are large, and a replay/crash dump
+# holds whatever was in that process's memory — so never commit one.
+hs_err_pid*.log
+replay_pid*.log

@@ -63,9 +63,10 @@ class CardTokenCipherTest {
     }
 
     @Test
-    void realMoneyProfilesRequireAProperKey() {
+    void deployedProfilesRequireAProperKey() {
         assertThatThrownBy(() -> cipher(null, "atmos")).hasMessageContaining("CARD_TOKEN_KEY is not set");
         assertThatThrownBy(() -> cipher("", "prod")).hasMessageContaining("CARD_TOKEN_KEY is not set");
+        assertThatThrownBy(() -> cipher(null, "staging")).hasMessageContaining("CARD_TOKEN_KEY is not set");
         assertThatThrownBy(() -> cipher(Base64.getEncoder().encodeToString(new byte[16])))
                 .hasMessageContaining("32 bytes");
     }

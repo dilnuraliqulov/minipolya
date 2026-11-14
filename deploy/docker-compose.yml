@@ -1,0 +1,254 @@
+# MiniPolya — one AWS EC2 server, three containers.
+#
+# Run it from this directory (deploy/), with .env beside it:
+#
+#     cd ~/minipolya/minipolyaBackend/deploy
+#     docker compose up -d --build
+#
+# Both repositories are cloned side by side, which is what the two build contexts below
+# expect:
+#
+#     ~/minipolya/minipolyaBackend     ← this file lives in deploy/ here
+#     ~/minipolya/minipolyaFrontend
+#
+#                             internet
+#                                │  ports 80 and 443 only
+#                                ▼
+#     ┌──────────────────────────────────────────────┐
+#     │ caddy      automatic HTTPS for $SITE_HOST    │   the only published ports
+#     │   /            → index.html   (Mini App)     │
+#     │   /admin/*     → admin.html   (admin panel)  │
+#     │   /assets/*    → hashed files, cached 1 year │
+#     │   /api/*       → backend:8080 ───────────────┼──┐
+#     └──────────────────────────────────────────────┘  │  internal network, plain http
+#                                                       ▼
+#     ┌──────────────────────────────────────────────┐  ┌────────────────────────────┐
+#     │ backend    Spring Boot, profile=staging      │─▶│ postgres:17                │
+#     │   no published port                          │  │   no published port        │
+#     │   uploads on a named volume                  │  │   data on a named volume   │
+#     └──────────────────────────────────────────────┘  └────────────────────────────┘
+#
+# Neither the backend nor the database publishes a port, so from outside the server they do
+# not exist: the only way in is Caddy on 443. That is also why there is no CORS anywhere —
+# every call the browser makes is same-origin — and why the backend speaks plain HTTP.
+
+name: minipolya
+
+services:
+  # =====================================================================================
+  # PostgreSQL 17 — reachable only from the backend container.
+  # =====================================================================================
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+
+    # No `ports:`. On purpose, and the single most important line in this file: with a
+    # published port, 5432 would be open to the whole internet (Docker writes its own
+    # iptables rules and goes around ufw), and a database with a password is not a database
+    # you want strangers able to reach. `expose` documents the port for the network only.
+    expose:
+      - "5432"
+
+    environment:
+      # The entrypoint creates this database owned by this user on the FIRST start only.
+      # Changing any of the three later does nothing until the volume is deleted.
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      # Initialise with data checksums, so silent disk corruption is detected on read
+      # rather than returned as if it were data. It can only be chosen at initdb time.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+
+    # btree_gist (the no-double-booking EXCLUDE constraint) and pgcrypto (crypt/gen_salt for
+    # admin passwords) need no setup here: both ship with this image as trusted extensions,
+    # and Liquibase's changesets 001 and 027 create them on the first startup as the
+    # database owner.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    # Is the database accepting connections as the app's user? The backend waits for this
+    # before it starts, so Liquibase never meets a database that is still initialising.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+    # The server has 2 GB in total. Postgres gets 512 MB, which is ample for a test
+    # deployment and leaves the JVM its share. shared_buffers stays at the image's
+    # default (128 MB), comfortably inside this.
+    mem_limit: 512m
+    mem_reservation: 256m
+
+    # Without a cap, one bad week of logs fills a 20 GB disk and everything stops at once.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =====================================================================================
+  # Spring Boot backend — reachable only from Caddy.
+  # =====================================================================================
+  backend:
+    build:
+      # The repository root, one level up from deploy/. Its Dockerfile builds the jar with
+      # Maven on JDK 21 and runs it on a JRE 21 as a non-root user.
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+    # No `ports:` here either. Caddy reaches it as `backend:8080` on the compose network;
+    # nothing else can. This is also what makes X-Forwarded-For trustworthy: only Caddy is
+    # in a position to set it.
+    expose:
+      - "8080"
+
+    environment:
+      # staging: as strict as prod about secrets, the dev sign-in and the client IP, and
+      # loose about exactly two things — fake payments and bot polling. See CLAUDE.md,
+      # "Profiles". It also makes the app refuse to start with any required value missing,
+      # listing all of them at once (RequiredEnvironmentPostProcessor).
+      SPRING_PROFILES_ACTIVE: staging
+
+      # `postgres` is the service name above, resolved on the compose network.
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}
+      DB_USERNAME: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+
+      # Secrets, generated on the server with openssl and never the same as any local ones.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (openssl rand -base64 48)}
+      CARD_TOKEN_KEY: ${CARD_TOKEN_KEY:?set CARD_TOKEN_KEY in .env (openssl rand -base64 32)}
+
+      # A TEST bot, never production's: polling deletes the bot's webhook, and two processes
+      # must never poll the same bot (stop the local one while this runs).
+      BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN in .env}
+      BOT_USERNAME: ${BOT_USERNAME:-}
+      TELEGRAM_BOT_MODE: polling
+      # What the bot's buttons and the menu button open. Must be https, or the app refuses
+      # to start under staging.
+      MINIAPP_URL: https://${SITE_HOST:?set SITE_HOST in .env}
+      SUPPORT_USERNAME: ${SUPPORT_USERNAME:-}
+
+      # The mount point of the uploads volume below. An absolute path outside the release
+      # directory, so rebuilding the image cannot take the stadium photos with it while
+      # their rows stay in the database. staging refuses to start without it.
+      UPLOADS_DIR: /app/uploads
+
+      # Deliberately absent:
+      #   CORS_ALLOWED_ORIGINS — Caddy serves the apps and the API on one origin, so there
+      #                          is no cross-origin call to allow. Empty means no CORS
+      #                          header is sent at all.
+      #   DEV_LOGIN_KEY        — the dev-only sign-in exists only under the dev profile,
+      #                          which staging refuses to run next to.
+      #   TELEGRAM_WEBHOOK_SECRET — polling has no webhook.
+      #   ATMOS_*              — the fake payment provider is what runs here.
+
+    volumes:
+      # Uploaded stadium photos. A named volume, not a bind mount: it survives
+      # `docker compose down`, image rebuilds and `docker system prune`, and back it up
+      # together with the database — the photo rows point at these files.
+      - uploads_data:/app/uploads
+
+    depends_on:
+      postgres:
+        # Wait for pg_isready, not just for the container to exist: Liquibase runs at
+        # startup and a half-initialised database would fail the migration.
+        condition: service_healthy
+
+    # 900 MB, inside which the Dockerfile's -XX:MaxRAMPercentage=70 gives the heap about
+    # 630 MB and leaves the rest for metaspace, thread stacks and the JVM itself.
+    mem_limit: 900m
+    mem_reservation: 512m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =====================================================================================
+  # Caddy — the frontend build, automatic HTTPS, and the only published ports.
+  # =====================================================================================
+  caddy:
+    build:
+      # The OTHER repository, cloned beside this one. Its Dockerfile runs npm ci and
+      # npm run build, then copies dist/ into a Caddy image.
+      context: ../../minipolyaFrontend
+      dockerfile: Dockerfile
+      args:
+        # Build-time values, inlined into the public bundle. Every one of them is public by
+        # definition — a secret here would be readable in the JavaScript.
+        #
+        # Empty on purpose: the apps then call /api on their own origin, which this very
+        # container forwards to the backend. One origin, no CORS, no public backend.
+        VITE_API_URL: ""
+        VITE_YANDEX_MAPS_API_KEY: ${VITE_YANDEX_MAPS_API_KEY:-}
+        VITE_TELEGRAM_BOT_USERNAME: ${VITE_TELEGRAM_BOT_USERNAME:-}
+        VITE_TELEGRAM_APP_NAME: ${VITE_TELEGRAM_APP_NAME:-}
+        VITE_TELEGRAM_SUPPORT_USERNAME: ${VITE_TELEGRAM_SUPPORT_USERNAME:-}
+        # VITE_DEV_LOGIN_KEY is not passed and must never be: the dev sign-in is dropped
+        # from a production build, and there is nothing here to drop.
+    restart: unless-stopped
+
+    # The only ports the internet reaches, and the only two the security group opens.
+    # 80 is not optional even though everything runs on 443: Let's Encrypt validates the
+    # certificate over HTTP-01 on port 80, and Caddy uses it to redirect http:// to https://.
+    #
+    # HTTP/3 (443/udp) is left unpublished — it would need a third security-group rule for
+    # no benefit on a test server. HTTP/2 over TCP is what browsers will use.
+    ports:
+      - "80:80"
+      - "443:443"
+
+    environment:
+      # The hostname the certificate is issued for, read by the Caddyfile. An Elastic IP
+      # written with dashes plus .sslip.io is a working hostname with no domain to buy:
+      # 3-120-45-67.sslip.io resolves to 3.120.45.67.
+      SITE_HOST: ${SITE_HOST:?set SITE_HOST in .env}
+      # Where Let's Encrypt sends expiry warnings. Optional; recommended.
+      ACME_EMAIL: ${ACME_EMAIL:-}
+
+    volumes:
+      # Mounted rather than baked into the image, so the routing, the headers and the CSP
+      # can be changed and reloaded without rebuilding the frontend bundle:
+      #   docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+
+      # The certificates, the private keys and the Let's Encrypt account. This volume is
+      # what makes a restart free: without it Caddy would ask for a new certificate every
+      # time, and Let's Encrypt's rate limit (5 per host per week) would lock the site out
+      # of HTTPS for days.
+      - caddy_data:/data
+      - caddy_config:/config
+
+    depends_on:
+      # Start after the backend, but do not wait for it to be healthy: the Mini App and the
+      # admin panel are static files and should still be served — and the certificate should
+      # still be renewed — if the backend is down. Caddy resolves `backend` per request, so
+      # it recovers on its own when the backend comes back.
+      backend:
+        condition: service_started
+
+    mem_limit: 128m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# =========================================================================================
+# Named volumes. `docker compose down` keeps them; only `down -v` deletes them, which would
+# throw away the database, the stadium photos and the certificates at once.
+# =========================================================================================
+volumes:
+  postgres_data:
+  uploads_data:
+  caddy_data:
+  caddy_config:
+
+# The default bridge network compose creates is enough: all three containers are on it and
+# can reach each other by service name, and nothing outside the server can reach any of it
+# except through Caddy's published ports.

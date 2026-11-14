@@ -31,11 +31,34 @@ spring:
       max-request-size: 6MB
 
 server:
-  port: 8080
+  # PORT is how most hosts tell the app which port to listen on. Nothing sets it
+  # locally or in the container, so 8080 stays the port everywhere here.
+  port: ${PORT:8080}
+  # Which interface to bind. The default 0.0.0.0 is the usual every-IPv4-interface
+  # bind: inside a container that is what lets Caddy reach it over the compose
+  # network, and the container publishes no port, so nothing outside the host can.
+  # SERVER_ADDRESS=:: is for a private network that resolves to IPv6 only — a `::`
+  # socket on Linux accepts IPv4 connections too, so that one value covers both.
+  address: ${SERVER_ADDRESS:0.0.0.0}
   tomcat:
     # Read (and drop) an over-limit upload up to this size, so the client gets the 413
     # rather than a reset connection.
     max-swallow-size: 32MB
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Health and nothing else. Every other actuator endpoint (env, beans, heapdump,
+        # loggers, …) stays unexposed and answers 404, so none of them has to be secured.
+        include: health
+  endpoint:
+    health:
+      # GET /actuator/health answers {"status":"UP"} and nothing more: no component list,
+      # no database or disk detail. It is public (SecurityConfig), so it must say nothing
+      # about the inside of the app.
+      show-details: never
+      show-components: never
 
 app:
   jwt:

@@ -1,0 +1,221 @@
+# MiniPolya — the only thing on this server the internet can reach.
+#
+# One host serves everything, which is what makes the rest of the deployment simple: the
+# Mini App at /, the admin panel at /admin, and the API at /api on the SAME origin. The
+# browser therefore never makes a cross-origin call, so the backend needs no CORS headers
+# and no public address of its own, and the frontend is built with VITE_API_URL empty.
+#
+# Mounted read-only into the caddy container by docker-compose.yml. After editing it:
+#   docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
+#   docker compose exec caddy caddy reload   --config /etc/caddy/Caddyfile
+# which swaps the configuration without dropping connections or re-fetching certificates.
+{
+	# Where Let's Encrypt sends expiry warnings and problem reports. Compose passes
+	# ACME_EMAIL from .env; with it unset Caddy still issues certificates, it just has no
+	# way to warn you before one fails to renew.
+	#
+	# The quotes matter: an empty ACME_EMAIL would otherwise leave this directive with no
+	# argument at all and Caddy would refuse to start. Quoted, it is one empty argument,
+	# which Caddy reads as "no email".
+	email "{$ACME_EMAIL}"
+
+	# The admin API is left at its default, which binds to 127.0.0.1:2019 INSIDE the
+	# container. Nothing publishes that port, so it is reachable only by a process already
+	# in the container — which is exactly what `docker compose exec caddy caddy reload`
+	# is, and the reason the reload above works without restarting anything. Turning it
+	# off (`admin off`) would make that reload impossible and buy nothing here.
+
+	# One line per request, as JSON, to the container's log (`docker compose logs caddy`).
+	log {
+		output stderr
+		format json
+		level INFO
+	}
+}
+
+# SITE_HOST comes from .env, e.g. 3-120-45-67.sslip.io. Naming the host (rather than :443)
+# is what turns on automatic HTTPS: Caddy fetches a certificate from Let's Encrypt over
+# HTTP-01 on port 80, renews it on its own, and redirects http:// to https:// for free.
+# sslip.io resolves any IP written into the name, so an Elastic IP is a usable hostname
+# without buying a domain. Certificates and the account key live on the caddy_data volume,
+# so a restart re-uses them instead of asking Let's Encrypt again (which is rate-limited).
+{$SITE_HOST} {
+	root * /srv
+
+	# ------------------------------------------------------------------------------------
+	# Security headers, on every response — the file server's, the proxy's and Caddy's own.
+	# ------------------------------------------------------------------------------------
+	header {
+		# This host is HTTPS only; say so for a year, so a browser that has been here once
+		# will not try http:// again even if a link says so.
+		#
+		# No `preload`: that submits the host to a list browsers ship, is slow to undo, and
+		# is a promise about a permanent domain — not a test host that disappears with the
+		# instance. includeSubDomains is harmless on an sslip.io name and right on a real
+		# domain later.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+		# Trust the declared Content-Type. Without it a browser may sniff an uploaded
+		# stadium photo as HTML and run it on this origin.
+		X-Content-Type-Options "nosniff"
+
+		# Send the origin — not the path — to other sites, and nothing at all over plain
+		# http. The Yandex Maps key is restricted by HTTP Referer and that check needs the
+		# origin to arrive: `no-referrer` or `same-origin` would make every map request
+		# look unauthorised and the maps would stop loading. Do not tighten this one.
+		Referrer-Policy "strict-origin-when-cross-origin"
+
+		# Nothing here uses the camera, the microphone or the location API. Geolocation is
+		# worth being explicit about: the Mini App shows where a pitch is, it never asks
+		# where the player is.
+		Permissions-Policy "geolocation=(), camera=(), microphone=(), payment=(), usb=()"
+
+		# The Content-Security-Policy: only what the two apps actually load, everything else
+		# refused by the browser. It is the same policy the Vite preview server sends
+		# (`vite.config.ts`), so what works in `npm run preview` works here.
+		#
+		# It MUST stay on one line. An HTTP header value cannot contain a newline, so a
+		# Caddyfile value broken across lines produces a header Caddy then drops — the
+		# policy silently disappears and nothing warns you. Check it with:
+		#   curl -sI https://<SITE_HOST>/ | grep -i content-security-policy
+		#
+		# Why each source is here:
+		#   script-src   'self' — our own bundles. 'unsafe-inline' — index.html runs a small
+		#                classic script before the bundle so the first paint already uses the
+		#                saved theme. telegram.org — telegram-web-app.js, the Mini App
+		#                bridge. The Yandex hosts — the Maps JS API v3 and the chunks it
+		#                fetches. 'wasm-unsafe-eval' lets the map renderer compile its
+		#                WebAssembly; it does NOT allow eval() of strings.
+		#   style-src    Tailwind and the splash both inject style, and Leaflet's CSS is
+		#                bundled.
+		#   img-src      data:/blob: are canvas output and marker images; the rest are map
+		#                tiles — Yandex's, and OpenStreetMap's for the Leaflet fallback and
+		#                the admin panel. Uploaded stadium photos are 'self': they arrive
+		#                through /api/uploads/** on this origin.
+		#   font-src     self-hosted Inter (admin panel) and nothing remote.
+		#   connect-src  'self' is our own API on this origin; the Yandex hosts are the
+		#                map's own requests. No analytics, no third-party API.
+		#   worker-src   the map renderer starts a worker from a blob: URL.
+		#   frame-ancestors  the Mini App runs inside Telegram's web clients and must be
+		#                embeddable by nobody else. This replaces X-Frame-Options, which
+		#                cannot name an allowed origin. Telegram's native clients are not
+		#                browsers and are unaffected.
+		#   object-src   'none' — no Flash, no applets, no <embed>.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://telegram.org https://api-maps.yandex.ru https://*.maps.yandex.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.maps.yandex.net https://api-maps.yandex.ru https://*.openstreetmap.org https://*.tile.openstreetmap.org; font-src 'self' data:; connect-src 'self' https://api-maps.yandex.ru https://*.maps.yandex.net; worker-src 'self' blob:; frame-src 'self'; frame-ancestors https://web.telegram.org https://*.telegram.org https://telegram.org; base-uri 'self'; form-action 'self'; object-src 'none'"
+
+		# Don't advertise the server software.
+		-Server
+	}
+
+	# ------------------------------------------------------------------------------------
+	# Compression.
+	# ------------------------------------------------------------------------------------
+	# zstd first, then gzip, for whatever the client accepts. Caddy skips types that are
+	# already compressed (images, woff2), so this is the JS, CSS, JSON and HTML — the bulk
+	# of a first load. Brotli is not built into the standard image; zstd covers modern
+	# browsers and gzip covers the rest.
+	encode zstd gzip
+
+	# ====================================================================================
+	# Routing. These `handle` blocks are mutually exclusive and are tried in the order they
+	# appear here, so the specific paths come before the catch-all at the bottom.
+	# ====================================================================================
+
+	# ------------------------------------------------------------------------------------
+	# 1. The API, and the uploaded photos → the backend container.
+	# ------------------------------------------------------------------------------------
+	# /api/uploads/** (the stadium photos) is inside /api, so one rule covers both: the
+	# photo URLs stored in the database are relative, which is exactly why they can be
+	# served through this origin.
+	#
+	# `backend:8080` is the service name on the compose network. The backend publishes no
+	# port to the host, so this proxy is the only route to it from anywhere.
+	handle /api/* {
+		reverse_proxy backend:8080 {
+			# There is deliberately NO `header_up X-Forwarded-For` here, and that is worth
+			# knowing because the admin sign-in limit is per IP and the audit log records
+			# the IP, so the backend has to learn the real client address and must not
+			# believe a client that claims someone else's.
+			#
+			# Caddy sets X-Forwarded-For, X-Forwarded-Proto and X-Forwarded-Host itself,
+			# and its `trusted_proxies` list is empty by default — so it DISCARDS whatever
+			# X-Forwarded-For the client sent and writes the address it is actually talking
+			# to. Setting the header here by hand would change nothing and Caddy warns that
+			# it is redundant.
+			#
+			# Tomcat then reads those headers because application-staging.yaml sets
+			# forward-headers-strategy: native, and trusts them only from private ranges,
+			# which is where this container is.
+			#
+			# Verified: a POST to /api/auth/admin/login carrying
+			# `X-Forwarded-For: 203.0.113.9` is recorded in audit_log with the caller's real
+			# address, not the forged one and not Caddy's own.
+
+			# A stadium photo upload is 5 MB and re-encoding it takes a moment. The default
+			# would be generous enough already, but say it rather than discover it.
+			transport http {
+				read_timeout 120s
+				write_timeout 120s
+			}
+		}
+	}
+
+	# ------------------------------------------------------------------------------------
+	# 2. Hashed assets: cached for a year, and a 404 if they are missing.
+	# ------------------------------------------------------------------------------------
+	# Every file Vite writes into /assets carries a content hash, so its contents can never
+	# change under the same name: a year and `immutable` means the browser does not even ask
+	# again.
+	#
+	# This block has no fallback on purpose. A request for an asset that is not there must
+	# be a 404 — if it fell through to the catch-all below it would be answered with
+	# index.html, and the browser would try to run a page of HTML as JavaScript and fail
+	# somewhere far away from the cause.
+	handle /assets/* {
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	# ------------------------------------------------------------------------------------
+	# 3. The admin panel: /admin and every non-file path under it → admin.html.
+	# ------------------------------------------------------------------------------------
+	# The admin router handles /admin/stadiums/<id> itself, so a deep link or a refresh must
+	# still be answered with admin.html rather than a 404. `not path *.*` keeps a real
+	# request for a file out of this rule.
+	@adminRoute {
+		path /admin /admin/*
+		not path *.*
+	}
+	handle @adminRoute {
+		# Never cache the document. admin.html names the hashed bundles, so a cached copy
+		# would keep asking for the previous deployment's files — which are gone after a
+		# rebuild — and the panel would not load until the user cleared their cache.
+		header Cache-Control "no-cache, no-store, must-revalidate"
+		rewrite * /admin.html
+		file_server
+	}
+
+	# ------------------------------------------------------------------------------------
+	# 4. The favicon: small, unchanging, requested on every visit.
+	# ------------------------------------------------------------------------------------
+	handle /favicon.svg {
+		header Cache-Control "public, max-age=86400"
+		file_server
+	}
+
+	# ------------------------------------------------------------------------------------
+	# 5. Everything else: the Mini App.
+	# ------------------------------------------------------------------------------------
+	# Any path that is not one of the above is a Mini App route, and gets index.html so
+	# react-router can read it. Same no-cache reasoning as admin.html.
+	handle {
+		header Cache-Control "no-cache, no-store, must-revalidate"
+		try_files {path} /index.html
+		file_server
+	}
+
+	# Caddy's own answer for a request it could not serve: plain text, no stack, no paths.
+	handle_errors {
+		respond "{err.status_code} {err.status_text}" {err.status_code}
+	}
+}
