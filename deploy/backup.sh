@@ -30,16 +30,20 @@ DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_DIR="${BACKUP_DIR:-$(cd "$DEPLOY_DIR/../.." && pwd)/backups}"
 KEEP_DAYS="${KEEP_DAYS:-14}"
 
-# POSTGRES_DB and POSTGRES_USER come from the same .env docker compose reads. `set -a` marks
-# everything it defines for export so psql and pg_dump inherit them; the subshell keeps that
-# out of the rest of the script.
-if [[ ! -f "$DEPLOY_DIR/.env" ]]; then
-	echo "$(date -Is) ERROR: no .env in $DEPLOY_DIR — nothing to back up" >&2
+# The same .env docker compose reads. Overridable (ENV_FILE=…) for a configuration kept
+# outside the checkout, and so this script can be exercised against a throwaway one.
+ENV_FILE="${ENV_FILE:-$DEPLOY_DIR/.env}"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+	echo "$(date -Is) ERROR: no $ENV_FILE — nothing to back up" >&2
 	exit 1
 fi
+
+# POSTGRES_DB and POSTGRES_USER come from it. `set -a` marks everything it defines for
+# export, so pg_dump inside the container inherits them.
 set -a
-# shellcheck disable=SC1091  # not a file shellcheck can follow; it holds secrets
-source "$DEPLOY_DIR/.env"
+# shellcheck disable=SC1090,SC1091  # a runtime path, and it holds secrets
+source "$ENV_FILE"
 set +a
 
 : "${POSTGRES_DB:?POSTGRES_DB is not set in .env}"
@@ -68,7 +72,7 @@ echo "$(date -Is) backing up $POSTGRES_DB to $TARGET"
 # interrupted (the instance rebooted, the disk filled) never looks like a good one. Both
 # exit statuses are checked through PIPESTATUS, because without it a pg_dump failure would
 # be hidden by gzip succeeding on the empty input.
-if ! docker compose --project-directory "$DEPLOY_DIR" exec -T postgres \
+if ! docker compose --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" exec -T postgres \
 	pg_dump --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
 	--clean --if-exists --no-owner --no-privileges 2>"$TEMP.err" | gzip -9 >"$TEMP"; then
 	echo "$(date -Is) ERROR: pg_dump failed" >&2
