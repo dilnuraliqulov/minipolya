@@ -1954,13 +1954,47 @@ Loosened, on purpose:
 `prod` the mode can only be `webhook`, so requiring the webhook secret in webhook
 mode is the same rule as before.
 
+## The test deployment (`deploy/`)
+
+One Ubuntu server on AWS EC2, Docker Compose, three containers. `deploy/` holds all
+of it, and `deploy/DEPLOYMENT-AWS.md` is the step-by-step guide — the AWS console,
+the server, the secrets, the first admin, @BotFather, Yandex, backups, costs. It is
+the **only** copy; the frontend repository points at it rather than duplicating it.
+
+| File | What it is |
+|---|---|
+| `deploy/docker-compose.yml` | the three services, the volumes, the memory limits |
+| `deploy/Caddyfile` | routing, automatic HTTPS, caching, the security headers and CSP |
+| `deploy/.env.example` | every variable, with the `openssl` command for each secret |
+| `deploy/backup.sh` | the nightly `pg_dump`, 14 days, run from cron |
+| `deploy/DEPLOYMENT-AWS.md` | the walkthrough |
+| `Dockerfile` (repo root) | Maven on JDK 21 → JRE 21, non-root, container memory flags |
+
+What is worth knowing without reading all of it:
+
+- **`SPRING_PROFILES_ACTIVE=staging`** — see "Profiles". Fake payments, bot polling,
+  no dev sign-in, real secrets required.
+- **Only Caddy publishes ports**, 80 and 443. Neither the backend nor PostgreSQL has a
+  `ports:` entry, so from outside the server they do not exist. Do not add one: Docker
+  writes its own iptables rules and `ufw` would not stop it. That isolation is also
+  what makes `X-Forwarded-For` trustworthy — nothing else can set it.
+- **One origin** for the Mini App, the admin panel and the API, so `CORS_ALLOWED_ORIGINS`
+  stays empty and the frontend is built with `VITE_API_URL` empty.
+- **The frontend image is built from the other repository**, as
+  `../../minipolyaFrontend` — the two checkouts sit side by side in `~/minipolya/`.
+- **The Caddyfile is mounted, not baked in**, so a header or route change is
+  `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`. Its CSP must
+  stay on one line: an HTTP header cannot contain a newline, and Caddy silently drops a
+  header it cannot send.
+- **`/actuator/health`** is the container health check and the only actuator endpoint
+  exposed (`show-details: never`).
+
 ## Deployment checklist
 
-Go through this before the first production deploy and again whenever the
+Go through this before the first **production** deploy and again whenever the
 infrastructure changes. The app is built to run as **one instance behind a reverse
-proxy**. For the AWS EC2 **test** deployment (`staging`, Docker Compose, Caddy
-instead of Nginx) follow `deploy/DEPLOYMENT-AWS.md` instead — it is a complete
-walkthrough and supersedes this checklist for that server.
+proxy**. For the AWS EC2 **test** deployment follow `deploy/DEPLOYMENT-AWS.md`
+instead — it is a complete walkthrough and supersedes this checklist for that server.
 
 ### Reverse proxy and client IPs
 
