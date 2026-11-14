@@ -76,7 +76,7 @@ services:
       start_period: 30s
 
     # The server has 2 GB in total. Postgres gets 512 MB, which is ample for a test
-      # deployment and leaves the JVM its share. shared_buffers stays at the image's
+    # deployment and leaves the JVM its share. shared_buffers stays at the image's
     # default (128 MB), comfortably inside this.
     mem_limit: 512m
     mem_reservation: 256m

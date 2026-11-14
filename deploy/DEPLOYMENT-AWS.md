@@ -1496,12 +1496,22 @@ A restore you have never run is a hope, not a plan. Try it into a throwaway data
 touches nothing real:
 
 ```bash
+# The newest backup, by name — not a glob: `minipolya-*.sql.gz` would feed psql several
+# dumps concatenated, which is not what a restore looks like.
+BACKUP=$(ls -t ~/minipolya/backups/minipolya-*.sql.gz | head -1) && echo "$BACKUP"
+
 docker compose exec postgres createdb -U minipolya restore_test
-gunzip -c ~/minipolya/backups/minipolya-*.sql.gz | tail -n +1 \
-  | docker compose exec -T postgres psql -U minipolya -d restore_test -v ON_ERROR_STOP=1
+gunzip -c "$BACKUP" \
+  | docker compose exec -T postgres psql -U minipolya -d restore_test -q -v ON_ERROR_STOP=1
+
+# Should match the live database.
 docker compose exec postgres psql -U minipolya -d restore_test -c "SELECT count(*) FROM users;"
+
 docker compose exec postgres dropdb -U minipolya restore_test
 ```
+
+That is exactly the sequence §12's restore uses, minus the part that overwrites the real
+database — so if it works here, the real one will too.
 
 ---
 
