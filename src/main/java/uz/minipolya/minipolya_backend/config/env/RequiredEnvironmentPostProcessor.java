@@ -43,8 +43,9 @@ public class RequiredEnvironmentPostProcessor implements EnvironmentPostProcesso
     /** Required on every deployed server. */
     static final List<Setting> REQUIRED = List.of(
             new Setting("DB_URL", "the database's JDBC URL, e.g. "
-                    + "jdbc:postgresql://postgres.railway.internal:5432/railway. Instead of this you may set "
-                    + "DATABASE_URL (postgresql://user:password@host:port/database) or PGHOST/PGPORT/PGDATABASE."),
+                    + "jdbc:postgresql://postgres:5432/minipolya (the service name on the container network). "
+                    + "Instead of this you may set DATABASE_URL "
+                    + "(postgresql://user:password@host:port/database) or PGHOST/PGPORT/PGDATABASE."),
             new Setting("DB_USERNAME", "the database user. PGUSER, or DATABASE_URL's user info, is read instead."),
             new Setting("DB_PASSWORD", "that user's password. PGPASSWORD, or DATABASE_URL's user info, "
                     + "is read instead."),

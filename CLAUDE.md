@@ -1853,7 +1853,7 @@ ATMOS_OFD_CODE_SERVICE=
 ### A managed database's own variables
 
 A hosted PostgreSQL does not describe itself the way Spring wants. It publishes
-either one URL — `DATABASE_URL=postgresql://user:password@host:5432/railway`,
+either one URL — `DATABASE_URL=postgresql://user:password@host:5432/database`,
 which is **not** a JDBC URL — or the libpq variables `PGHOST`, `PGPORT`,
 `PGDATABASE`, `PGUSER`, `PGPASSWORD`.
 
@@ -1862,9 +1862,10 @@ whichever of `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` is not set directly, so
 there are three equally good ways to configure the database and the rest of the
 app still sees only those three names:
 
-1. set them yourself (on Railway with variable references, e.g.
-   `DB_URL=jdbc:postgresql://${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}`);
-2. set `DATABASE_URL` alone;
+1. set them yourself — what the Docker Compose deployment does, pointing `DB_URL`
+   at the `postgres` service on the container network
+   (`jdbc:postgresql://postgres:5432/minipolya`);
+2. set `DATABASE_URL` alone — what a managed database hands out;
 3. set the five `PG*` variables.
 
 What it derives is added as the **lowest**-precedence property source, so a value
@@ -1956,9 +1957,10 @@ mode is the same rule as before.
 ## Deployment checklist
 
 Go through this before the first production deploy and again whenever the
-infrastructure changes. The app is built to run as **one instance behind Nginx**.
-For the Railway test deployment (`staging`, no Docker, no Nginx) follow
-`DEPLOYMENT.md` instead.
+infrastructure changes. The app is built to run as **one instance behind a reverse
+proxy**. For the AWS EC2 **test** deployment (`staging`, Docker Compose, Caddy
+instead of Nginx) follow `deploy/DEPLOYMENT-AWS.md` instead — it is a complete
+walkthrough and supersedes this checklist for that server.
 
 ### Reverse proxy and client IPs
 

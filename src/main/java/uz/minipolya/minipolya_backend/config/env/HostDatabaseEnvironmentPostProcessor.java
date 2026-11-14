@@ -19,16 +19,16 @@ import java.util.function.UnaryOperator;
  * managed PostgreSQL hands out, for whichever of the three is not set directly.
  *
  * <p>A managed database does not describe itself the way Spring wants it. It publishes either
- * one URL — {@code DATABASE_URL=postgresql://user:password@host:5432/railway}, which is not a
+ * one URL — {@code DATABASE_URL=postgresql://user:password@host:5432/database}, which is not a
  * JDBC URL — or the libpq variables {@code PGHOST}, {@code PGPORT}, {@code PGDATABASE},
  * {@code PGUSER} and {@code PGPASSWORD}. Reading both here means the three variables the app
  * actually uses can be set in one of three ways, and the rest of the app keeps seeing only
  * {@code DB_URL} / {@code DB_USERNAME} / {@code DB_PASSWORD}:
  *
  * <ol>
- *   <li>set them yourself — on Railway with variable references, e.g.
- *       {@code DB_URL=jdbc:postgresql://${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}};</li>
- *   <li>set {@code DATABASE_URL} alone ({@code ${{Postgres.DATABASE_URL}}});</li>
+ *   <li>set them yourself — what the Docker Compose deployment does, pointing {@code DB_URL}
+ *       at the {@code postgres} service on the container network;</li>
+ *   <li>set {@code DATABASE_URL} alone — what a managed database hands out;</li>
  *   <li>set the five {@code PG*} variables.</li>
  * </ol>
  *
