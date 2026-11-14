@@ -23,6 +23,13 @@ command is given in full — nothing is left as "and then configure Docker".
 The server builds both images without running tests — a 2 GB box is the wrong place to find
 out that something is broken.
 
+> **Run those tests with the local Compose stack stopped.** The stack is about 1.5 GB (a
+> second JVM, PostgreSQL and Caddy) and the backend suite forks test JVMs of its own; on an
+> 8 GB laptop the two together exhaust memory and the test JVM dies mid-run with
+> `There is insufficient memory for the Java Runtime Environment to continue` and an
+> `hs_err_pid*.log` beside the pom — which reads like a broken build but is just the
+> machine. `docker compose down` first (or `docker compose stop backend`), then test.
+
 ---
 
 ## What you end up with
@@ -963,6 +970,47 @@ curl.exe -m 5 http://3-120-45-67.sslip.io:8080/actuator/health
 curl.exe -m 5 http://3-120-45-67.sslip.io:5432
 ```
 
+### Trying the whole stack on your own machine first
+
+Worth doing once before touching AWS: it is the same three containers and the same
+Caddyfile, and it catches a bad `.env` or a broken build in minutes instead of after an
+instance exists. Keep the throwaway configuration **out of the repository** by passing it
+with `--env-file` rather than creating `deploy/.env` locally:
+
+```bash
+# Anywhere outside the checkout, e.g. ~/minipolya-local.env — SITE_HOST=localhost and
+# throwaway values for the rest. CARD_TOKEN_KEY must still decode to 32 bytes.
+docker compose --env-file ~/minipolya-local.env -f deploy/docker-compose.yml up -d --build
+docker compose --env-file ~/minipolya-local.env -f deploy/docker-compose.yml ps
+```
+
+With `SITE_HOST=localhost`, Caddy skips Let's Encrypt and issues its own certificate from a
+local CA, so `https://localhost/` works behind a browser warning (`curl -k` from the
+command line). Everything else behaves identically.
+
+Two things that bite locally and not on the server:
+
+- **Something may already own ports 80 and 443.** On Windows, XAMPP/Apache, IIS or Skype
+  are the usual suspects, and the symptom is confusing: the containers start, but your
+  requests are answered by the *other* server. If `curl -I http://localhost/` returns
+  something that is not Caddy (check for `via: 1.1 Caddy`), stop that service — or test
+  Caddy directly on the container network instead, which bypasses the host ports entirely:
+
+  ```bash
+  docker run --rm --network minipolya_default curlimages/curl:latest \
+    curl -sk --connect-to localhost:443:caddy:443 -I https://localhost/
+  ```
+
+- **Stop the stack before running the test suites** — see the warning at the top of this
+  file.
+
+Tear it down when you are done. `-v` also deletes the local volumes, which is what you
+want for a throwaway:
+
+```bash
+docker compose --env-file ~/minipolya-local.env -f deploy/docker-compose.yml down -v
+```
+
 ---
 
 ## 8. Create the first admin user
@@ -1616,12 +1664,40 @@ curl -s "https://api.telegram.org/bot$BOT_TOKEN/deleteWebhook?drop_pending_updat
 
 ### The backend will not start
 
-The `staging` profile checks its configuration before it builds anything, and lists
-**everything** that is missing at once:
+There are two layers here, and the first one usually catches it.
+
+**1. A value that is missing or empty never reaches the container.** Every secret is a
+required variable in `docker-compose.yml`, so compose refuses before anything is built and
+names the one it wants — you see this from `docker compose up`, not from the logs:
+
+```
+error while interpolating services.backend.environment.JWT_SECRET:
+required variable JWT_SECRET is missing a value: set JWT_SECRET in .env (openssl rand -base64 48)
+```
+
+Fill it in `.env` and run `docker compose up -d` again. It reports one at a time, so
+`docker compose config --quiet` after each edit (§6.3) is the quick way through.
+
+**2. A value that is present but wrong** gets through compose and the app rejects it at
+startup:
 
 ```bash
 docker compose logs backend | head -40
 ```
+
+| Message | Cause |
+|---|---|
+| `CARD_TOKEN_KEY must decode to 32 bytes, not 24` | you used `openssl rand -base64 24`; it must be `32` |
+| `CARD_TOKEN_KEY must be base64` | the value was edited or truncated — generate a new one |
+| `WeakKeyException` / signing key size | `JWT_SECRET` is present but shorter than 32 bytes |
+| `MINIAPP_URL must be an https URL` | `SITE_HOST` is empty, or has `https://` or a trailing slash in it |
+| `TELEGRAM_BOT_MODE=polling … needs the dev profile or the staging profile` | `SPRING_PROFILES_ACTIVE` was overridden; it should be `staging` and nothing else |
+| `The staging profile must not be active together with dev` | likewise — `dev` must never be active on this server |
+| `Connection to postgres:5432 refused` | postgres is not healthy yet, or `POSTGRES_*` disagree between the two services. `docker compose logs postgres` |
+| `liquibase … checksum` | a changeset that already ran was edited. Never edit an applied changeset; add a new one. |
+
+The app also has a third check that lists **everything** missing at once, rather than one
+variable per restart:
 
 ```
 The staging profile needs 2 settings that are not set:
@@ -1629,23 +1705,11 @@ The staging profile needs 2 settings that are not set:
   JWT_SECRET
       at least 32 bytes of random text (openssl rand -base64 48), different from every
       other environment. Changing it signs everyone out.
-
-  CARD_TOKEN_KEY
-      32 bytes, base64 (openssl rand -base64 32): encrypts saved card tokens at rest.
-      Keep it — losing it makes every saved card unreadable.
+  …
 ```
 
-Fill them in `.env`, then `docker compose up -d`.
-
-Other startup failures and what they mean:
-
-| Message | Cause |
-|---|---|
-| `CARD_TOKEN_KEY must decode to 32 bytes, not 24` | you used `openssl rand -base64 24`; it must be `32` |
-| `WeakKeyException` / signing key size | `JWT_SECRET` is shorter than 32 bytes |
-| `Connection to postgres:5432 refused` | postgres is not healthy yet, or `POSTGRES_*` disagree between the two services. `docker compose logs postgres` |
-| `liquibase … checksum` | a changeset that already ran was edited. Never edit an applied changeset; add a new one. |
-| `The staging profile must not be active together with dev` | `SPRING_PROFILES_ACTIVE` was overridden. It should be `staging` and nothing else. |
+You will not normally see it here, because compose's required variables catch the same
+cases earlier. It is the backstop for running the jar outside Compose.
 
 ### The site loads but the API returns 502
 
