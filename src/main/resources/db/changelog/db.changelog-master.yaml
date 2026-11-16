@@ -103,3 +103,5 @@ databaseChangeLog:
       file: db/changelog/changes/051-default-min-booking-amount.sql
   - include:
       file: db/changelog/changes/052-game-team-payment-option.sql
+  - include:
+      file: db/changelog/changes/053-stadium-weekly-hours.sql

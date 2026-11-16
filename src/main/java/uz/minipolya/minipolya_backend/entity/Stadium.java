@@ -20,6 +20,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import uz.minipolya.minipolya_backend.util.WeeklyHours;
 
 import java.math.BigDecimal;
 import java.time.LocalTime;
@@ -143,6 +144,61 @@ public class Stadium {
 
     @OneToOne(mappedBy = "stadium", cascade = CascadeType.ALL, orphanRemoval = true)
     private StadiumAmenities amenities;
+
+    /**
+     * The weekly opening schedule (changeset 053), one row per day of the week. Read it
+     * through {@link #weeklyHours()} and write it through
+     * {@link #setWeeklyHours(WeeklyHours)}, never by mutating this list.
+     */
+    @Builder.Default
+    @OneToMany(mappedBy = "stadium", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("dayOfWeek ASC")
+    private List<StadiumHours> hours = new ArrayList<>();
+
+    /**
+     * The stadium's weekly schedule. Falls back to the legacy {@code openTime} /
+     * {@code closeTime} as "the same every day" when the seven rows are not there (a row
+     * inserted by hand, a stadium built in a test), so a stadium never becomes unbookable
+     * for want of them.
+     */
+    public WeeklyHours weeklyHours() {
+        if (hours != null && hours.size() == WeeklyHours.DAYS) {
+            return WeeklyHours.of(hours.stream()
+                    .map(day -> day.isClosed()
+                            ? WeeklyHours.Day.closed(day.getDayOfWeek())
+                            : WeeklyHours.Day.open(day.getDayOfWeek(), day.getOpenTime(), day.getCloseTime()))
+                    .toList());
+        }
+        return WeeklyHours.sameEveryDay(openTime, closeTime);
+    }
+
+    /**
+     * Replaces the whole schedule — the seven rows in place, so orphan removal deletes the
+     * old ones — and keeps the legacy {@code openTime} / {@code closeTime} columns in step
+     * with the first open day, so older readers and clients still see sensible hours.
+     */
+    public void setWeeklyHours(WeeklyHours weekly) {
+        if (hours == null) {
+            hours = new ArrayList<>();
+        }
+        hours.clear();
+        for (WeeklyHours.Day day : weekly.days()) {
+            hours.add(StadiumHours.builder()
+                    .stadium(this)
+                    .dayOfWeek(day.dayOfWeek())
+                    .closed(day.closed())
+                    .openTime(day.open())
+                    .closeTime(day.close())
+                    .build());
+        }
+        weekly.days().stream()
+                .filter(day -> !day.closed())
+                .findFirst()
+                .ifPresent(day -> {
+                    openTime = day.open();
+                    closeTime = day.close();
+                });
+    }
 
     public void addPhoto(StadiumPhoto photo) {
         photo.setStadium(this);
