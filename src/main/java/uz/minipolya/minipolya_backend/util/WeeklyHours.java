@@ -100,6 +100,22 @@ public final class WeeklyHours {
         }
 
         /**
+         * Whether the one-hour slot at this clock time is part of the day at all, whether
+         * it falls before or after midnight.
+         */
+        public boolean containsSlot(LocalTime time) {
+            return containsHour(time, 0) || containsHour(time, 1);
+        }
+
+        /**
+         * Whether the one-hour slot at this clock time falls on the calendar day after the
+         * opening — the hours a day running past midnight reaches into the next morning.
+         */
+        public boolean isAfterMidnight(LocalTime time) {
+            return !containsHour(time, 0) && containsHour(time, 1);
+        }
+
+        /**
          * Whether the one-hour slot starting at {@code time} belongs to this day, when
          * {@code time} is read on the opening date ({@code dayOffset} 0) or on the
          * morning after it ({@code dayOffset} 1).

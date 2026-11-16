@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.BookingSeriesRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
+import uz.minipolya.minipolya_backend.util.WeeklyHours;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -167,6 +168,50 @@ class BookingSeriesServiceTest {
                 .isInstanceOf(BadRequestException.class);
         verify(seriesRepository, never()).save(any());
         verify(bookingRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void createSeriesAcceptsAnAfterMidnightHourAndBooksItOnTheNextDate() {
+        // The series' dayOfWeek is the WORKING day: Wednesday 08:00-02:00 means a 01:00
+        // slot that actually happens at 01:00 on Thursday.
+        stadium.setWeeklyHours(WeeklyHours.sameEveryDay(LocalTime.of(8, 0), LocalTime.of(2, 0)));
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(seriesRepository.save(any(BookingSeries.class))).thenAnswer(inv -> {
+            BookingSeries saved = inv.getArgument(0);
+            saved.setId(SERIES_ID);
+            return saved;
+        });
+        when(bookingPriceCalculator.hourPrice(any(), any())).thenReturn(100_000L);
+        when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(false);
+        when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(seriesMapper.toResponse(any())).thenReturn(new BookingSeriesResponse());
+
+        CreateBookingSeriesRequest req = CreateBookingSeriesRequest.builder()
+                .stadiumId(STADIUM_ID).dayOfWeek(DAY).startTime(LocalTime.of(1, 0)).duration(1).build();
+        service.createSeries(req, USER_ID);
+
+        ArgumentCaptor<Booking> saved = ArgumentCaptor.forClass(Booking.class);
+        verify(bookingRepository, times(2)).saveAndFlush(saved.capture());
+        for (Booking booking : saved.getAllValues()) {
+            ZonedDateTime local = booking.getStartsAt().atZoneSameInstant(TASHKENT);
+            assertThat(local.toLocalTime()).isEqualTo(LocalTime.of(1, 0));
+            // 01:00 on the day AFTER the working Wednesday, so a Thursday date.
+            assertThat(local.getDayOfWeek().getValue() - 1).isEqualTo(DAY + 1);
+        }
+    }
+
+    @Test
+    void createSeriesRejectsAnHourPastAnAfterMidnightClose() {
+        stadium.setWeeklyHours(WeeklyHours.sameEveryDay(LocalTime.of(8, 0), LocalTime.of(2, 0)));
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+
+        CreateBookingSeriesRequest req = CreateBookingSeriesRequest.builder()
+                .stadiumId(STADIUM_ID).dayOfWeek(DAY).startTime(LocalTime.of(2, 0)).build();
+
+        assertThatThrownBy(() -> service.createSeries(req, USER_ID))
+                .isInstanceOf(BadRequestException.class);
+        verify(seriesRepository, never()).save(any());
     }
 
     @Test

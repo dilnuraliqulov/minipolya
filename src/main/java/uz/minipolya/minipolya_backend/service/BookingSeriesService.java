@@ -25,6 +25,7 @@ import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.BookingSeriesRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
+import uz.minipolya.minipolya_backend.util.WeeklyHours;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -79,15 +80,11 @@ public class BookingSeriesService {
         if (startTime.getMinute() != 0 || startTime.getSecond() != 0 || startTime.getNano() != 0) {
             throw new BadRequestException("Booking must start on the hour");
         }
-        LocalTime open = stadium.getOpenTime();
-        LocalTime close = stadium.getCloseTime();
-        LocalTime endTime = startTime.plusHours(Booking.HOURS);
-        boolean fitsWindow = open.isBefore(close)
-                && !startTime.isBefore(open)
-                && endTime.isAfter(startTime) // no midnight wrap
-                && !endTime.isAfter(close);
-        if (!fitsWindow) {
-            throw new BadRequestException("Requested time is outside the stadium's operating hours");
+        // The series' dayOfWeek is the WORKING day, so an hour after midnight (Wednesday
+        // 08:00-02:00 at 01:00) is Wednesday's, and happens on the Thursday date.
+        WeeklyHours.Day day = stadium.weeklyHours().day(request.getDayOfWeek());
+        if (!day.containsSlot(startTime)) {
+            throw new BadRequestException(BookingWindowValidator.NOT_OPEN);
         }
 
         User user = userRepository.findById(userId)
@@ -179,16 +176,23 @@ public class BookingSeriesService {
         }
     }
 
-    /** @return true if a booking was created, false if the slot was taken or closed. */
+    /**
+     * @param date the WORKING date of the occurrence; an hour after midnight happens on
+     *             the following calendar date
+     * @return true if a booking was created, false if the slot was taken or closed
+     */
     private boolean tryGenerateBooking(BookingSeries series, LocalDate date) {
         Stadium stadium = series.getStadium();
         // One hour, whatever an older series row says: every booking is one slot.
-        OffsetDateTime startsAt = date.atTime(series.getStartTime()).atZone(TASHKENT).toOffsetDateTime();
+        LocalDate realDate = date.plusDays(
+                stadium.weeklyHours().day(series.getDayOfWeek()).isAfterMidnight(series.getStartTime()) ? 1 : 0);
+        OffsetDateTime startsAt = realDate.atTime(series.getStartTime()).atZone(TASHKENT).toOffsetDateTime();
         OffsetDateTime endsAt = startsAt.plusHours(Booking.HOURS);
 
         if (bookingRepository.existsActiveOverlap(stadium.getId(), startsAt, endsAt)) {
             return false;
         }
+        // The closure is asked about the WORKING day, so a full-day closure covers the night too.
         if (closureService.isClosedAt(stadium.getId(), date, series.getStartTime())) {
             return false; // a closure covers the hour — skip, same as availability
         }
