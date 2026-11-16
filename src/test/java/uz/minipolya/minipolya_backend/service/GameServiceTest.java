@@ -204,7 +204,7 @@ class GameServiceTest {
 
         assertThatThrownBy(() -> service.createGame(req, CREATOR_ID))
                 .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("must start at or after 08:00");
+                .hasMessageContaining(BookingWindowValidator.NOT_OPEN);
         verify(gameRepository, never()).save(any());
     }
 
@@ -219,7 +219,7 @@ class GameServiceTest {
 
         assertThatThrownBy(() -> service.createGame(req, CREATOR_ID))
                 .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("must end by 22:30");
+                .hasMessageContaining(BookingWindowValidator.NOT_OPEN);
         verify(gameRepository, never()).save(any());
     }
 

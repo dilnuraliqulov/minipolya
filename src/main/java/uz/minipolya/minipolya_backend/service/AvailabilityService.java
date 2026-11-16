@@ -12,6 +12,7 @@ import uz.minipolya.minipolya_backend.entity.PricingRule;
 import uz.minipolya.minipolya_backend.entity.Promotion;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.StadiumClosure;
+import uz.minipolya.minipolya_backend.entity.StadiumHours;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.repository.BookedSpan;
@@ -19,8 +20,10 @@ import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.PricingRuleRepository;
+import uz.minipolya.minipolya_backend.repository.StadiumHoursRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.util.PriceCalculator;
+import uz.minipolya.minipolya_backend.util.WeeklyHours;
 
 import java.time.Clock;
 import java.time.LocalDate;
@@ -48,6 +51,7 @@ public class AvailabilityService {
     private static final String STATUS_APPROVED = "approved";
 
     private final StadiumRepository stadiumRepository;
+    private final StadiumHoursRepository stadiumHoursRepository;
     private final BookingRepository bookingRepository;
     private final PricingRuleRepository pricingRuleRepository;
     private final GameRepository gameRepository;
@@ -68,7 +72,7 @@ public class AvailabilityService {
         ZonedDateTime nowLocal = nowInTashkent();
         LocalDate today = nowLocal.toLocalDate();
         LocalDate queryDate = date != null ? date : today;
-        if (queryDate.isBefore(today)) {
+        if (queryDate.isBefore(earliestWorkingDay(stadium, today, nowLocal))) {
             throw new BadRequestException("date cannot be in the past");
         }
         if (queryDate.isAfter(today.plusWeeks(appProperties.getBooking().getMaxWeeksAhead()))) {
@@ -76,32 +80,33 @@ public class AvailabilityService {
                     "date is beyond the " + appProperties.getBooking().getMaxWeeksAhead() + "-week booking window");
         }
 
+        // The working day may run into the next calendar date, so both are loaded.
         OffsetDateTime dayStart = queryDate.atStartOfDay(TASHKENT).toOffsetDateTime();
-        OffsetDateTime dayEnd = queryDate.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime();
+        OffsetDateTime spanEnd = queryDate.plusDays(2).atStartOfDay(TASHKENT).toOffsetDateTime();
 
-        List<Booking> bookings = bookingRepository.findActiveForStadiumBetween(stadiumId, dayStart, dayEnd);
+        List<Booking> bookings = bookingRepository.findActiveForStadiumBetween(stadiumId, dayStart, spanEnd);
         List<PricingRule> rules = pricingRuleRepository.findByStadiumIdAndIsActiveTrue(stadiumId);
         // Only a team game waiting for an opponent is advertised on a free slot:
         // "a team is looking for an opponent" is an invitation anyone can take
         // up, whereas a casual game is private to whoever was invited to it.
         List<Game> waitingGames = gameRepository.findByStadiumIdAndStatus(stadiumId, "open").stream()
                 .filter(g -> "team_vs_team".equals(g.getType()))
-                .filter(g -> !g.getStartsAt().isBefore(dayStart) && g.getStartsAt().isBefore(dayEnd))
+                .filter(g -> !g.getStartsAt().isBefore(dayStart) && g.getStartsAt().isBefore(spanEnd))
                 .toList();
 
         List<BookedSpan> booked = bookings.stream()
                 .map(b -> new BookedSpan(stadiumId, b.getStartsAt(), b.getEndsAt()))
                 .toList();
 
-        // An hour already started today is listed as past, so the day still shows every opening hour.
+        // An hour already started is listed as past, so the day still shows every opening
+        // hour. The closure is asked at the working day, so a full-day one covers the night too.
         List<TimeSlot> slots = new ArrayList<>();
-        for (SlotRules.Hour hour : SlotRules.hoursOf(stadium.getOpenTime(), stadium.getCloseTime())) {
+        for (SlotRules.Hour hour : SlotRules.hoursOf(stadium.weeklyHours().dayOf(queryDate))) {
             String status = SlotRules.status(queryDate, hour, nowLocal, booked,
                     time -> closureService.isClosedAt(stadiumId, queryDate, time));
             slots.add(TimeSlot.PAST.equals(status)
-                    ? TimeSlot.builder().startTime(hour.start()).endTime(hour.end())
-                        .available(false).status(TimeSlot.PAST).build()
-                    : buildSlot(stadium, queryDate, hour.start(), hour.end(), status, rules, waitingGames));
+                    ? pastSlot(queryDate, hour)
+                    : buildSlot(stadium, queryDate, hour, status, rules, waitingGames));
         }
 
         return AvailabilityResponse.builder()
@@ -132,17 +137,24 @@ public class AvailabilityService {
             return stadiums.stream().collect(Collectors.toMap(Stadium::getId, s -> 0));
         }
         List<UUID> ids = stadiums.stream().map(Stadium::getId).toList();
+        // Two calendar days: a working day closing after midnight reaches into the next.
         Map<UUID, List<BookedSpan>> booked = bookingRepository.findActiveSpansBetween(ids,
                         date.atStartOfDay(TASHKENT).toOffsetDateTime(),
-                        date.plusDays(1).atStartOfDay(TASHKENT).toOffsetDateTime()).stream()
+                        date.plusDays(2).atStartOfDay(TASHKENT).toOffsetDateTime()).stream()
                 .collect(Collectors.groupingBy(BookedSpan::stadiumId));
         Map<UUID, List<StadiumClosure>> closures = closureService.closuresOn(ids, date).stream()
                 .collect(Collectors.groupingBy(c -> c.getStadium().getId()));
+        // One query for the whole page's schedules; reading stadium.weeklyHours() here would
+        // lazy-load seven rows per stadium.
+        Map<UUID, List<StadiumHours>> hours = stadiumHoursRepository.findByStadiumIdIn(ids).stream()
+                .collect(Collectors.groupingBy(row -> row.getStadium().getId()));
 
         return stadiums.stream().collect(Collectors.toMap(Stadium::getId, stadium -> {
             List<BookedSpan> spans = booked.getOrDefault(stadium.getId(), List.of());
             List<StadiumClosure> closed = closures.getOrDefault(stadium.getId(), List.of());
-            return (int) SlotRules.hoursOf(stadium.getOpenTime(), stadium.getCloseTime()).stream()
+            WeeklyHours weekly = StadiumHours.toWeekly(hours.get(stadium.getId()),
+                    stadium.getOpenTime(), stadium.getCloseTime());
+            return (int) SlotRules.hoursOf(weekly.dayOf(date)).stream()
                     .filter(hour -> TimeSlot.FREE.equals(SlotRules.status(date, hour, nowLocal, spans,
                             time -> closed.stream().anyMatch(c -> StadiumClosureService.covers(c, date, time)))))
                     .count();
@@ -153,22 +165,57 @@ public class AvailabilityService {
         return ZonedDateTime.now(clock.withZone(TASHKENT));
     }
 
-    private TimeSlot buildSlot(Stadium stadium, LocalDate date, LocalTime slotStart, LocalTime slotEnd,
+    /**
+     * The earliest working day that can still be asked about: today, or yesterday while its
+     * working day is still running. A stadium open Saturday 08:00-02:00 is still inside
+     * Saturday's working day at 00:30 on Sunday, and its 01:00 slot is still bookable, so
+     * Saturday must not be refused as a past date.
+     */
+    private LocalDate earliestWorkingDay(Stadium stadium, LocalDate today, ZonedDateTime nowLocal) {
+        LocalDate yesterday = today.minusDays(1);
+        boolean stillRunning = SlotRules.hoursOf(stadium.weeklyHours().dayOf(yesterday)).stream()
+                .anyMatch(hour -> SlotRules.startOf(yesterday, hour).isAfter(nowLocal.toOffsetDateTime()));
+        return stillRunning ? yesterday : today;
+    }
+
+    /** An hour that has already started: no price, no deposit, nothing to join. */
+    private TimeSlot pastSlot(LocalDate workingDate, SlotRules.Hour hour) {
+        return TimeSlot.builder()
+                .startTime(hour.start())
+                .endTime(hour.end())
+                .startsAt(SlotRules.startOf(workingDate, hour))
+                .afterMidnight(hour.afterMidnight() ? Boolean.TRUE : null)
+                .available(false)
+                .status(TimeSlot.PAST)
+                .build();
+    }
+
+    /**
+     * @param workingDate the day whose opening this hour belongs to - what the pricing
+     *                    rules and promotions match on, even for an hour after midnight
+     */
+    private TimeSlot buildSlot(Stadium stadium, LocalDate workingDate, SlotRules.Hour hour,
                                String status, List<PricingRule> rules, List<Game> waitingGames) {
-        OffsetDateTime slotStartUtc = date.atTime(slotStart).atZone(TASHKENT).toOffsetDateTime();
-        OffsetDateTime slotEndUtc = date.atTime(slotEnd).atZone(TASHKENT).toOffsetDateTime();
+        LocalTime slotStart = hour.start();
+        OffsetDateTime slotStartUtc = SlotRules.startOf(workingDate, hour);
+        OffsetDateTime slotEndUtc = slotStartUtc.plusHours(1);
 
         boolean available = TimeSlot.FREE.equals(status);
 
         TimeSlot.TimeSlotBuilder slot = TimeSlot.builder()
                 .startTime(slotStart)
-                .endTime(slotEnd)
+                .endTime(hour.end())
+                .startsAt(slotStartUtc)
+                .afterMidnight(hour.afterMidnight() ? Boolean.TRUE : null)
                 .available(available)
                 .status(status);
 
         if (available) {
-            long base = priceCalculator.hourPrice(rules, date, slotStart, stadium.getPricePerHour());
-            Optional<Promotion> promo = promotionService.getBestPromotion(stadium.getId(), slotStartUtc);
+            // The WORKING day's weekday selects the rules and the promotion, so Saturday's
+            // 00:00 slot is priced by Saturday's rules for 00:00-01:00.
+            long base = priceCalculator.hourPrice(rules, workingDate, slotStart, stadium.getPricePerHour());
+            Optional<Promotion> promo = promotionService.getBestPromotion(stadium.getId(), slotStartUtc,
+                    WeeklyHours.dayOfWeekOf(workingDate));
             // The same owner price per hour a booking is priced from, shown as the player
             // price, so the slots a player picks add up to exactly what the booking charges.
             long net = promo.map(p -> BookingPriceCalculator.applyDiscount(base, p.getDiscountPercent())).orElse(base);

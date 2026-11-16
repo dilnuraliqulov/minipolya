@@ -6,6 +6,7 @@ import uz.minipolya.minipolya_backend.entity.PricingRule;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.repository.PricingRuleRepository;
 import uz.minipolya.minipolya_backend.util.PriceCalculator;
+import uz.minipolya.minipolya_backend.util.WeeklyHours;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -35,18 +36,29 @@ public class BookingPriceCalculator {
     /**
      * The owner's price of the one-hour booking starting at {@code startsAt}, in tiyin. Its
      * player price is {@code playerAmount} of it, the same figure the slot shows.
+     *
+     * <p>Priced by the hour's <b>working</b> day (the day whose opening started it), so an
+     * hour after midnight costs what the evening it belongs to costs. An hour outside every
+     * window — a booking stored before the stadium's hours changed — falls back to its own
+     * date, so it still prices rather than failing.
      */
     public long hourPrice(Stadium stadium, OffsetDateTime startsAt) {
         List<PricingRule> rules = pricingRuleRepository.findByStadiumIdAndIsActiveTrue(stadium.getId());
         ZonedDateTime slot = startsAt.atZoneSameInstant(TASHKENT);
-        return finalHourPrice(stadium, rules, slot.toLocalDate(), slot.toLocalTime(), slot.toOffsetDateTime());
+        LocalDate workingDate = stadium.weeklyHours().workingDate(slot).orElse(slot.toLocalDate());
+        return finalHourPrice(stadium, rules, workingDate, slot.toLocalTime(), slot.toOffsetDateTime());
     }
 
-    /** Final price for one hour, in tiyin: base rule/fallback price minus the best promotion covering it. */
+    /**
+     * Final price for one hour, in tiyin: base rule/fallback price minus the best promotion
+     * covering it. Both the rules and the promotion are matched on {@code workingDate}'s
+     * weekday and the slot's own clock time.
+     */
     public long finalHourPrice(Stadium stadium, List<PricingRule> rules,
-                               LocalDate date, LocalTime slotStart, OffsetDateTime slotStartUtc) {
-        long base = priceCalculator.hourPrice(rules, date, slotStart, stadium.getPricePerHour());
-        return promotionService.getBestPromotion(stadium.getId(), slotStartUtc)
+                               LocalDate workingDate, LocalTime slotStart, OffsetDateTime slotStartUtc) {
+        long base = priceCalculator.hourPrice(rules, workingDate, slotStart, stadium.getPricePerHour());
+        return promotionService.getBestPromotion(stadium.getId(), slotStartUtc,
+                        WeeklyHours.dayOfWeekOf(workingDate))
                 .map(promo -> applyDiscount(base, promo.getDiscountPercent()))
                 .orElse(base);
     }

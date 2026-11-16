@@ -96,7 +96,8 @@ class GameBookingPriceParityTest {
         PromotionService promotionService = mock(PromotionService.class);
         Promotion promotion = Promotion.builder().name("Autumn 10%").discountPercent(DISCOUNT_PERCENT)
                 .isActive(true).build();
-        when(promotionService.getBestPromotion(any(UUID.class), any(OffsetDateTime.class)))
+        when(promotionService.getBestPromotion(any(UUID.class), any(OffsetDateTime.class),
+                org.mockito.ArgumentMatchers.anyInt()))
                 .thenReturn(Optional.of(promotion));
 
         // The one shared calculator both services use.

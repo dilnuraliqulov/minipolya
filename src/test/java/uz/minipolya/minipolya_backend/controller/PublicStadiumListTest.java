@@ -150,8 +150,9 @@ class PublicStadiumListTest {
                 .andExpect(jsonPath("$.data.content[21].averageRating").value(4.0))
                 .andExpect(jsonPath("$.data.content[21].isFavorited").value(true));
 
-        // auth user, settings, stadiums (+owner +amenities), count, ratings, photos, favorites
-        assertThat(queries.count()).isLessThanOrEqualTo(8);
+        // auth user, settings, stadiums (+owner +amenities), count, ratings, photos,
+        // favorites, booked spans, closures, weekly schedules
+        assertThat(queries.count()).isLessThanOrEqualTo(11);
 
         queries.start();
         mvc.perform(get("/api/favorites").param("size", "50").header("Authorization", token))

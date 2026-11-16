@@ -17,8 +17,10 @@ import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.PricingRuleRepository;
+import uz.minipolya.minipolya_backend.repository.StadiumHoursRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.util.PriceCalculator;
+import uz.minipolya.minipolya_backend.util.WeeklyHours;
 
 import java.time.Clock;
 import java.time.LocalDate;
@@ -31,6 +33,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -71,9 +74,9 @@ class AvailabilityServiceTest {
     }
 
     private AvailabilityService newServiceWithClock(Clock clock) {
-        return new AvailabilityService(stadiumRepository, bookingRepository, pricingRuleRepository,
-                gameRepository, participantRepository, new PriceCalculator(), promotionService,
-                closureService, new AppProperties(), clock, CardPricing.withDefaults());
+        return new AvailabilityService(stadiumRepository, mock(StadiumHoursRepository.class), bookingRepository,
+                pricingRuleRepository, gameRepository, participantRepository, new PriceCalculator(),
+                promotionService, closureService, new AppProperties(), clock, CardPricing.withDefaults());
     }
 
     /** A clock fixed at the given Tashkent-local date and time. */
@@ -93,6 +96,110 @@ class AvailabilityServiceTest {
         return response.getSlots().stream()
                 .filter(s -> s.getStartTime().equals(start))
                 .findFirst().orElseThrow();
+    }
+
+    // ---- a working day that runs past midnight ----
+
+    /** The whole week 08:00-02:00, so every day's list ends with 00:00 and 01:00. */
+    private void openPastMidnight() {
+        stadium.setWeeklyHours(WeeklyHours.sameEveryDay(LocalTime.of(8, 0), LocalTime.of(2, 0)));
+    }
+
+    @Test
+    void theWorkingDaysSlotsEndOnTheNextDate() {
+        openPastMidnight();
+        stubStadium();
+
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
+
+        assertThat(response.getSlots()).hasSize(18);
+        List<LocalTime> starts = response.getSlots().stream().map(TimeSlot::getStartTime).toList();
+        assertThat(starts).endsWith(LocalTime.of(23, 0), LocalTime.MIDNIGHT, LocalTime.of(1, 0));
+        // The last hour really starts at 01:00 on the day after the working date.
+        assertThat(slotAt(response, LocalTime.of(1, 0)).getStartsAt())
+                .isEqualTo(date.plusDays(1).atTime(1, 0).atZone(TASHKENT).toOffsetDateTime());
+    }
+
+    @Test
+    void anAfterMidnightSlotCarriesTheFlagAndAnOrdinaryOneDoesNot() {
+        openPastMidnight();
+        stubStadium();
+
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
+
+        assertThat(slotAt(response, LocalTime.MIDNIGHT).getAfterMidnight()).isTrue();
+        assertThat(slotAt(response, LocalTime.of(1, 0)).getAfterMidnight()).isTrue();
+        // 23:00-00:00 still starts before midnight.
+        assertThat(slotAt(response, LocalTime.of(23, 0)).getAfterMidnight()).isNull();
+        assertThat(slotAt(response, LocalTime.of(20, 0)).getAfterMidnight()).isNull();
+    }
+
+    @Test
+    void aDayClosingAtMidnightStopsAtTwentyThree() {
+        stadium.setWeeklyHours(WeeklyHours.sameEveryDay(LocalTime.of(8, 0), LocalTime.MIDNIGHT));
+        stubStadium();
+
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
+
+        assertThat(response.getSlots()).hasSize(16);
+        assertThat(response.getSlots().getLast().getStartTime()).isEqualTo(LocalTime.of(23, 0));
+        assertThat(response.getSlots().getLast().getAfterMidnight()).isNull();
+    }
+
+    @Test
+    void aClosedDayHasNoSlots() {
+        List<WeeklyHours.Day> days = new java.util.ArrayList<>(
+                WeeklyHours.sameEveryDay(LocalTime.of(8, 0), LocalTime.of(22, 0)).days());
+        int dayOfWeek = WeeklyHours.dayOfWeekOf(date);
+        days.set(dayOfWeek, WeeklyHours.Day.closed(dayOfWeek));
+        stadium.setWeeklyHours(WeeklyHours.of(days));
+        stubStadium();
+
+        assertThat(service.getAvailability(STADIUM_ID, date).getSlots()).isEmpty();
+    }
+
+    @Test
+    void aBookingAfterMidnightMarksItsOwnSlotBooked() {
+        openPastMidnight();
+        stubStadium();
+        // 01:00 on the day AFTER the working date: the working day's last slot.
+        OffsetDateTime start = date.plusDays(1).atTime(1, 0).atZone(TASHKENT).toOffsetDateTime();
+        when(bookingRepository.findActiveForStadiumBetween(eq(STADIUM_ID), any(), any()))
+                .thenReturn(List.of(Booking.builder().stadium(stadium).status("confirmed")
+                        .startsAt(start).endsAt(start.plusHours(1)).build()));
+
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
+
+        assertThat(slotAt(response, LocalTime.of(1, 0)).getStatus()).isEqualTo("booked");
+        assertThat(slotAt(response, LocalTime.MIDNIGHT).getStatus()).isEqualTo("free");
+    }
+
+    @Test
+    void aFullDayClosureOnTheWorkingDayClosesTheNight() {
+        openPastMidnight();
+        stubStadium();
+        // The closure is asked about the working date, whatever the hour's clock time.
+        when(closureService.isClosedAt(eq(STADIUM_ID), eq(date), any())).thenReturn(true);
+
+        AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);
+
+        assertThat(response.getSlots()).allSatisfy(slot ->
+                assertThat(slot.getStatus()).isIn("closed", "past"));
+    }
+
+    @Test
+    void anAfterMidnightHourThatHasAlreadyStartedIsPast() {
+        openPastMidnight();
+        stubStadium();
+        LocalDate workingDay = LocalDate.of(2026, 10, 27);
+        // 00:30 on the 28th: the working day of the 27th still has its 01:00 slot to come.
+        AvailabilityService justAfterMidnight =
+                newServiceWithClock(clockAt(workingDay.plusDays(1), LocalTime.of(0, 30)));
+
+        AvailabilityResponse response = justAfterMidnight.getAvailability(STADIUM_ID, workingDay);
+
+        assertThat(slotAt(response, LocalTime.MIDNIGHT).getStatus()).isEqualTo("past");
+        assertThat(slotAt(response, LocalTime.of(1, 0)).getStatus()).isEqualTo("free");
     }
 
     // ---- an hour that has already started is listed as past, never free ----
@@ -263,7 +370,7 @@ class AvailabilityServiceTest {
     @Test
     void activePromotionAppliesDiscount() {
         stubStadium();
-        when(promotionService.getBestPromotion(eq(STADIUM_ID), any())).thenReturn(Optional.of(
+        when(promotionService.getBestPromotion(eq(STADIUM_ID), any(), anyInt())).thenReturn(Optional.of(
                 Promotion.builder().discountPercent(20).name("Happy Hour").build()));
 
         AvailabilityResponse response = service.getAvailability(STADIUM_ID, date);

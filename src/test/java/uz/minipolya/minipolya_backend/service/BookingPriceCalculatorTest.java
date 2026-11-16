@@ -42,7 +42,7 @@ class BookingPriceCalculatorTest {
         calculator = new BookingPriceCalculator(new PriceCalculator(), pricingRuleRepository, promotionService);
         stadium = Stadium.builder().id(STADIUM_ID).pricePerHour(50_000L).build();
         // Default: no promotion for any hour.
-        when(promotionService.getBestPromotion(eq(STADIUM_ID), any())).thenReturn(Optional.empty());
+        when(promotionService.getBestPromotion(eq(STADIUM_ID), any(), org.mockito.ArgumentMatchers.anyInt())).thenReturn(Optional.empty());
     }
 
     private int dow(LocalDate date) {
@@ -68,7 +68,8 @@ class BookingPriceCalculatorTest {
     @Test
     void aPromotionOnTheHourIsApplied() {
         when(pricingRuleRepository.findByStadiumIdAndIsActiveTrue(STADIUM_ID)).thenReturn(List.of());
-        when(promotionService.getBestPromotion(eq(STADIUM_ID), eq(at(MONDAY, 19))))
+        when(promotionService.getBestPromotion(eq(STADIUM_ID), eq(at(MONDAY, 19)),
+                org.mockito.ArgumentMatchers.anyInt()))
                 .thenReturn(Optional.of(Promotion.builder().discountPercent(20).name("Happy Hour").build()));
 
         assertThat(calculator.hourPrice(stadium, at(MONDAY, 19))).isEqualTo(40_000); // 50k - 20%

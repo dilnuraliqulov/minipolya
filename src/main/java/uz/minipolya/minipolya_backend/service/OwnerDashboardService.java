@@ -28,8 +28,8 @@ import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.GameTeamRepository;
 import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
+import uz.minipolya.minipolya_backend.util.WeeklyHours;
 
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -89,8 +89,9 @@ public class OwnerDashboardService {
         OffsetDateTime monthStartUtc = startOfDay(today.withDayOfMonth(1));
         OffsetDateTime monthEndUtc = startOfDay(today.withDayOfMonth(1).plusMonths(1));
 
-        int slotsPerDay = (int) Duration.between(stadium.getOpenTime(), stadium.getCloseTime()).toHours();
-        int totalWeekSlots = slotsPerDay * 7;
+        // Each day of the week has its own hours, and a day may be closed, so the week's
+        // slots are the sum of the seven days rather than one day times seven.
+        int totalWeekSlots = stadium.weeklyHours().weekHours();
         int bookedWeekSlots = bookingRepository.findByStadiumIdAndStartsAtBetween(stadiumId, weekStartUtc, weekEndUtc)
                 .stream()
                 .filter(b -> OCCUPIED_STATUSES.contains(b.getStatus()))
@@ -197,7 +198,7 @@ public class OwnerDashboardService {
         LocalDate rangeFrom = from != null ? from : today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
         LocalDate rangeTo = to != null ? to : rangeFrom.plusDays(6);
 
-        int slotsPerDay = (int) Duration.between(stadium.getOpenTime(), stadium.getCloseTime()).toHours();
+        WeeklyHours weeklyHours = stadium.weeklyHours();
         List<Booking> all = bookingRepository.findByStadiumIdAndStartsAtBetween(
                 stadiumId, startOfDay(rangeFrom), startOfDay(rangeTo.plusDays(1)));
 
@@ -245,7 +246,7 @@ public class OwnerDashboardService {
                     .date(date)
                     .bookings(bookingResponseFactory.forOwner(dayBookings))
                     .waitingGames(waitingByDate.getOrDefault(date, List.of()))
-                    .totalSlots(slotsPerDay)
+                    .totalSlots(weeklyHours.dayOf(date).lengthHours())
                     .bookedSlots(bookedSlots)
                     .revenue(revenue)
                     .build());

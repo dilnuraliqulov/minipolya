@@ -14,7 +14,10 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.UuidGenerator;
 
+import uz.minipolya.minipolya_backend.util.WeeklyHours;
+
 import java.time.LocalTime;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -52,4 +55,21 @@ public class StadiumHours {
 
     @Column(name = "close_time")
     private LocalTime closeTime;
+
+    /**
+     * The schedule those rows describe, or — when they are not all there — the legacy
+     * {@code openTime} / {@code closeTime} pair as "the same every day", so a stadium whose
+     * rows are missing stays bookable. The one place rows become a {@link WeeklyHours}:
+     * {@link Stadium#weeklyHours()} and the stadium list's grouped query both come here.
+     */
+    public static WeeklyHours toWeekly(List<StadiumHours> rows, LocalTime openTime, LocalTime closeTime) {
+        if (rows != null && rows.size() == WeeklyHours.DAYS) {
+            return WeeklyHours.of(rows.stream()
+                    .map(row -> row.isClosed()
+                            ? WeeklyHours.Day.closed(row.getDayOfWeek())
+                            : WeeklyHours.Day.open(row.getDayOfWeek(), row.getOpenTime(), row.getCloseTime()))
+                    .toList());
+        }
+        return WeeklyHours.sameEveryDay(openTime, closeTime);
+    }
 }

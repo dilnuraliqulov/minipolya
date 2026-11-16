@@ -8,6 +8,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -39,8 +40,22 @@ public class AvailabilityResponse {
         public static final String CLOSED = "closed";
         public static final String PAST = "past";
 
+        /** Tashkent wall clock. An hour after midnight reads 00:00/01:00 as it is shown. */
         private LocalTime startTime;
         private LocalTime endTime;
+
+        /**
+         * The real instant the hour starts, UTC. For an hour after midnight this is on the
+         * calendar day after the working day the slot is listed under, which is exactly what
+         * a booking of it stores.
+         */
+        private OffsetDateTime startsAt;
+
+        /**
+         * True when the hour falls after midnight, so it belongs to the working day that
+         * opened the evening before. Absent otherwise.
+         */
+        private Boolean afterMidnight;
         /** True exactly when {@code status} is {@code free}. */
         private boolean available;
         /**

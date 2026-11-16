@@ -17,14 +17,17 @@ public class PriceCalculator {
 
     /**
      * @param activeRules         active pricing rules for the stadium (any day)
-     * @param date                the hour's local date (its weekday selects the rules)
-     * @param startTime           the hour's local start
+     * @param workingDate         the hour's <b>working</b> date: the day whose opening
+     *                            started it, whose weekday selects the rules. For an hour
+     *                            after midnight that is the date before the one the hour
+     *                            falls on, so Saturday's 00:00 slot uses Saturday's rules
+     * @param startTime           the hour's local start (its own clock time)
      * @param defaultPricePerHour stadium fallback price when no rule covers the hour
      * @return the hour's price in tiyin
      */
-    public long hourPrice(List<PricingRule> activeRules, LocalDate date, LocalTime startTime,
+    public long hourPrice(List<PricingRule> activeRules, LocalDate workingDate, LocalTime startTime,
                           long defaultPricePerHour) {
-        return priceForHour(activeRules, toDayOfWeek(date), startTime, defaultPricePerHour);
+        return priceForHour(activeRules, toDayOfWeek(workingDate), startTime, defaultPricePerHour);
     }
 
     private long priceForHour(List<PricingRule> activeRules, int dayOfWeek, LocalTime slotStart, long defaultPrice) {

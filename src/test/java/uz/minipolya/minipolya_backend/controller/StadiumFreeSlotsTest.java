@@ -144,7 +144,7 @@ class StadiumFreeSlotsTest {
     }
 
     @Test
-    void twoQueriesCoverAWholePageOfStadiums() {
+    void aFixedFewQueriesCoverAWholePageOfStadiums() {
         List<Stadium> stadiums = new ArrayList<>();
         for (int i = 0; i < 22; i++) {
             Stadium stadium = data.stadium(owner, "Slots Page " + i);
@@ -156,7 +156,9 @@ class StadiumFreeSlotsTest {
         queries.start();
         Map<UUID, Integer> counts = availability.freeSlotCounts(stadiums, date);
 
-        assertThat(queries.count()).isEqualTo(2);
+        // Booked spans, closures and the weekly schedules: three grouped queries,
+        // however many stadiums the page holds.
+        assertThat(queries.count()).isEqualTo(3);
         assertThat(counts).hasSize(22).allSatisfy((id, count) -> assertThat(count).isEqualTo(ALL_HOURS - 2));
     }
 

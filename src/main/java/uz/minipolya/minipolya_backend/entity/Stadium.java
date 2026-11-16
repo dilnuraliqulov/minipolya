@@ -162,14 +162,7 @@ public class Stadium {
      * for want of them.
      */
     public WeeklyHours weeklyHours() {
-        if (hours != null && hours.size() == WeeklyHours.DAYS) {
-            return WeeklyHours.of(hours.stream()
-                    .map(day -> day.isClosed()
-                            ? WeeklyHours.Day.closed(day.getDayOfWeek())
-                            : WeeklyHours.Day.open(day.getDayOfWeek(), day.getOpenTime(), day.getCloseTime()))
-                    .toList());
-        }
-        return WeeklyHours.sameEveryDay(openTime, closeTime);
+        return StadiumHours.toWeekly(hours, openTime, closeTime);
     }
 
     /**
