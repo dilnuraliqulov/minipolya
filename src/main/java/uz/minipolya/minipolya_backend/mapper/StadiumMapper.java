@@ -37,6 +37,11 @@ public interface StadiumMapper {
     @Mapping(target = "cancellationHours", ignore = true)
     @Mapping(target = "photos", ignore = true)
     @Mapping(target = "amenities", ignore = true)
+    // The weekly schedule goes through Stadium.setWeeklyHours, which also keeps
+    // openTime/closeTime in step; the service applies it.
+    @Mapping(target = "hours", ignore = true)
+    @Mapping(target = "openTime", ignore = true)
+    @Mapping(target = "closeTime", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
     Stadium toEntity(CreateStadiumRequest request);
@@ -57,6 +62,8 @@ public interface StadiumMapper {
     @Mapping(source = "owner.name", target = "ownerName")
     @Mapping(source = "owner.phone", target = "ownerPhone")
     @Mapping(source = "cancellationHours", target = "cancellationPolicy.cancellationHours")
+    // The schedule is rendered from the entity's WeeklyHours by the service.
+    @Mapping(target = "hours", ignore = true)
     StadiumDetailResponse toDetailResponse(Stadium stadium);
 
     /** Where a game is played (team game screens, the challenge board); the cover photo is the service's. */
@@ -82,6 +89,9 @@ public interface StadiumMapper {
     @Mapping(target = "statusReason", ignore = true)
     @Mapping(target = "photos", ignore = true)
     @Mapping(target = "amenities", ignore = true)
+    @Mapping(target = "hours", ignore = true)
+    @Mapping(target = "openTime", ignore = true)
+    @Mapping(target = "closeTime", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
     void updateStadiumFromRequest(UpdateStadiumRequest request, @MappingTarget Stadium stadium);

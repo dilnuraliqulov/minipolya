@@ -27,7 +27,9 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * A football pitch. 1 stadium = 1 pitch. Visible to players only when
@@ -174,16 +176,28 @@ public class Stadium {
         if (hours == null) {
             hours = new ArrayList<>();
         }
-        hours.clear();
-        for (WeeklyHours.Day day : weekly.days()) {
-            hours.add(StadiumHours.builder()
-                    .stadium(this)
-                    .dayOfWeek(day.dayOfWeek())
-                    .closed(day.closed())
-                    .openTime(day.open())
-                    .closeTime(day.close())
-                    .build());
+        // The seven rows are updated in place, keyed by day of week, never cleared and
+        // re-added: Hibernate orders the inserts before the deletes, so replacing them
+        // would collide with uq_stadium_hours_day.
+        Map<Integer, StadiumHours> existing = new HashMap<>();
+        for (StadiumHours row : hours) {
+            existing.put(row.getDayOfWeek(), row);
         }
+        List<StadiumHours> kept = new ArrayList<>(WeeklyHours.DAYS);
+        for (WeeklyHours.Day day : weekly.days()) {
+            StadiumHours row = existing.remove(day.dayOfWeek());
+            if (row == null) {
+                row = StadiumHours.builder().stadium(this).dayOfWeek(day.dayOfWeek()).build();
+            }
+            row.setClosed(day.closed());
+            row.setOpenTime(day.open());
+            row.setCloseTime(day.close());
+            kept.add(row);
+        }
+        // Anything left over is a duplicate or an out-of-range day: orphan removal deletes it.
+        hours.clear();
+        hours.addAll(kept);
+
         weekly.days().stream()
                 .filter(day -> !day.closed())
                 .findFirst()

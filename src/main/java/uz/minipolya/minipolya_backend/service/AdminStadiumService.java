@@ -13,6 +13,7 @@ import uz.minipolya.minipolya_backend.audit.AuditEntityType;
 import uz.minipolya.minipolya_backend.audit.AuditEntry;
 import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.request.AdminStadiumBookingTermsRequest;
+import uz.minipolya.minipolya_backend.dto.request.AdminStadiumHoursRequest;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumResponse;
 import uz.minipolya.minipolya_backend.dto.response.StadiumDetailResponse;
@@ -31,6 +32,8 @@ import uz.minipolya.minipolya_backend.repository.StadiumSpecifications;
 import uz.minipolya.minipolya_backend.util.Districts;
 import uz.minipolya.minipolya_backend.util.Pagination;
 import uz.minipolya.minipolya_backend.util.Revenue;
+import uz.minipolya.minipolya_backend.util.WeeklyHours;
+import uz.minipolya.minipolya_backend.util.WeeklyHoursRules;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -158,6 +161,32 @@ public class AdminStadiumService {
         }
         log.info("Admin {} set booking terms of stadium {}: minBookingAmount={} cancellationHours={}",
                 adminUserId, stadiumId, minimum, hours);
+        return get(stadiumId);
+    }
+
+    /**
+     * The admin edits a stadium's weekly opening schedule, in any status, agreed with the
+     * owner. The whole week is sent each time and checked by the same {@code WeeklyHoursRules}
+     * the owner's create and update use. Audited {@code STADIUM_HOURS_CHANGED}.
+     */
+    @Transactional
+    public AdminStadiumDetailResponse updateHours(UUID stadiumId, AdminStadiumHoursRequest request,
+                                                  UUID adminUserId) {
+        Stadium stadium = stadiumRepository.findForUpdate(stadiumId)
+                .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
+        WeeklyHours schedule = WeeklyHoursRules.require(request.getHours());
+
+        String before = WeeklyHoursRules.describe(stadium.weeklyHours());
+        stadium.setWeeklyHours(schedule);
+        stadiumRepository.saveAndFlush(stadium);
+
+        AuditEntry entry = AuditEntry.admin(adminUserId, AuditAction.STADIUM_HOURS_CHANGED)
+                .entity(AuditEntityType.STADIUM, stadium.getId(), AuditLabels.stadium(stadium))
+                .change("hours", before, WeeklyHoursRules.describe(schedule));
+        if (!entry.getChanges().isEmpty()) {
+            auditService.record(entry);
+        }
+        log.info("Admin {} set the opening hours of stadium {}", adminUserId, stadiumId);
         return get(stadiumId);
     }
 

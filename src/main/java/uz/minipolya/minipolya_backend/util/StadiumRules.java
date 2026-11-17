@@ -2,6 +2,7 @@ package uz.minipolya.minipolya_backend.util;
 
 import uz.minipolya.minipolya_backend.dto.request.CreateStadiumRequest;
 import uz.minipolya.minipolya_backend.dto.request.UpdateStadiumRequest;
+import uz.minipolya.minipolya_backend.dto.request.WeeklyHoursRequest;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 
@@ -28,6 +29,10 @@ public final class StadiumRules {
     public static final long PRICE_MIN = 1_000_000L;
     /** Tiyin: 5 000 000 so'm. */
     public static final long PRICE_MAX = 500_000_000L;
+
+    public static final String BOTH_SCHEDULE_FORMS = "Send either hours or openTime and closeTime, not both";
+
+    public static final String BOTH_TIMES = "Send both openTime and closeTime";
 
     /** Uzbekistan's bounding box. */
     private static final BigDecimal LAT_MIN = new BigDecimal("37.1");
@@ -62,13 +67,36 @@ public final class StadiumRules {
             throw new BadRequestException("pricePerHour is required");
         }
         price(r.getPricePerHour());
-        if (r.getOpenTime() == null) {
-            throw new BadRequestException("openTime is required");
+        requireSchedule(r.getHours(), r.getOpenTime(), r.getCloseTime(), true);
+    }
+
+    /**
+     * The hours a create or update asks for: the weekly schedule when {@code hours} is sent,
+     * else the one pair as "the same every day". Null when an update sends neither, which
+     * leaves the stored schedule alone.
+     *
+     * @param required whether a schedule must be there at all (create)
+     */
+    public static WeeklyHours requireSchedule(WeeklyHoursRequest hours, LocalTime open, LocalTime close,
+                                              boolean required) {
+        if (hours != null && (open != null || close != null)) {
+            throw new BadRequestException(BOTH_SCHEDULE_FORMS);
         }
-        if (r.getCloseTime() == null) {
-            throw new BadRequestException("closeTime is required");
+        if (hours != null) {
+            return WeeklyHoursRules.require(hours);
         }
-        hours(r.getOpenTime(), r.getCloseTime());
+        if (open == null && close == null) {
+            if (required) {
+                throw new BadRequestException("openTime is required");
+            }
+            return null;
+        }
+        if (open == null || close == null) {
+            throw new BadRequestException(required
+                    ? (open == null ? "openTime is required" : "closeTime is required")
+                    : BOTH_TIMES);
+        }
+        return WeeklyHoursRules.sameEveryDay(open, close);
     }
 
     /**
@@ -101,13 +129,8 @@ public final class StadiumRules {
         if (r.getPricePerHour() != null) {
             price(r.getPricePerHour());
         }
-        if (r.getOpenTime() != null || r.getCloseTime() != null) {
-            LocalTime open = r.getOpenTime() != null ? r.getOpenTime() : current.getOpenTime();
-            LocalTime close = r.getCloseTime() != null ? r.getCloseTime() : current.getCloseTime();
-            if (open != null && close != null) {
-                hours(open, close);
-            }
-        }
+        // The hours are validated by the service through requireSchedule, which also decides
+        // whether this update touches them at all.
     }
 
     /** Trimmed; blank is none (null). At most 150 characters. */
@@ -166,20 +189,4 @@ public final class StadiumRules {
         }
     }
 
-    /**
-     * Bookings start on the hour and slots are cut from {@code openTime}, and availability
-     * walks open → close within one day: so both on the hour, and close after open (D14, D15).
-     */
-    private static void hours(LocalTime open, LocalTime close) {
-        if (!onTheHour(open) || !onTheHour(close)) {
-            throw new BadRequestException("openTime and closeTime must be on the hour");
-        }
-        if (!close.isAfter(open)) {
-            throw new BadRequestException("closeTime must be after openTime; closing after midnight is not supported");
-        }
-    }
-
-    private static boolean onTheHour(LocalTime time) {
-        return time.getMinute() == 0 && time.getSecond() == 0 && time.getNano() == 0;
-    }
 }

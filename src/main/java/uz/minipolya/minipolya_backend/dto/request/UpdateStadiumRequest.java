@@ -48,9 +48,14 @@ public class UpdateStadiumRequest {
     @Pattern(regexp = "natural|artificial|hybrid", message = "surfaceType must be one of: natural, artificial, hybrid")
     private String surfaceType;
 
+    /** With {@code closeTime}: the same hours every day. Not with {@code hours}. */
     private LocalTime openTime;
 
     private LocalTime closeTime;
+
+    /** The whole weekly schedule, replacing the old one. Not with {@code openTime}. */
+    @Valid
+    private WeeklyHoursRequest hours;
 
     private Long pricePerHour;
 

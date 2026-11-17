@@ -10,6 +10,7 @@ import lombok.NoArgsConstructor;
 
 import uz.minipolya.minipolya_backend.entity.Booking;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -35,6 +36,20 @@ public class BookingResponse {
     private String status;
     private OffsetDateTime startsAt;
     private OffsetDateTime endsAt;
+
+    /**
+     * The working day this hour belongs to: the day whose opening started it. The same as
+     * {@code startsAt}'s own Tashkent date except for an hour after midnight, which belongs
+     * to the evening before (a 00:00 Sunday slot of a Saturday 08:00-02:00 stadium has the
+     * Saturday date here).
+     */
+    private LocalDate workingDate;
+
+    /**
+     * True when the hour falls after midnight, so it is listed under the previous working
+     * day. Absent otherwise.
+     */
+    private Boolean afterMidnight;
     private Integer durationHours;
 
     /**

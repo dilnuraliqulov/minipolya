@@ -40,8 +40,15 @@ public class StadiumDetailResponse {
     private String description;
     private String format;
     private String surfaceType;
+    /** The first open day's opening, kept for clients that read one pair of hours. */
     private LocalTime openTime;
+    /** The first open day's closing. */
     private LocalTime closeTime;
+    /**
+     * The weekly opening schedule, Monday first, always seven days. A {@code closeTime} at
+     * or before the day's {@code openTime} means the next morning; 00:00 means midnight.
+     */
+    private List<DayHoursResponse> hours;
     /**
      * Tiyin, one hour at the stadium's default price. Player responses: the one price the
      * player pays. Owner and admin responses: the owner's own price, as they set it.

@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.AddStadiumNoteRequest;
 import uz.minipolya.minipolya_backend.dto.request.AdminStadiumBookingTermsRequest;
+import uz.minipolya.minipolya_backend.dto.request.AdminStadiumHoursRequest;
 import uz.minipolya.minipolya_backend.dto.request.AdminUpdateStadiumStatusRequest;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminStadiumResponse;
@@ -73,6 +74,13 @@ public class AdminStadiumController {
                                                                       @PathVariable UUID id,
                                                                       @RequestBody AdminStadiumBookingTermsRequest request) {
         return ApiResponse.ok(adminStadiumService.updateBookingTerms(id, request, adminUserId), "Booking terms updated");
+    }
+
+    @PutMapping("/api/admin/stadiums/{id}/hours")
+    public ApiResponse<AdminStadiumDetailResponse> updateHours(@AuthenticationPrincipal UUID adminUserId,
+                                                               @PathVariable UUID id,
+                                                               @Valid @RequestBody AdminStadiumHoursRequest request) {
+        return ApiResponse.ok(adminStadiumService.updateHours(id, request, adminUserId), "Opening hours updated");
     }
 
     @PutMapping("/api/admin/stadiums/{id}/status")

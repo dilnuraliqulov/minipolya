@@ -8,9 +8,12 @@ import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.mapper.BookingMapper;
 import uz.minipolya.minipolya_backend.provider.DeclineReason;
 import uz.minipolya.minipolya_backend.util.CancellationPolicy;
+import uz.minipolya.minipolya_backend.util.WeeklyHours;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -271,9 +274,27 @@ public class BookingResponseFactory {
         return response;
     }
 
+    /**
+     * Which working day the booking's hour belongs to, and whether it falls after midnight.
+     * The client shows the real date from {@code startsAt} and names the night from these,
+     * rather than working the rule out for itself. An hour that is outside every window — a
+     * booking stored before the stadium's hours changed — keeps its own date and no flag.
+     */
+    static void applyWorkingDay(BookingResponse response, Booking booking) {
+        if (booking.getStartsAt() == null || booking.getStadium() == null) {
+            return;
+        }
+        ZonedDateTime start = booking.getStartsAt().atZoneSameInstant(WeeklyHours.TASHKENT);
+        LocalDate workingDate = booking.getStadium().weeklyHours().workingDate(start)
+                .orElse(start.toLocalDate());
+        response.setWorkingDate(workingDate);
+        response.setAfterMidnight(workingDate.equals(start.toLocalDate()) ? null : Boolean.TRUE);
+    }
+
     private BookingResponse build(Booking booking, OffsetDateTime now, LongSupplier refundable) {
         BookingResponse response = bookingMapper.toResponse(booking);
         response.setRemainderMark(booking.getRemainderMark());
+        applyWorkingDay(response, booking);
         if (booking.getStartsAt() == null || booking.getStadium() == null) {
             return response; // not enough to say anything about cancelling
         }

@@ -202,15 +202,16 @@ class StadiumServiceTest {
     }
 
     @Test
-    void updateRefusesHoursThatWouldCloseAfterMidnight() {
+    void updateRefusesHalfOfTheHoursAndNothingIsSaved() {
         Stadium existing = Stadium.builder().id(STADIUM_ID).owner(User.builder().id(OWNER_ID).build())
                 .openTime(LocalTime.of(8, 0)).closeTime(LocalTime.of(23, 0)).build();
         when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(existing));
 
+        // Closing after midnight is supported now, but one half of the pair is not enough.
         assertThatThrownBy(() -> stadiumService.update(OWNER_ID, STADIUM_ID,
                 UpdateStadiumRequest.builder().closeTime(LocalTime.of(2, 0)).build()))
                 .isInstanceOf(BadRequestException.class)
-                .hasMessage("closeTime must be after openTime; closing after midnight is not supported");
+                .hasMessage("Send both openTime and closeTime");
 
         verify(stadiumRepository, never()).saveAndFlush(any());
     }
