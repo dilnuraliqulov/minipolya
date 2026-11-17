@@ -3267,6 +3267,338 @@
           }
         },
         {
+          "name": "200 the owner sets a weekly schedule (Friday 08:00-02:00, Sunday closed)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('all seven days come back, Monday first', function () {",
+                  "    var h = pm.response.json().data.hours;",
+                  "    pm.expect(h).to.be.an('array').with.lengthOf(7);",
+                  "    pm.expect(h[0].dayOfWeek).to.eql(0);",
+                  "    pm.expect(h[6].dayOfWeek).to.eql(6);",
+                  "});",
+                  "pm.test('Friday closes after midnight, Sunday is closed', function () {",
+                  "    var h = pm.response.json().data.hours;",
+                  "    pm.expect(h[4].closeTime).to.eql('02:00:00');",
+                  "    pm.expect(h[6].closed).to.eql(true);",
+                  "    pm.expect(h[6].openTime, 'a closed day carries no times').to.eql(undefined);",
+                  "});",
+                  "pm.test('the legacy pair follows the first open day', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.openTime).to.eql('08:00:00');",
+                  "    pm.expect(d.closeTime).to.eql('00:00:00');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/stadiums/{{stadiumId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "stadiums",
+                "{{stadiumId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hours\": {\n    \"days\": [\n      {\n        \"dayOfWeek\": 0,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 1,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 2,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 3,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 4,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"02:00\"\n      },\n      {\n        \"dayOfWeek\": 5,\n        \"closed\": false,\n        \"openTime\": \"10:00\",\n        \"closeTime\": \"02:00\"\n      },\n      {\n        \"dayOfWeek\": 6,\n        \"closed\": true\n      }\n    ]\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "400 a closing time after 06:00 the next morning",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('says why', function () {",
+                  "    pm.expect(pm.response.json().message).to.eql(",
+                  "        'A closing time at or before the opening time means the next morning, so it must be 06:00 or earlier');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/stadiums/{{stadiumId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "stadiums",
+                "{{stadiumId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hours\": {\n    \"days\": [\n      {\n        \"dayOfWeek\": 0,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 1,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 2,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 3,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 4,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"07:00\"\n      },\n      {\n        \"dayOfWeek\": 5,\n        \"closed\": false,\n        \"openTime\": \"10:00\",\n        \"closeTime\": \"02:00\"\n      },\n      {\n        \"dayOfWeek\": 6,\n        \"closed\": true\n      }\n    ]\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "400 less than an hour before the next day opens",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('names both days', function () {",
+                  "    pm.expect(pm.response.json().message).to.eql(",
+                  "        \"There must be at least 1 hour between Friday's closing and Saturday's opening\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/stadiums/{{stadiumId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "stadiums",
+                "{{stadiumId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hours\": {\n    \"days\": [\n      {\n        \"dayOfWeek\": 0,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 1,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 2,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 3,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 4,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"02:00\"\n      },\n      {\n        \"dayOfWeek\": 5,\n        \"closed\": false,\n        \"openTime\": \"02:00\",\n        \"closeTime\": \"22:00\"\n      },\n      {\n        \"dayOfWeek\": 6,\n        \"closed\": true\n      }\n    ]\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "400 hours and openTime together",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('one form or the other', function () {",
+                  "    pm.expect(pm.response.json().message).to.eql('Send either hours or openTime and closeTime, not both');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/owner/stadiums/{{stadiumId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "owner",
+                "stadiums",
+                "{{stadiumId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"openTime\": \"08:00\",\n  \"closeTime\": \"23:00\",\n  \"hours\": {\n    \"days\": [\n      {\n        \"dayOfWeek\": 0,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 1,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 2,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 3,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 4,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"02:00\"\n      },\n      {\n        \"dayOfWeek\": 5,\n        \"closed\": false,\n        \"openTime\": \"10:00\",\n        \"closeTime\": \"02:00\"\n      },\n      {\n        \"dayOfWeek\": 6,\n        \"closed\": true\n      }\n    ]\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "200 the admin edits the weekly schedule",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('answers the admin detail with the schedule', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.hours).to.be.an('array').with.lengthOf(7);",
+                  "    pm.expect(d.hours[4].closeTime).to.eql('02:00:00');",
+                  "});",
+                  "pm.test('says what it did', function () {",
+                  "    pm.expect(pm.response.json().message).to.eql('Opening hours updated');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/hours",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{stadiumId}}",
+                "hours"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hours\": {\n    \"days\": [\n      {\n        \"dayOfWeek\": 0,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 1,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 2,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 3,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 4,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"02:00\"\n      },\n      {\n        \"dayOfWeek\": 5,\n        \"closed\": false,\n        \"openTime\": \"10:00\",\n        \"closeTime\": \"02:00\"\n      },\n      {\n        \"dayOfWeek\": 6,\n        \"closed\": true\n      }\n    ]\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "403 a player cannot edit the schedule",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('uses the ApiResponse envelope', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.have.property('success');",
+                  "    pm.expect(b).to.have.property('data');",
+                  "    pm.expect(b).to.have.property('message');",
+                  "});",
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/stadiums/{{stadiumId}}/hours",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stadiums",
+                "{{stadiumId}}",
+                "hours"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hours\": {\n    \"days\": [\n      {\n        \"dayOfWeek\": 0,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 1,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 2,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 3,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"00:00\"\n      },\n      {\n        \"dayOfWeek\": 4,\n        \"closed\": false,\n        \"openTime\": \"08:00\",\n        \"closeTime\": \"02:00\"\n      },\n      {\n        \"dayOfWeek\": 5,\n        \"closed\": false,\n        \"openTime\": \"10:00\",\n        \"closeTime\": \"02:00\"\n      },\n      {\n        \"dayOfWeek\": 6,\n        \"closed\": true\n      }\n    ]\n  }\n}"
+            }
+          }
+        },
+        {
           "name": "404 stadium detail, unknown id",
           "event": [
             {
@@ -6048,6 +6380,23 @@
                   "    pm.response.json().data.slots.forEach(function (s) {",
                   "        pm.expect(['free', 'booked', 'closed', 'past']).to.include(s.status);",
                   "        pm.expect(s.available).to.eql(s.status === 'free');",
+                  "    });",
+                  "});",
+                  "pm.test('every slot carries its real start instant', function () {",
+                  "    var slots = pm.response.json().data.slots;",
+                  "    pm.expect(slots).to.be.an('array');",
+                  "    slots.forEach(function (s) {",
+                  "        pm.expect(s.startsAt, 'startsAt').to.be.a('string');",
+                  "    });",
+                  "});",
+                  "pm.test('an afterMidnight slot is last and only present when true', function () {",
+                  "    var slots = pm.response.json().data.slots;",
+                  "    var night = slots.filter(function (s) { return s.afterMidnight === true; });",
+                  "    if (night.length > 0) {",
+                  "        pm.expect(slots.slice(-night.length)).to.eql(night);",
+                  "    }",
+                  "    slots.forEach(function (s) {",
+                  "        pm.expect([true, undefined]).to.include(s.afterMidnight);",
                   "    });",
                   "});"
                 ]
