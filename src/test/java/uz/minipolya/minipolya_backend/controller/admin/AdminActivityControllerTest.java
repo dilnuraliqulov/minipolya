@@ -95,6 +95,25 @@ class AdminActivityControllerTest {
     }
 
     @Test
+    void aPageOfBookingsOnManyStadiumsCostsTheSameFewQueries() throws Exception {
+        // Every booking answers its working day, which reads the stadium's weekly schedule:
+        // that must not become one query per stadium on the page.
+        User player = data.user("Many Stadiums");
+        for (int i = 0; i < 20; i++) {
+            data.booking(data.stadium(owner, "Spread Arena " + i), player, BASE.plusHours(i), "confirmed");
+        }
+        queries.start();
+
+        mvc.perform(get("/api/admin/bookings").header("Authorization", adminToken)
+                        .param("search", "Many Stadiums").param("size", "50"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content", hasSize(20)));
+
+        // auth user, bookings (+stadium +user), count, payments, settings, schedules
+        assertThat(queries.count()).isLessThanOrEqualTo(8);
+    }
+
+    @Test
     void aBookingCarriesItsPricesAndHowItWasPaid() throws Exception {
         User player = data.user("Dilshod Karimov");
         Booking booking = data.booking(stadium, player, BASE, "confirmed");

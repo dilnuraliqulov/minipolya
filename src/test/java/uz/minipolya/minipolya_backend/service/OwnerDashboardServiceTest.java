@@ -24,6 +24,7 @@ import uz.minipolya.minipolya_backend.repository.GameRepository;
 import uz.minipolya.minipolya_backend.repository.GameTeamRepository;
 import uz.minipolya.minipolya_backend.repository.ReviewRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
+import uz.minipolya.minipolya_backend.util.WeeklyHours;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -195,6 +196,50 @@ class OwnerDashboardServiceTest {
         assertThat(todaySchedule.getBookedSlots()).isEqualTo(2);
         assertThat(todaySchedule.getRevenue()).isEqualTo(160_000);
         assertThat(todaySchedule.getTotalSlots()).isEqualTo(15);
+    }
+
+    @Test
+    void theScheduleListsANightBookingUnderTheDayThatOpenedIt() {
+        // The stadium is open 08:00-02:00, so the 01:00 hour of today's working day happens
+        // tomorrow morning - and belongs on TODAY's schedule, where the owner looks for it.
+        stadium.setWeeklyHours(WeeklyHours.sameEveryDay(LocalTime.of(8, 0), LocalTime.of(2, 0)));
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        LocalDate today = LocalDate.now(TASHKENT);
+        Booking night = Booking.builder().status("confirmed").durationHours(1).price(80_000L)
+                .startsAt(today.plusDays(1).atTime(1, 0).atZone(TASHKENT).toOffsetDateTime()).build();
+        Booking evening = Booking.builder().status("confirmed").durationHours(1).price(80_000L)
+                .startsAt(today.atTime(20, 0).atZone(TASHKENT).toOffsetDateTime()).build();
+        when(bookingRepository.findByStadiumIdAndStartsAtBetween(eq(STADIUM_ID), any(), any()))
+                .thenReturn(List.of(night, evening));
+        when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
+
+        List<OwnerScheduleResponse> schedule = service.getSchedule(STADIUM_ID, today, today, OWNER_ID);
+
+        assertThat(schedule).hasSize(1);
+        OwnerScheduleResponse day = schedule.get(0);
+        assertThat(day.getBookings()).hasSize(2);
+        assertThat(day.getBookedSlots()).isEqualTo(2);
+        // 18 hours open, and both booked hours are among them.
+        assertThat(day.getTotalSlots()).isEqualTo(18);
+    }
+
+    @Test
+    void theScheduleDoesNotRepeatANightBookingOnTheNextDay() {
+        stadium.setWeeklyHours(WeeklyHours.sameEveryDay(LocalTime.of(8, 0), LocalTime.of(2, 0)));
+        when(stadiumRepository.findById(STADIUM_ID)).thenReturn(Optional.of(stadium));
+        LocalDate today = LocalDate.now(TASHKENT);
+        Booking night = Booking.builder().status("confirmed").durationHours(1).price(80_000L)
+                .startsAt(today.plusDays(1).atTime(1, 0).atZone(TASHKENT).toOffsetDateTime()).build();
+        when(bookingRepository.findByStadiumIdAndStartsAtBetween(eq(STADIUM_ID), any(), any()))
+                .thenReturn(List.of(night));
+        when(bookingMapper.toResponse(any(Booking.class))).thenReturn(new BookingResponse());
+
+        List<OwnerScheduleResponse> schedule =
+                service.getSchedule(STADIUM_ID, today, today.plusDays(1), OWNER_ID);
+
+        assertThat(schedule).hasSize(2);
+        assertThat(schedule.get(0).getBookings()).hasSize(1);
+        assertThat(schedule.get(1).getBookings()).isEmpty();
     }
 
     @Test

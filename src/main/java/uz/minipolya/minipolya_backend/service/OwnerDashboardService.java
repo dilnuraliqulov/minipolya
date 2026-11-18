@@ -32,6 +32,7 @@ import uz.minipolya.minipolya_backend.util.WeeklyHours;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZonedDateTime;
 import java.time.ZoneId;
 import java.time.temporal.TemporalAdjusters;
 import java.time.DayOfWeek;
@@ -199,12 +200,17 @@ public class OwnerDashboardService {
         LocalDate rangeTo = to != null ? to : rangeFrom.plusDays(6);
 
         WeeklyHours weeklyHours = stadium.weeklyHours();
+        // A working day may run into the next calendar date, so the last day's night is
+        // fetched too — and the first day's night belongs to the day before the range.
         List<Booking> all = bookingRepository.findByStadiumIdAndStartsAtBetween(
-                stadiumId, startOfDay(rangeFrom), startOfDay(rangeTo.plusDays(1)));
+                stadiumId, startOfDay(rangeFrom), startOfDay(rangeTo.plusDays(2)));
 
+        // Bucketed by WORKING day, the day whose opening the hour belongs to, so the owner
+        // finds a 01:00 booking on the evening they let it out rather than the next morning.
         Map<LocalDate, List<Booking>> byDate = new LinkedHashMap<>();
         for (Booking booking : all) {
-            LocalDate date = booking.getStartsAt().atZoneSameInstant(TASHKENT).toLocalDate();
+            ZonedDateTime start = booking.getStartsAt().atZoneSameInstant(TASHKENT);
+            LocalDate date = weeklyHours.workingDate(start).orElse(start.toLocalDate());
             byDate.computeIfAbsent(date, d -> new ArrayList<>()).add(booking);
         }
 
@@ -216,7 +222,8 @@ public class OwnerDashboardService {
             if (!"team_vs_team".equals(game.getType())) {
                 continue;
             }
-            LocalDate date = game.getStartsAt().atZoneSameInstant(TASHKENT).toLocalDate();
+            ZonedDateTime gameStart = game.getStartsAt().atZoneSameInstant(TASHKENT);
+            LocalDate date = weeklyHours.workingDate(gameStart).orElse(gameStart.toLocalDate());
             if (date.isBefore(rangeFrom) || date.isAfter(rangeTo)) {
                 continue;
             }

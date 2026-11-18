@@ -103,6 +103,27 @@ class BookingSeriesServiceTest {
                 .dayOfWeek(DAY).startTime(START).durationHours(1).isActive(true).build();
     }
 
+    /**
+     * The working dates of a night series (its hour happens the next morning), by the same
+     * rule the service uses: the cutoff is the real instant, not the clock time of the
+     * working date. Reusing the 20:00 helper here would make the test depend on the hour it
+     * runs at.
+     */
+    private List<LocalDate> nightOccurrences(LocalTime start, int count) {
+        ZonedDateTime now = ZonedDateTime.now(TASHKENT);
+        LocalDate cursor = now.toLocalDate();
+        int diff = (DAY + 1 - cursor.getDayOfWeek().getValue() + 7) % 7;
+        LocalDate first = cursor.plusDays(diff);
+        if (diff == 0 && !first.plusDays(1).atTime(start).atZone(TASHKENT).isAfter(now)) {
+            first = first.plusWeeks(1);
+        }
+        List<LocalDate> result = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            result.add(first.plusWeeks(i));
+        }
+        return result;
+    }
+
     /** Mirrors BookingSeriesService.nextOccurrences for building matching fixtures. */
     private List<LocalDate> occurrences(int count) {
         ZonedDateTime now = ZonedDateTime.now(TASHKENT);
@@ -323,6 +344,29 @@ class BookingSeriesServiceTest {
         service.generateUpcomingBookings();
 
         verify(bookingRepository, times(2)).saveAndFlush(any(Booking.class));
+    }
+
+    @Test
+    void generateUpcomingIsIdempotentForAnAfterMidnightSeries() {
+        // Wednesday 08:00-02:00: the 01:00 slot of Wednesday's working day is booked on the
+        // Thursday date, so matching it against the working date must still recognise it.
+        stadium.setWeeklyHours(WeeklyHours.sameEveryDay(LocalTime.of(8, 0), LocalTime.of(2, 0)));
+        BookingSeries nightSeries = BookingSeries.builder().id(SERIES_ID).user(user).stadium(stadium)
+                .dayOfWeek(DAY).startTime(LocalTime.of(1, 0)).durationHours(1).isActive(true).build();
+        when(seriesRepository.findByIsActiveTrue()).thenReturn(List.of(nightSeries));
+        // Both occurrences already exist, stored at their REAL instants (the day after).
+        List<Booking> existing = nightOccurrences(LocalTime.of(1, 0), 2).stream()
+                .map(date -> Booking.builder()
+                        .stadium(stadium).user(user).status("pending")
+                        .startsAt(date.plusDays(1).atTime(1, 0).atZone(TASHKENT).toOffsetDateTime())
+                        .build())
+                .toList();
+        when(bookingRepository.findByBookingSeriesId(SERIES_ID)).thenReturn(new ArrayList<>(existing));
+
+        service.generateUpcomingBookings();
+
+        verify(bookingRepository, never()).saveAndFlush(any());
+        verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
     }
 
     @Test

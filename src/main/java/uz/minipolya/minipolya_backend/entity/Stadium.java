@@ -4,6 +4,7 @@ import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
+import org.hibernate.annotations.BatchSize;
 import org.hibernate.annotations.UuidGenerator;
 import java.util.UUID;
 import jakarta.persistence.Id;
@@ -155,6 +156,9 @@ public class Stadium {
     @Builder.Default
     @OneToMany(mappedBy = "stadium", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("dayOfWeek ASC")
+    // Every booking response answers its working day, which reads this schedule: batched so
+    // a page of bookings spread over many stadiums costs one query, not one per stadium.
+    @BatchSize(size = 64)
     private List<StadiumHours> hours = new ArrayList<>();
 
     /**

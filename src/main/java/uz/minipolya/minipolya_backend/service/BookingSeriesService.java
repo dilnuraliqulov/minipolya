@@ -99,7 +99,7 @@ public class BookingSeriesService {
                 .isActive(true)
                 .build());
 
-        List<LocalDate> occurrences = nextOccurrences(series.getDayOfWeek(), startTime, WINDOW_WEEKS);
+        List<LocalDate> occurrences = nextOccurrences(series, WINDOW_WEEKS);
         for (LocalDate date : occurrences) {
             tryGenerateBooking(series, date);
         }
@@ -117,7 +117,7 @@ public class BookingSeriesService {
     @Transactional(readOnly = true)
     public List<BookingSeriesResponse> getMySeries(UUID userId) {
         return seriesRepository.findByUserIdAndIsActiveTrue(userId).stream()
-                .map(s -> toResponse(s, nextOccurrences(s.getDayOfWeek(), s.getStartTime(), 1).get(0)))
+                .map(s -> toResponse(s, nextOccurrences(s, 1).get(0)))
                 .toList();
     }
 
@@ -148,9 +148,13 @@ public class BookingSeriesService {
     @Transactional
     public void generateUpcomingBookings() {
         for (BookingSeries series : seriesRepository.findByIsActiveTrue()) {
-            List<LocalDate> occurrences = nextOccurrences(series.getDayOfWeek(), series.getStartTime(), WINDOW_WEEKS);
+            List<LocalDate> occurrences = nextOccurrences(series, WINDOW_WEEKS);
+            // An occurrence is a WORKING date; a booking stores its real instant, which for an
+            // hour after midnight falls on the next date. Compare the two as working dates, or
+            // the job would never recognise what it already generated.
+            int offset = nightOffset(series);
             Set<LocalDate> existingDates = bookingRepository.findByBookingSeriesId(series.getId()).stream()
-                    .map(b -> b.getStartsAt().atZoneSameInstant(TASHKENT).toLocalDate())
+                    .map(b -> b.getStartsAt().atZoneSameInstant(TASHKENT).toLocalDate().minusDays(offset))
                     .collect(Collectors.toSet());
 
             for (LocalDate date : occurrences) {
@@ -184,8 +188,7 @@ public class BookingSeriesService {
     private boolean tryGenerateBooking(BookingSeries series, LocalDate date) {
         Stadium stadium = series.getStadium();
         // One hour, whatever an older series row says: every booking is one slot.
-        LocalDate realDate = date.plusDays(
-                stadium.weeklyHours().day(series.getDayOfWeek()).isAfterMidnight(series.getStartTime()) ? 1 : 0);
+        LocalDate realDate = date.plusDays(nightOffset(series));
         OffsetDateTime startsAt = realDate.atTime(series.getStartTime()).atZone(TASHKENT).toOffsetDateTime();
         OffsetDateTime endsAt = startsAt.plusHours(Booking.HOURS);
 
@@ -221,15 +224,32 @@ public class BookingSeriesService {
         }
     }
 
-    /** The next {@code count} occurrences of the weekday, strictly in the future (Tashkent). */
-    private List<LocalDate> nextOccurrences(int dayOfWeek, LocalTime startTime, int count) {
+    /**
+     * Whether this series' hour falls after midnight, so its booking happens on the day
+     * after the working date: 1 when it does, 0 otherwise.
+     */
+    private int nightOffset(BookingSeries series) {
+        return series.getStadium().weeklyHours().day(series.getDayOfWeek())
+                .isAfterMidnight(series.getStartTime()) ? 1 : 0;
+    }
+
+    /**
+     * The next {@code count} <b>working</b> dates of the series' weekday whose hour has not
+     * started yet (Tashkent). The comparison is on the real instant, so a 01:00 slot of
+     * today's working day — which happens tomorrow morning — still counts as ahead.
+     */
+    private List<LocalDate> nextOccurrences(BookingSeries series, int count) {
         ZonedDateTime now = ZonedDateTime.now(TASHKENT);
         LocalDate cursor = now.toLocalDate();
-        int targetJava = dayOfWeek + 1; // app 0=Mon..6=Sun -> java 1=Mon..7=Sun
+        int targetJava = series.getDayOfWeek() + 1; // app 0=Mon..6=Sun -> java 1=Mon..7=Sun
         int diff = (targetJava - cursor.getDayOfWeek().getValue() + 7) % 7;
         LocalDate first = cursor.plusDays(diff);
-        if (diff == 0 && !startTime.isAfter(now.toLocalTime())) {
-            first = first.plusWeeks(1); // today's slot already started
+        if (diff == 0) {
+            ZonedDateTime start = first.plusDays(nightOffset(series))
+                    .atTime(series.getStartTime()).atZone(TASHKENT);
+            if (!start.isAfter(now)) {
+                first = first.plusWeeks(1); // today's slot already started
+            }
         }
         List<LocalDate> result = new ArrayList<>();
         for (int i = 0; i < count; i++) {
