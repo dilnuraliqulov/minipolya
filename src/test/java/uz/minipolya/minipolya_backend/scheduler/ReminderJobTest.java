@@ -11,11 +11,14 @@ import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.NotificationRepository;
 import uz.minipolya.minipolya_backend.service.NotificationService;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -64,6 +67,43 @@ class ReminderJobTest {
 
         verify(notificationService).notify(eq(USER_ID), eq(Notification.Type.BOOKING_REMINDER),
                 anyString(), anyString(), eq(Notification.ReferenceType.BOOKING), eq(BOOKING_ID));
+    }
+
+    @Test
+    void remindsTwoHoursBeforeAOneAmStart() {
+        // 01:00 Tashkent on 2026-11-21 is 20:00 UTC on the 20th; the reminder window is
+        // [now+90m, now+150m] whatever working day the hour is listed under.
+        OffsetDateTime oneAm = LocalDate.of(2026, 11, 21).atTime(1, 0)
+                .atZone(ZoneId.of("Asia/Tashkent")).toOffsetDateTime();
+        Booking nightBooking = Booking.builder().id(BOOKING_ID).status("confirmed")
+                .user(User.builder().id(USER_ID).name("Player").build())
+                .stadium(Stadium.builder().id(STADIUM_ID).name("Arena").build())
+                .startsAt(oneAm)
+                .build();
+        when(bookingRepository.findByStatusAndStartsAtBetween(eq("confirmed"), any(), any()))
+                .thenReturn(List.of(nightBooking));
+        when(notificationRepository.existsByReferenceTypeAndReferenceIdAndType(any(), any(), any()))
+                .thenReturn(false);
+
+        job.sendReminders();
+
+        // The message names the Tashkent clock time of the real instant, 01:00.
+        verify(notificationService).notify(eq(USER_ID), eq(Notification.Type.BOOKING_REMINDER),
+                anyString(), org.mockito.ArgumentMatchers.contains("01:00"),
+                eq(Notification.ReferenceType.BOOKING), eq(BOOKING_ID));
+    }
+
+    @Test
+    void asksForBookingsInANinetyToOneHundredAndFiftyMinuteWindow() {
+        when(bookingRepository.findByStatusAndStartsAtBetween(eq("confirmed"), any(), any()))
+                .thenReturn(List.of());
+
+        job.sendReminders();
+
+        org.mockito.ArgumentCaptor<OffsetDateTime> from = org.mockito.ArgumentCaptor.forClass(OffsetDateTime.class);
+        org.mockito.ArgumentCaptor<OffsetDateTime> to = org.mockito.ArgumentCaptor.forClass(OffsetDateTime.class);
+        verify(bookingRepository).findByStatusAndStartsAtBetween(eq("confirmed"), from.capture(), to.capture());
+        assertThat(java.time.Duration.between(from.getValue(), to.getValue()).toMinutes()).isEqualTo(60);
     }
 
     @Test

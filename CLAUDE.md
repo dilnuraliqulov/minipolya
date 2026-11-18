@@ -212,7 +212,8 @@ db/changelog/
     ├── 049-rounding-5000.sql         # payment_rounding_step 10 000 → 500 000 tiyin (5 000 so'm) where still default; column default too
     ├── 050-remainder-marks.sql       # bookings.remainder_mark / _marked_at / _marked_by; payments status 'cancelled' (voided cash)
     ├── 051-default-min-booking-amount.sql # platform_settings.default_min_booking_amount (5 000 000 tiyin)
-    └── 052-game-team-payment-option.sql   # game_teams payment_option, join_price, remainder_price + remainder_mark / _marked_at / _marked_by
+    ├── 052-game-team-payment-option.sql   # game_teams payment_option, join_price, remainder_price + remainder_mark / _marked_at / _marked_by
+    └── 053-stadium-weekly-hours.sql       # stadium_hours: one row per day of the week per stadium, backfilled from the stadiums' own open/close
 ```
 
 ### Adding New Migrations
@@ -311,11 +312,11 @@ When you need to change the schema (add column, new table, alter constraint):
     Uzbekistan's box, lat 37.1–45.6, lon 55.9–73.2 — "Location must be inside Uzbekistan";
   - `pricePerHour` 1 000 000–500 000 000 tiyin — "pricePerHour must be between 10 000 and
     5 000 000 so'm" ("pricePerHour is required" on create);
-  - `openTime` / `closeTime` on the hour ("openTime and closeTime must be on the hour")
-    and `closeTime` after `openTime` — **closing after midnight is not supported**
-    ("closeTime must be after openTime; closing after midnight is not supported"), since
-    availability walks open → close within one day and bookings start on the hour. On
-    update the pair that would result (sent value, else the current one) is checked.
+  - the **opening hours**: either `hours` (the whole week) or `openTime` / `closeTime`
+    (the same every day), never both ("Send either hours or openTime and closeTime, not
+    both"); on update the pair goes together ("Send both openTime and closeTime") and
+    sending neither leaves the stored schedule alone. See "Opening hours" below for the
+    rules and the messages.
   - **Not the owner's**: `minBookingAmount` / `cancellationHours` are the admin's
     (`PUT /api/admin/stadiums/{id}/booking-terms`), and photos come only through the
     upload endpoint. Those fields (and `clearMinBookingAmount`, `photos`) are gone from
@@ -335,6 +336,56 @@ When you need to change the schema (add column, new table, alter constraint):
   stadium, optional on update; anything else is 400 "Invalid district". Null on stadiums
   added before it existed.
 
+### Opening hours and the working day
+
+A stadium's hours are a **weekly schedule** (`stadium_hours`, changeset 053): one row per
+day of the week, `day_of_week` 0 = Monday … 6 = Sunday, each either closed or open between
+two whole hours. **`util/WeeklyHours` is the one place the rule is expressed** — everything
+that asks "which day is this hour?" goes through it.
+
+- A `closeTime` **after** `openTime` is the same day. At or before it, the day runs **past
+  midnight** into the next morning and must close by **06:00**
+  ("A closing time at or before the opening time means the next morning, so it must be
+  06:00 or earlier"). `00:00` means **midnight** — the end of that same day, with no hours
+  after it. A day is open at most 24 hours.
+- Both times on the hour ("openTime and closeTime must be on the hour"); all seven days,
+  each exactly once ("hours must list all 7 days of the week exactly once", "dayOfWeek must
+  be between 0 and 6"); an open day needs both times ("openTime and closeTime are required
+  on an open day"); at least one day open ("At least one day must be open").
+- At least **1 hour** between a day's closing and the next day's opening, around the week:
+  "There must be at least 1 hour between Friday's closing and Saturday's opening".
+
+**The working day is the day whose opening started the hour.** The hours after midnight
+belong to it, not to the calendar day they fall on: with Saturday 08:00–02:00, Saturday's
+list ends …, 23:00, **00:00, 01:00**, and those two hours happen on Sunday's date. So:
+
+- **Bookings store the real instants** (`starts_at` / `ends_at`), exactly as before. The
+  EXCLUDE constraint, payments, refunds, the cancellation deadline, the 3-hour opponent
+  cutoff, `BookingExpiryJob` and `ReminderJob` all work on instants and need **no special
+  case** — `MidnightBookingRulesTest` proves it.
+- **Availability for date D** lists D's working day, which may end on D+1. Each slot carries
+  `startTime` / `endTime` (wall clock), `startsAt` (the real UTC instant) and
+  `afterMidnight` (only when true). `freeSlotsCount` uses the same `SlotRules`.
+- **Pricing rules and promotions match the WORKING day's weekday** and the slot's own clock
+  time: Saturday's 00:00 slot takes Saturday's rules for 00:00–01:00, never Sunday's.
+- **A closure on date D covers its whole working day**, the hours after midnight included
+  (the closure is asked about D with the hour's clock time, so a full-day closure on D
+  closes the night too).
+- **A booking reports its working day**: `workingDate` and `afterMidnight` on every
+  `BookingResponse`, so a client can say "Yakshanba, 16-noyabr · 00:00–01:00 (shanba
+  kechasi)" without deriving the rule.
+- **A recurring series' `dayOfWeek` is the working day** too: a 01:00 slot of Wednesday is
+  booked at 01:00 on the Thursday date.
+- An hour that belongs to **no** working day is 400 "The stadium is not open at that hour"
+  (`BookingWindowValidator`) — the three old same-day messages are gone.
+- `stadiums.open_time` / `close_time` **stay**, kept in step with the first open day, so
+  older readers and clients still see one sensible pair. Read the schedule through
+  `Stadium.weeklyHours()`, which falls back to that pair as "the same every day" when the
+  seven rows are missing; write it through `Stadium.setWeeklyHours`, which updates the rows
+  in place (clearing and re-adding them trips `uq_stadium_hours_day`, because Hibernate
+  flushes inserts before orphan deletes). A page of stadiums loads every schedule in **one**
+  grouped query (`StadiumHoursRepository.findByStadiumIdIn`), never seven rows per stadium.
+
 ### Bookings
 
 - Source types:
@@ -350,8 +401,8 @@ When you need to change the schema (add column, new table, alter constraint):
   rule may be longer and keep their length; an older series row that says more than one
   hour generates one-hour bookings. There is no multi-hour code path — don't add one.
   - `startsAt` must be on the hour in `Asia/Tashkent` (minutes/seconds/nanos = 0) so bookings line up with the hourly availability slots.
-  - The hour (`startsAt` → `startsAt + 1h`) must fall within the stadium's `open_time`–`close_time` (Tashkent). `close_time` is treated as a same-day bound: a window where `close_time <= open_time` is unbookable (matches availability, which generates no slots for it), so bookings cannot cross midnight.
-  - The hour must not fall in any `stadium_closure`.
+  - The hour (`startsAt` → `startsAt + 1h`) must belong to one of the stadium's **working days** (see "Opening hours and the working day"); otherwise 400 "The stadium is not open at that hour". An hour after midnight belongs to the day that opened the evening before.
+  - The hour must not fall in any `stadium_closure` **of its working day**.
   - Price = the slot's price (pricing rule by local weekday/time, falling back to `stadium.price_per_hour`, `BookingPriceCalculator.hourPrice`), with the best active promotion for that hour applied — identical to what the availability endpoint shows for the slot.
   - Violations throw `BadRequestException` → HTTP 400. An overlap rejected by the DB EXCLUDE constraint reports 409 "Slot is already booked".
 - Max booking: 4 weeks ahead
@@ -1217,24 +1268,34 @@ credentials or access tokens. The request DTOs and provider records override
 
 ### Availability Calculation
 
-Every opening hour of the date is listed, each with a `status`:
-1. Get the stadium's `open_time` and `close_time`
-2. Cut into 1-hour slots
-3. Today, an hour that has already started is `past`
+Every opening hour of the **working day** `date` is listed, each with a `status`. The day
+may end on the next calendar date — see "Opening hours and the working day".
+1. Get the working day's hours from `stadium.weeklyHours().dayOf(date)` (a closed day has none)
+2. Cut into 1-hour slots, opening first, so a day closing at 02:00 ends …, 23:00, 00:00, 01:00
+3. An hour that has already started is `past` (compared on the real instant, so an
+   after-midnight hour is past only once it has actually begun)
 4. A slot that overlaps any `pending` or `confirmed` booking is `booked`
 5. A slot within a `stadium_closure` is `closed`; every other one is `free`
    (`available` is true exactly when `status = free`; precedence past → booked → closed)
-6. For each free slot, calculate price from `pricing_rules` (match day_of_week + time range)
+6. For each free slot, calculate price from `pricing_rules` (match the **working day's**
+   day_of_week + the slot's own time range)
 7. Mark slots that have a WAITING **team_vs_team** game (show "a team is looking for an opponent" in UI). Casual games are private to whoever was invited and are never marked
 8. Apply any active promotion discount
 9. When the deposit of the stadium's effective minimum is below the slot's player price,
    add `depositAmount` / `remainderAmount` (E3, T3; see "Payments → API fields")
+10. Every slot carries `startsAt` (the real UTC instant) and, when it falls after midnight,
+    `afterMidnight: true`
+
+A date whose working day is **still running** is not refused as past: at 00:30 the previous
+day is still open if any of its hours is ahead, so its 01:00 slot can still be booked
+(`AvailabilityService.earliestWorkingDay`).
 
 **Free-slot count.** `GET /api/stadiums?date=YYYY-MM-DD` (Tashkent, default today; malformed = 400)
 answers `freeSlotsCount` on each stadium: the hours of that date whose status above would be
 `free`, from the one definition in `SlotRules`, which the availability endpoint uses too, so the
-two cannot disagree. Two queries for the whole page (`AvailabilityService.freeSlotCounts`;
-`StadiumFreeSlotsTest` counts them with 22 stadiums). A date outside the booking window (past,
+two cannot disagree. Three queries for the whole page — booked spans, closures and the
+weekly schedules (`AvailabilityService.freeSlotCounts`; `StadiumFreeSlotsTest` counts them
+with 22 stadiums). A date outside the booking window (past,
 or beyond `max-weeks-ahead`) answers 0, not an error, so a list left open past midnight still loads.
 
 ## Audit log
@@ -1308,7 +1369,7 @@ number is not logged either; their name is part of the booking label.
 
 | Area | Actions |
 |---|---|
-| Admin | `ADMIN_LOGIN_SUCCEEDED`, `ADMIN_LOGIN_FAILED`, `APPLICATION_APPROVED`, `APPLICATION_REJECTED`, `STADIUM_APPROVED`, `STADIUM_REJECTED` (pending → rejected; before changeset 038, pending → blocked), `STADIUM_BLOCKED`, `STADIUM_UNBLOCKED` (blocked → approved), `STADIUM_STATUS_CHANGED` (back to pending) — each with `status` and `statusReason` changes, `STADIUM_NOTE_ADDED` (the note's id, never its text), `STADIUM_BOOKING_TERMS_CHANGED` (`minBookingAmount`, `cancellationHours`), `USER_BLOCKED`, `USER_UNBLOCKED`, `USER_ROLE_CHANGED`, `OWNER_LEGAL_DETAILS_CHANGED`, `REFUND_RETRIED`, `REFUND_MARKED_MANUAL`, `SETTINGS_CHANGED` |
+| Admin | `ADMIN_LOGIN_SUCCEEDED`, `ADMIN_LOGIN_FAILED`, `APPLICATION_APPROVED`, `APPLICATION_REJECTED`, `STADIUM_APPROVED`, `STADIUM_REJECTED` (pending → rejected; before changeset 038, pending → blocked), `STADIUM_BLOCKED`, `STADIUM_UNBLOCKED` (blocked → approved), `STADIUM_STATUS_CHANGED` (back to pending) — each with `status` and `statusReason` changes, `STADIUM_NOTE_ADDED` (the note's id, never its text), `STADIUM_BOOKING_TERMS_CHANGED` (`minBookingAmount`, `cancellationHours`), `STADIUM_HOURS_CHANGED` (the week before → after, as one `hours` line), `USER_BLOCKED`, `USER_UNBLOCKED`, `USER_ROLE_CHANGED`, `OWNER_LEGAL_DETAILS_CHANGED`, `REFUND_RETRIED`, `REFUND_MARKED_MANUAL`, `SETTINGS_CHANGED` |
 | Owner | `STADIUM_CREATED`, `STADIUM_UPDATED` (incl. `pricePerHour`, `landmark`, photos, amenities — the four of changeset 048 too; rows from before the rework may carry `minBookingAmount` / `cancellationHours`), `PRICING_RULE_CREATED` / `_UPDATED` / `_DELETED`, `CLOSURE_CREATED` / `_DELETED`, `PROMOTION_CREATED` / `_DEACTIVATED`, `MANUAL_BOOKING_CREATED`, `CASH_RECEIVED` (a booking — with `remainderMark` — or one team's game remainder, with `teamX.remainderMark`), `REMAINDER_NOT_PAID` (a booking or a team), `REMAINDER_MARK_UNDONE` (also ADMIN, for the admin's undo), `BOOKING_CANCELLED_BY_OWNER` |
 | Player | `BOOKING_CREATED`, `BOOKING_CANCELLED_BY_USER`, `BOOKING_REMAINDER_PAID`, `BOOKING_PAYMENT_RETRIED`, `BOOKING_SERIES_CREATED` / `_CANCELLED`, `GAME_CREATED`, `GAME_JOINED`, `GAME_LEFT`, `GAME_CANCELLED`, `GAME_OPPONENT_LEFT`, `GAME_REMAINDER_PAID`, `PROFILE_UPDATED` (also a language picked in the bot), `PHONE_SHARED_VIA_BOT` (`phoneChanged`, never the number) |
 | System | `BOOKING_CONFIRMED` (a payment confirmed it), `BOOKING_EXPIRED`, `BOOKING_COMPLETED`, `BOOKING_CANCELLED_BY_OWNER` (by a stadium block), `GAME_CONFIRMED`, `GAME_AUTO_CANCELLED`, `PAYMENT_COMPLETED`, `PAYMENT_RELEASED`, `REFUND_CREATED`, `REFUND_FAILED` (ATMOS declined; the reason is its error), `PROMOTION_EXPIRED` |
@@ -1383,7 +1444,8 @@ Conventions every list follows:
 | `GET /api/admin/stadiums` | every status. Filters `status` (incl. `rejected`), `search`, `district`, `format`, `ownerId`. Rows add `photoUrl`, `district`, `pricePerHour` (the owner's), `playerPrice`, `ownerReceives`, `atmosFee`, `ownerContractStatus`, `statusReason` |
 | `GET /api/admin/stadiums/{id}` | the public detail mapping for **any** status, in the owner's prices (`pricePerHour`, `minBookingAmount`) with `playerPrice`, `playerMinBookingAmount`, `ownerReceives`, `atmosFee` + `pricingRules` (the same) + the list's figures |
 | `PUT /api/admin/stadiums/{id}/status` | `approved` (needs the owner's signed ATMOS contract, then ≥ 3 photos), `rejected` (only from pending, reason required), `blocked` (reason required), `pending` |
-| `PUT /api/admin/stadiums/{id}/booking-terms` | `{ minBookingAmount: Long\|null, cancellationHours: Integer }` — see "Cancellation Policy"; any status; answers the same detail as `GET /api/admin/stadiums/{id}` (which carries `landmark`, `amenities`, `photos`, `latitude` / `longitude`, `cancellationPolicy`, `cancellationHours`, `minBookingAmount`) |
+| `PUT /api/admin/stadiums/{id}/booking-terms` | `{ minBookingAmount: Long\|null, cancellationHours: Integer }` — see "Cancellation Policy"; any status; answers the same detail as `GET /api/admin/stadiums/{id}` (which carries `landmark`, `amenities`, `photos`, `latitude` / `longitude`, `cancellationPolicy`, `cancellationHours`, `minBookingAmount`, `hours`) |
+| `PUT /api/admin/stadiums/{id}/hours` | `{ hours: { days: [{ dayOfWeek, closed, openTime, closeTime }] } }` — the whole week, agreed with the owner; any status, the row locked; the same rules as the owner's (see "Opening hours and the working day"); audited `STADIUM_HOURS_CHANGED`; answers the admin detail, "Opening hours updated" |
 | `GET` / `POST /api/admin/stadiums/{id}/notes` | admins' internal notes, newest first; `{ text }` 1–1000 chars. Never shown to owners or players |
 | `GET /api/admin/users` | filters `search`, `role` (`player` = neither owner nor admin, `owner`, `admin`), `status` (`active`, `blocked`) |
 | `GET` / `PUT /api/admin/users/{id}/legal-details` | see "Owner legal details"; GET answers `data: null` before anything is entered |
@@ -1469,7 +1531,7 @@ alongside (`playerPrice`, `playerMinBookingAmount`).
 |---|---|
 | `POST /api/owner/stadiums` · `GET /api/owner/stadiums` | add a stadium (starts `pending`) · the caller's stadiums with `status` / `statusReason` — any signed-in user (R42) |
 | `GET /api/owner/stadiums/{id}` | one of the caller's stadiums, any status: the `StadiumDetailResponse` that `PUT` returns, built by the same code (R35) |
-| `PUT /api/owner/stadiums/{id}` | partial update (only non-null fields, each checked as on create — see "Stadiums"); audited `STADIUM_UPDATED`. No booking terms or photo URLs: `minBookingAmount`, `cancellationHours`, `clearMinBookingAmount`, `photos` are ignored if sent (the admin's booking-terms endpoint; the photo upload) |
+| `PUT /api/owner/stadiums/{id}` | partial update (only non-null fields, each checked as on create — see "Stadiums"); `hours` replaces the whole weekly schedule, `openTime` + `closeTime` set the same hours every day, neither leaves it alone; audited `STADIUM_UPDATED` (the week as one `hours` field). No booking terms or photo URLs: `minBookingAmount`, `cancellationHours`, `clearMinBookingAmount`, `photos` are ignored if sent (the admin's booking-terms endpoint; the photo upload) |
 | `POST /api/owner/stadiums/{id}/photos` | multipart field `file` → `PhotoResponse {id,url,position}`, "Photo uploaded" (R36, see "Stadium photos") — any signed-in user (D6) |
 | `DELETE /api/owner/stadiums/{id}/photos/{photoId}` | `data: null`, "Photo deleted"; the rest renumbered 0..n-1; 404 "Photo not found" if not this stadium's — any signed-in user (D6) |
 | `GET /api/owner/legal-details` | the caller's own `{ legalType?, atmosContractStatus, ownerContractStatus }` (R39), read-only; see "Owner legal details" |

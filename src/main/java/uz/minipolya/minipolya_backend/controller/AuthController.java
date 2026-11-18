@@ -37,4 +37,5 @@ public class AuthController {
                                                 HttpServletRequest httpRequest) {
         return ApiResponse.ok(adminAuthService.login(request, httpRequest.getRemoteAddr()));
     }
+
 }

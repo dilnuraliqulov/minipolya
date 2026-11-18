@@ -4,6 +4,7 @@ import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
+import org.hibernate.annotations.BatchSize;
 import org.hibernate.annotations.UuidGenerator;
 import java.util.UUID;
 import jakarta.persistence.Id;
@@ -20,13 +21,16 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import uz.minipolya.minipolya_backend.util.WeeklyHours;
 
 import java.math.BigDecimal;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * A football pitch. 1 stadium = 1 pitch. Visible to players only when
@@ -143,6 +147,69 @@ public class Stadium {
 
     @OneToOne(mappedBy = "stadium", cascade = CascadeType.ALL, orphanRemoval = true)
     private StadiumAmenities amenities;
+
+    /**
+     * The weekly opening schedule (changeset 053), one row per day of the week. Read it
+     * through {@link #weeklyHours()} and write it through
+     * {@link #setWeeklyHours(WeeklyHours)}, never by mutating this list.
+     */
+    @Builder.Default
+    @OneToMany(mappedBy = "stadium", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("dayOfWeek ASC")
+    // Every booking response answers its working day, which reads this schedule: batched so
+    // a page of bookings spread over many stadiums costs one query, not one per stadium.
+    @BatchSize(size = 64)
+    private List<StadiumHours> hours = new ArrayList<>();
+
+    /**
+     * The stadium's weekly schedule. Falls back to the legacy {@code openTime} /
+     * {@code closeTime} as "the same every day" when the seven rows are not there (a row
+     * inserted by hand, a stadium built in a test), so a stadium never becomes unbookable
+     * for want of them.
+     */
+    public WeeklyHours weeklyHours() {
+        return StadiumHours.toWeekly(hours, openTime, closeTime);
+    }
+
+    /**
+     * Replaces the whole schedule — the seven rows in place, so orphan removal deletes the
+     * old ones — and keeps the legacy {@code openTime} / {@code closeTime} columns in step
+     * with the first open day, so older readers and clients still see sensible hours.
+     */
+    public void setWeeklyHours(WeeklyHours weekly) {
+        if (hours == null) {
+            hours = new ArrayList<>();
+        }
+        // The seven rows are updated in place, keyed by day of week, never cleared and
+        // re-added: Hibernate orders the inserts before the deletes, so replacing them
+        // would collide with uq_stadium_hours_day.
+        Map<Integer, StadiumHours> existing = new HashMap<>();
+        for (StadiumHours row : hours) {
+            existing.put(row.getDayOfWeek(), row);
+        }
+        List<StadiumHours> kept = new ArrayList<>(WeeklyHours.DAYS);
+        for (WeeklyHours.Day day : weekly.days()) {
+            StadiumHours row = existing.remove(day.dayOfWeek());
+            if (row == null) {
+                row = StadiumHours.builder().stadium(this).dayOfWeek(day.dayOfWeek()).build();
+            }
+            row.setClosed(day.closed());
+            row.setOpenTime(day.open());
+            row.setCloseTime(day.close());
+            kept.add(row);
+        }
+        // Anything left over is a duplicate or an out-of-range day: orphan removal deletes it.
+        hours.clear();
+        hours.addAll(kept);
+
+        weekly.days().stream()
+                .filter(day -> !day.closed())
+                .findFirst()
+                .ifPresent(day -> {
+                    openTime = day.open();
+                    closeTime = day.close();
+                });
+    }
 
     public void addPhoto(StadiumPhoto photo) {
         photo.setStadium(this);

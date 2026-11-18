@@ -33,6 +33,8 @@ import uz.minipolya.minipolya_backend.repository.UserRepository;
 import uz.minipolya.minipolya_backend.util.Districts;
 import uz.minipolya.minipolya_backend.util.Pagination;
 import uz.minipolya.minipolya_backend.util.StadiumRules;
+import uz.minipolya.minipolya_backend.util.WeeklyHours;
+import uz.minipolya.minipolya_backend.util.WeeklyHoursRules;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -75,6 +77,10 @@ public class StadiumService {
         stadium.setOwner(owner);
         stadium.setStatus(STATUS_PENDING);
         stadium.setLandmark(request.getLandmark());
+        // One pair of hours means "the same every day"; setWeeklyHours also fills the
+        // legacy openTime / closeTime columns.
+        stadium.setWeeklyHours(StadiumRules.requireSchedule(
+                request.getHours(), request.getOpenTime(), request.getCloseTime(), true));
 
         StadiumAmenities amenities = request.getAmenities() != null
                 ? stadiumMapper.toAmenities(request.getAmenities())
@@ -95,10 +101,17 @@ public class StadiumService {
 
         StadiumRules.forUpdate(request, stadium);
 
+        // Checked before anything is mutated, so a bad schedule changes nothing.
+        WeeklyHours schedule = StadiumRules.requireSchedule(
+                request.getHours(), request.getOpenTime(), request.getCloseTime(), false);
+
         Map<String, Object> before = auditSnapshot(stadium);
         stadiumMapper.updateStadiumFromRequest(request, stadium);
         if (request.getLandmark() != null) {
             stadium.setLandmark(StadiumRules.landmark(request.getLandmark())); // blank clears it
+        }
+        if (schedule != null) {
+            stadium.setWeeklyHours(schedule);
         }
 
         if (request.getAmenities() != null) {
@@ -149,7 +162,15 @@ public class StadiumService {
 
     /** The owner's view of one stadium: what create, update and the owner detail return. */
     StadiumDetailResponse toOwnerDetail(Stadium stadium) {
-        return ownerPrices(stadiumMapper.toDetailResponse(stadium));
+        return ownerPrices(withHours(stadiumMapper.toDetailResponse(stadium), stadium));
+    }
+
+    /** The weekly schedule on a detail response, Monday first — on every audience's view. */
+    static StadiumDetailResponse withHours(StadiumDetailResponse response, Stadium stadium) {
+        if (response != null) {
+            response.setHours(WeeklyHoursRules.toResponse(stadium.weeklyHours()));
+        }
+        return response;
     }
 
     @Transactional(readOnly = true)
@@ -220,7 +241,7 @@ public class StadiumService {
         Stadium stadium = stadiumRepository.findByIdAndStatus(id, STATUS_APPROVED)
                 .filter(Stadium::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
-        StadiumDetailResponse response = publicPrices(stadiumMapper.toDetailResponse(stadium));
+        StadiumDetailResponse response = publicPrices(withHours(stadiumMapper.toDetailResponse(stadium), stadium));
         response.setAverageRating(reviewRepository.averageRatingByStadiumId(id));
         response.setReviewCount(reviewRepository.countByStadiumId(id));
         if (userId != null) {
@@ -239,7 +260,7 @@ public class StadiumService {
     public StadiumDetailResponse getAdminDetail(UUID id) {
         Stadium stadium = stadiumRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Stadium not found"));
-        StadiumDetailResponse r = ownerPrices(stadiumMapper.toDetailResponse(stadium));
+        StadiumDetailResponse r = ownerPrices(withHours(stadiumMapper.toDetailResponse(stadium), stadium));
         if (r.getPlayerPrice() != null) {
             r.setOwnerReceives(cardPricing.ownerReceives(r.getPlayerPrice()));
             r.setAtmosFee(r.getPlayerPrice() - r.getOwnerReceives());
@@ -290,8 +311,8 @@ public class StadiumService {
         fields.put("description", stadium.getDescription());
         fields.put("format", stadium.getFormat());
         fields.put("surfaceType", stadium.getSurfaceType());
-        fields.put("openTime", stadium.getOpenTime());
-        fields.put("closeTime", stadium.getCloseTime());
+        // The whole week as one readable value, so an edit diffs as one change.
+        fields.put("hours", WeeklyHoursRules.describe(stadium.weeklyHours()));
         fields.put("pricePerHour", stadium.getPricePerHour());
         fields.put("minBookingAmount", stadium.getMinBookingAmount());
         fields.put("cancellationHours", stadium.getCancellationHours());

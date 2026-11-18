@@ -56,11 +56,24 @@ public class CreateStadiumRequest {
     @Pattern(regexp = "natural|artificial|hybrid", message = "surfaceType must be one of: natural, artificial, hybrid")
     private String surfaceType;
 
-    /** Required, on the hour, before {@code closeTime}. */
+    /**
+     * The same opening time every day, on the hour. Required unless {@code hours} is sent;
+     * sending both is a 400.
+     */
     private LocalTime openTime;
 
-    /** Required, on the hour, after {@code openTime} (no closing after midnight). */
+    /**
+     * The same closing time every day, on the hour. At or before {@code openTime} it means
+     * the next morning (06:00 at the latest); 00:00 means midnight.
+     */
     private LocalTime closeTime;
+
+    /**
+     * The weekly schedule: all seven days, each either closed or open between two whole
+     * hours. Sent instead of {@code openTime} / {@code closeTime} when the days differ.
+     */
+    @Valid
+    private WeeklyHoursRequest hours;
 
     /** Required, tiyin, 1 000 000–500 000 000 (10 000–5 000 000 so'm): the owner's own price. */
     private Long pricePerHour;

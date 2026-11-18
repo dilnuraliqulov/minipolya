@@ -128,10 +128,13 @@ class StadiumRulesTest {
         createFails(r -> r.setCloseTime(null), "closeTime is required");
         createFails(r -> r.setOpenTime(LocalTime.of(8, 30)), "openTime and closeTime must be on the hour");
         createFails(r -> r.setCloseTime(LocalTime.of(22, 0, 1)), "openTime and closeTime must be on the hour");
-        String midnight = "closeTime must be after openTime; closing after midnight is not supported";
-        createFails(r -> { r.setOpenTime(LocalTime.of(18, 0)); r.setCloseTime(LocalTime.of(2, 0)); }, midnight);
-        createFails(r -> r.setCloseTime(LocalTime.of(8, 0)), midnight);
-        createFails(r -> r.setCloseTime(LocalTime.MIDNIGHT), midnight);
+        // Closing after midnight is supported now, up to 06:00; 00:00 means midnight.
+        createPasses(r -> { r.setOpenTime(LocalTime.of(18, 0)); r.setCloseTime(LocalTime.of(2, 0)); });
+        createPasses(r -> r.setCloseTime(LocalTime.MIDNIGHT));
+        String tooLate = "A closing time at or before the opening time means the next morning,"
+                + " so it must be 06:00 or earlier";
+        createFails(r -> r.setCloseTime(LocalTime.of(8, 0)), tooLate);
+        createFails(r -> { r.setOpenTime(LocalTime.of(18, 0)); r.setCloseTime(LocalTime.of(7, 0)); }, tooLate);
         createPasses(r -> { r.setOpenTime(LocalTime.MIDNIGHT); r.setCloseTime(LocalTime.of(23, 0)); });
     }
 
@@ -176,16 +179,31 @@ class StadiumRulesTest {
     }
 
     @Test
+    void updateNeedsBothTimesTogether() {
+        // One half of "the same every day" says nothing on its own, as with latitude/longitude.
+        assertThatThrownBy(() -> StadiumRules.requireSchedule(null, null, LocalTime.of(7, 0), false))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Send both openTime and closeTime");
+        assertThatThrownBy(() -> StadiumRules.requireSchedule(null, LocalTime.of(23, 0), null, false))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Send both openTime and closeTime");
+    }
+
+    @Test
     void updateChecksTheResultingHours() {
-        String midnight = "closeTime must be after openTime; closing after midnight is not supported";
-        // Current hours are 08:00–23:00.
-        updateFails(UpdateStadiumRequest.builder().closeTime(LocalTime.of(7, 0)).build(), midnight);
-        updateFails(UpdateStadiumRequest.builder().openTime(LocalTime.of(23, 0)).build(), midnight);
-        updateFails(UpdateStadiumRequest.builder().openTime(LocalTime.of(9, 15)).build(),
-                "openTime and closeTime must be on the hour");
-        assertThatCode(() -> StadiumRules.forUpdate(
-                UpdateStadiumRequest.builder().openTime(LocalTime.of(6, 0)).build(), current()))
-                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> StadiumRules.requireSchedule(
+                null, LocalTime.of(9, 15), LocalTime.of(22, 0), false))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("openTime and closeTime must be on the hour");
+        assertThatThrownBy(() -> StadiumRules.requireSchedule(
+                null, LocalTime.of(18, 0), LocalTime.of(7, 0), false))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("A closing time at or before the opening time means the next morning,"
+                        + " so it must be 06:00 or earlier");
+        // Sending neither leaves the stored schedule alone.
+        assertThat(StadiumRules.requireSchedule(null, null, null, false)).isNull();
+        assertThat(StadiumRules.requireSchedule(null, LocalTime.of(6, 0), LocalTime.of(2, 0), false))
+                .isNotNull();
     }
 
     @Test

@@ -103,12 +103,30 @@ public class PromotionService {
         return getBestPromotion(stadiumId, dateTime).map(Promotion::getDiscountPercent).orElse(null);
     }
 
-    /** The highest-discount promotion covering the given instant, used by availability. */
+    /**
+     * The highest-discount promotion covering the given instant, matched on the instant's
+     * own Tashkent weekday. Use the three-argument form for an hour that belongs to a
+     * different working day.
+     */
     @Transactional(readOnly = true)
     public Optional<Promotion> getBestPromotion(UUID stadiumId, OffsetDateTime dateTime) {
         ZonedDateTime local = dateTime.atZoneSameInstant(TASHKENT);
-        int dayOfWeek = local.getDayOfWeek().getValue() - 1;
-        return promotionRepository.findMatching(stadiumId, dateTime, dayOfWeek, local.toLocalTime()).stream()
+        return getBestPromotion(stadiumId, dateTime, local.getDayOfWeek().getValue() - 1);
+    }
+
+    /**
+     * The highest-discount promotion covering the given instant, used by availability and
+     * by what a booking is charged.
+     *
+     * @param workingDayOfWeek the weekday a promotion's {@code dayOfWeek} is matched
+     *                         against: the <b>working</b> day, so Saturday's 00:00 slot
+     *                         takes Saturday's promotions even though the hour falls on
+     *                         Sunday. The clock time is still the slot's own.
+     */
+    @Transactional(readOnly = true)
+    public Optional<Promotion> getBestPromotion(UUID stadiumId, OffsetDateTime dateTime, int workingDayOfWeek) {
+        ZonedDateTime local = dateTime.atZoneSameInstant(TASHKENT);
+        return promotionRepository.findMatching(stadiumId, dateTime, workingDayOfWeek, local.toLocalTime()).stream()
                 .max(Comparator.comparingInt(Promotion::getDiscountPercent));
     }
 

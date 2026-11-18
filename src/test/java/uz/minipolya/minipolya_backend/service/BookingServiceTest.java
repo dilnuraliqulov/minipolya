@@ -248,7 +248,7 @@ class BookingServiceTest {
                 .stadiumId(STADIUM_ID).startsAt(startAt(22, 2)).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(BadRequestException.class)
-                .hasMessage("Booking must end by 22:30");
+                .hasMessage(BookingWindowValidator.NOT_OPEN);
 
         verify(bookingRepository, never()).saveAndFlush(any());
     }
@@ -261,7 +261,7 @@ class BookingServiceTest {
                 .stadiumId(STADIUM_ID).startsAt(startAt(7, 2)).durationHours(1).cardId(CARD_ID).paymentOption(PaymentOption.FULL).build();
         assertThatThrownBy(() -> service.createBooking(USER_ID, req))
                 .isInstanceOf(BadRequestException.class)
-                .hasMessage("Booking must start at or after 08:00");
+                .hasMessage(BookingWindowValidator.NOT_OPEN);
 
         verify(bookingRepository, never()).saveAndFlush(any());
     }
@@ -583,7 +583,7 @@ class BookingServiceTest {
         stadium.setCloseTime(LocalTime.of(22, 30));
         assertThatThrownBy(() -> service.createManualBooking(manualRequest(22, 1), OWNER_ID))
                 .isInstanceOf(BadRequestException.class)
-                .hasMessage("Booking must end by 22:30");
+                .hasMessage(BookingWindowValidator.NOT_OPEN);
         verify(bookingRepository, never()).saveAndFlush(any());
     }
 

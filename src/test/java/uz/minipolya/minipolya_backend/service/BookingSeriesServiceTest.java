@@ -17,6 +17,7 @@ import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.BookingSeriesRepository;
 import uz.minipolya.minipolya_backend.repository.StadiumRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
+import uz.minipolya.minipolya_backend.util.WeeklyHours;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -102,6 +103,27 @@ class BookingSeriesServiceTest {
                 .dayOfWeek(DAY).startTime(START).durationHours(1).isActive(true).build();
     }
 
+    /**
+     * The working dates of a night series (its hour happens the next morning), by the same
+     * rule the service uses: the cutoff is the real instant, not the clock time of the
+     * working date. Reusing the 20:00 helper here would make the test depend on the hour it
+     * runs at.
+     */
+    private List<LocalDate> nightOccurrences(LocalTime start, int count) {
+        ZonedDateTime now = ZonedDateTime.now(TASHKENT);
+        LocalDate cursor = now.toLocalDate();
+        int diff = (DAY + 1 - cursor.getDayOfWeek().getValue() + 7) % 7;
+        LocalDate first = cursor.plusDays(diff);
+        if (diff == 0 && !first.plusDays(1).atTime(start).atZone(TASHKENT).isAfter(now)) {
+            first = first.plusWeeks(1);
+        }
+        List<LocalDate> result = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            result.add(first.plusWeeks(i));
+        }
+        return result;
+    }
+
     /** Mirrors BookingSeriesService.nextOccurrences for building matching fixtures. */
     private List<LocalDate> occurrences(int count) {
         ZonedDateTime now = ZonedDateTime.now(TASHKENT);
@@ -167,6 +189,50 @@ class BookingSeriesServiceTest {
                 .isInstanceOf(BadRequestException.class);
         verify(seriesRepository, never()).save(any());
         verify(bookingRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void createSeriesAcceptsAnAfterMidnightHourAndBooksItOnTheNextDate() {
+        // The series' dayOfWeek is the WORKING day: Wednesday 08:00-02:00 means a 01:00
+        // slot that actually happens at 01:00 on Thursday.
+        stadium.setWeeklyHours(WeeklyHours.sameEveryDay(LocalTime.of(8, 0), LocalTime.of(2, 0)));
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(seriesRepository.save(any(BookingSeries.class))).thenAnswer(inv -> {
+            BookingSeries saved = inv.getArgument(0);
+            saved.setId(SERIES_ID);
+            return saved;
+        });
+        when(bookingPriceCalculator.hourPrice(any(), any())).thenReturn(100_000L);
+        when(bookingRepository.existsActiveOverlap(eq(STADIUM_ID), any(), any())).thenReturn(false);
+        when(bookingRepository.saveAndFlush(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(seriesMapper.toResponse(any())).thenReturn(new BookingSeriesResponse());
+
+        CreateBookingSeriesRequest req = CreateBookingSeriesRequest.builder()
+                .stadiumId(STADIUM_ID).dayOfWeek(DAY).startTime(LocalTime.of(1, 0)).duration(1).build();
+        service.createSeries(req, USER_ID);
+
+        ArgumentCaptor<Booking> saved = ArgumentCaptor.forClass(Booking.class);
+        verify(bookingRepository, times(2)).saveAndFlush(saved.capture());
+        for (Booking booking : saved.getAllValues()) {
+            ZonedDateTime local = booking.getStartsAt().atZoneSameInstant(TASHKENT);
+            assertThat(local.toLocalTime()).isEqualTo(LocalTime.of(1, 0));
+            // 01:00 on the day AFTER the working Wednesday, so a Thursday date.
+            assertThat(local.getDayOfWeek().getValue() - 1).isEqualTo(DAY + 1);
+        }
+    }
+
+    @Test
+    void createSeriesRejectsAnHourPastAnAfterMidnightClose() {
+        stadium.setWeeklyHours(WeeklyHours.sameEveryDay(LocalTime.of(8, 0), LocalTime.of(2, 0)));
+        when(stadiumRepository.findByIdAndStatus(STADIUM_ID, "approved")).thenReturn(Optional.of(stadium));
+
+        CreateBookingSeriesRequest req = CreateBookingSeriesRequest.builder()
+                .stadiumId(STADIUM_ID).dayOfWeek(DAY).startTime(LocalTime.of(2, 0)).build();
+
+        assertThatThrownBy(() -> service.createSeries(req, USER_ID))
+                .isInstanceOf(BadRequestException.class);
+        verify(seriesRepository, never()).save(any());
     }
 
     @Test
@@ -278,6 +344,29 @@ class BookingSeriesServiceTest {
         service.generateUpcomingBookings();
 
         verify(bookingRepository, times(2)).saveAndFlush(any(Booking.class));
+    }
+
+    @Test
+    void generateUpcomingIsIdempotentForAnAfterMidnightSeries() {
+        // Wednesday 08:00-02:00: the 01:00 slot of Wednesday's working day is booked on the
+        // Thursday date, so matching it against the working date must still recognise it.
+        stadium.setWeeklyHours(WeeklyHours.sameEveryDay(LocalTime.of(8, 0), LocalTime.of(2, 0)));
+        BookingSeries nightSeries = BookingSeries.builder().id(SERIES_ID).user(user).stadium(stadium)
+                .dayOfWeek(DAY).startTime(LocalTime.of(1, 0)).durationHours(1).isActive(true).build();
+        when(seriesRepository.findByIsActiveTrue()).thenReturn(List.of(nightSeries));
+        // Both occurrences already exist, stored at their REAL instants (the day after).
+        List<Booking> existing = nightOccurrences(LocalTime.of(1, 0), 2).stream()
+                .map(date -> Booking.builder()
+                        .stadium(stadium).user(user).status("pending")
+                        .startsAt(date.plusDays(1).atTime(1, 0).atZone(TASHKENT).toOffsetDateTime())
+                        .build())
+                .toList();
+        when(bookingRepository.findByBookingSeriesId(SERIES_ID)).thenReturn(new ArrayList<>(existing));
+
+        service.generateUpcomingBookings();
+
+        verify(bookingRepository, never()).saveAndFlush(any());
+        verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
     }
 
     @Test

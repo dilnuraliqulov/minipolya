@@ -85,8 +85,10 @@ class OwnerStadiumRulesTest {
         expect400(VALID.replace("41.2856", "55.7558"), "Location must be inside Uzbekistan");
         expect400(VALID.replace("15000000", "500000"), "pricePerHour must be between 10 000 and 5 000 000 so'm");
         expect400(VALID.replace("\"08:00\"", "\"08:30\""), "openTime and closeTime must be on the hour");
-        expect400(VALID.replace("\"23:00\"", "\"02:00\""),
-                "closeTime must be after openTime; closing after midnight is not supported");
+        // 08:00-02:00 is allowed now; 08:00-07:00 would be a 23-hour day, which is not.
+        expect400(VALID.replace("\"23:00\"", "\"07:00\""),
+                "A closing time at or before the opening time means the next morning,"
+                        + " so it must be 06:00 or earlier");
         expect400(VALID.replace("  Rules Arena ", " ab "), "name must be between 3 and 150 characters");
         expect400(VALID.replace("Chilonzor 9, 12", "abc"), "address must be between 5 and 300 characters");
         expect400(VALID.replace("Covered pitch", "x".repeat(501)), "description must be at most 500 characters");
@@ -141,8 +143,12 @@ class OwnerStadiumRulesTest {
         update(stadium.getId(), "{\"latitude\":41.3,\"longitude\":69.2}").andExpect(status().isOk());
         update(stadium.getId(), "{\"closeTime\":\"07:00\"}")
                 .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Send both openTime and closeTime"));
+        update(stadium.getId(), "{\"openTime\":\"08:00\",\"closeTime\":\"07:00\"}")
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message")
-                        .value("closeTime must be after openTime; closing after midnight is not supported"));
+                        .value("A closing time at or before the opening time means the next morning,"
+                                + " so it must be 06:00 or earlier"));
         update(stadium.getId(), "{\"phone\":\"123\"}")
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("phone must be in the format +998XXXXXXXXX"));

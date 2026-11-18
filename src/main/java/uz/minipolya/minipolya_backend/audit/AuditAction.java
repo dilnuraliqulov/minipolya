@@ -29,6 +29,7 @@ public enum AuditAction {
     STADIUM_NOTE_ADDED,
     /** The deposit and cancellation window, agreed with the owner by phone (D3). */
     STADIUM_BOOKING_TERMS_CHANGED,
+    STADIUM_HOURS_CHANGED,
     SETTINGS_CHANGED,
 
     // ---- Owner ----
