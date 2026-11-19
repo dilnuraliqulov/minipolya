@@ -59,6 +59,10 @@ public class GameController {
     /**
      * Open challenges: waiting team-vs-team games an opponent could still join.
      * Casual games are not challenges and are never listed here.
+     *
+     * <p>{@code level} narrows the board to the waiting teams of that level
+     * ({@code havaskor} / {@code orta} / {@code professional}); anything else is a 400, and
+     * leaving it out lists every level, teams without one included.
      */
     @GetMapping("/api/games/challenges")
     public ApiResponse<PageResponse<GameChallengeResponse>> challenges(
@@ -66,11 +70,13 @@ public class GameController {
             @RequestParam(required = false) LocalDate date,
             @RequestParam(required = false) String format,
             @RequestParam(required = false) UUID stadiumId,
+            @RequestParam(required = false) String level,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         PageRequest pageable = Pagination.of(page, size, Sort.by(Sort.Direction.ASC, "startsAt"));
         return ApiResponse.ok(PageResponse.from(
-                gameService.getChallenges(userId, date, format, stadiumId, pageable), Function.identity()));
+                gameService.getChallenges(userId, date, format, stadiumId, level, pageable),
+                Function.identity()));
     }
 
     @GetMapping("/api/games/my")

@@ -26,6 +26,7 @@ import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.entity.SavedCard;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.Team;
+import uz.minipolya.minipolya_backend.entity.TeamLevel;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.CardDeclinedException;
@@ -884,7 +885,9 @@ public class TeamGameService {
      */
     @Transactional(readOnly = true)
     public Page<GameChallengeResponse> challenges(UUID userId, LocalDate date, String format,
-                                                  UUID stadiumId, Pageable pageable) {
+                                                  UUID stadiumId, String level, Pageable pageable) {
+        // An unknown level is a 400 before anything is queried, never "everything".
+        TeamLevel teamLevel = TeamLevel.fromValue(level);
         // The window is always a real range, never a pair of nulls: the query
         // cannot take a null bind (see GameRepository.findChallenges). Its lower
         // bound never goes behind the 3-hour cutoff, so a stale date cannot
@@ -905,7 +908,10 @@ public class TeamGameService {
                         format == null, format == null ? "" : format,
                         pageable, viewersTeamIds(userId), GameTeam.Status.ACTIVE,
                         // R45: not while another team is half-way through joining it.
-                        GameTeam.Status.JOINING);
+                        GameTeam.Status.JOINING,
+                        // Changeset 054: the waiting team's level, with a sentinel rather than
+                        // a null bind when every level is wanted (see findChallenges).
+                        teamLevel == null, teamLevel == null ? TeamLevel.HAVASKOR : teamLevel);
         // E9: every stadium's cover photo for the whole page, in one grouped query.
         Map<UUID, String> covers = coverPhotos(games.getContent().stream()
                 .map(g -> g.getStadium().getId()).distinct().toList());
@@ -970,6 +976,7 @@ public class TeamGameService {
                             .side(team.getSide())
                             .teamId(team.getTeam().getId())
                             .teamName(team.getTeam().getName())
+                            .teamLevel(team.getTeam().getLevel())
                             .leaderId(team.getLeader().getId())
                             .leaderName(team.getLeader().getName())
                             .paymentOption(team.getPaymentOption() == null ? null : team.getPaymentOption().getValue())
@@ -1407,6 +1414,7 @@ public class TeamGameService {
                 .title(game.getTitle())
                 .waitingTeamId(waiting == null ? null : waiting.getTeam().getId())
                 .waitingTeamName(waiting == null ? null : waiting.getTeam().getName())
+                .waitingTeamLevel(waiting == null ? null : waiting.getTeam().getLevel())
                 .stadiumId(stadium.getId())
                 .stadiumName(stadium.getName())
                 .stadiumAddress(stadium.getAddress())

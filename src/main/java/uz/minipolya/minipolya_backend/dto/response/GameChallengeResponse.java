@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import uz.minipolya.minipolya_backend.entity.TeamLevel;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -29,6 +30,8 @@ public class GameChallengeResponse {
 
     private UUID waitingTeamId;
     private String waitingTeamName;
+    /** Changeset 054: how seriously the waiting team plays; absent when it has no level yet. */
+    private TeamLevel waitingTeamLevel;
 
     private UUID stadiumId;
     private String stadiumName;

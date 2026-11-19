@@ -295,8 +295,8 @@ public class GameService {
     /** Waiting team games an opponent could still join. */
     @Transactional(readOnly = true)
     public Page<GameChallengeResponse> getChallenges(UUID userId, LocalDate date, String format,
-                                                     UUID stadiumId, Pageable pageable) {
-        return teamGameService.challenges(userId, date, format, stadiumId, pageable);
+                                                     UUID stadiumId, String level, Pageable pageable) {
+        return teamGameService.challenges(userId, date, format, stadiumId, level, pageable);
     }
 
     /** A team leader settles their own team's remainder from a saved card. */
