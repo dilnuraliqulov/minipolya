@@ -26,4 +26,10 @@ public class TeamDetailResponse {
 
     /** {@code havaskor} / {@code orta} / {@code professional}; absent when the team has none yet. */
     private TeamLevel level;
+
+    /** How many team games this team has played: confirmed games whose hour has started. */
+    private Integer gamesPlayed;
+
+    /** The soonest team game ahead of this team — waiting or confirmed; absent when there is none. */
+    private TeamUpcomingGameResponse upcomingGame;
 }

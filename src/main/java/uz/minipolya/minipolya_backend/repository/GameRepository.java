@@ -109,6 +109,49 @@ public interface GameRepository extends JpaRepository<Game, UUID>, JpaSpecificat
                               @Param("anyLevel") boolean anyLevel,
                               @Param("level") TeamLevel level);
 
+    /**
+     * How many team games this team has actually played: confirmed games whose hour has
+     * started. Nothing sets {@code games.status = 'completed'} yet, so "played" is
+     * "confirmed and in the past" — the only honest count the data supports.
+     */
+    @Query("""
+            SELECT COUNT(g) FROM Game g
+            WHERE g.type = 'team_vs_team'
+              AND g.status = 'confirmed'
+              AND g.startsAt < :now
+              AND EXISTS (
+                  SELECT 1 FROM GameTeam t
+                  WHERE t.game = g
+                    AND t.team.id = :teamId
+                    AND t.status = :activeStatus)
+            """)
+    long countPlayedTeamGames(@Param("teamId") UUID teamId,
+                              @Param("now") OffsetDateTime now,
+                              @Param("activeStatus") GameTeam.Status activeStatus);
+
+    /**
+     * The team's games still ahead of it, soonest first — waiting for an opponent
+     * ({@code open}) or confirmed. The caller takes the first; the stadium comes with it,
+     * because the card names it.
+     */
+    @EntityGraph(attributePaths = "stadium")
+    @Query("""
+            SELECT g FROM Game g
+            WHERE g.type = 'team_vs_team'
+              AND g.status IN ('open', 'confirmed')
+              AND g.startsAt >= :now
+              AND EXISTS (
+                  SELECT 1 FROM GameTeam t
+                  WHERE t.game = g
+                    AND t.team.id = :teamId
+                    AND t.status = :activeStatus)
+            ORDER BY g.startsAt ASC
+            """)
+    List<Game> findUpcomingTeamGames(@Param("teamId") UUID teamId,
+                                     @Param("now") OffsetDateTime now,
+                                     @Param("activeStatus") GameTeam.Status activeStatus,
+                                     Pageable pageable);
+
     /** True if either side of any game still references the team (blocks team deletion). */
     boolean existsByTeamAIdOrTeamBId(UUID teamAId, UUID teamBId);
 

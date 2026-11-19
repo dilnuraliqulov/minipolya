@@ -2,6 +2,7 @@ package uz.minipolya.minipolya_backend.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uz.minipolya.minipolya_backend.audit.AuditAction;
@@ -15,6 +16,9 @@ import uz.minipolya.minipolya_backend.dto.response.TeamDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.TeamInvitePreviewResponse;
 import uz.minipolya.minipolya_backend.dto.response.TeamInviteResponse;
 import uz.minipolya.minipolya_backend.dto.response.TeamResponse;
+import uz.minipolya.minipolya_backend.dto.response.TeamUpcomingGameResponse;
+import uz.minipolya.minipolya_backend.entity.Game;
+import uz.minipolya.minipolya_backend.entity.GameTeam;
 import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.TeamLevel;
 import uz.minipolya.minipolya_backend.entity.TeamMember;
@@ -25,11 +29,14 @@ import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.TeamMapper;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
+import uz.minipolya.minipolya_backend.repository.GameTeamRepository;
 import uz.minipolya.minipolya_backend.repository.TeamMemberRepository;
 import uz.minipolya.minipolya_backend.repository.TeamRepository;
 import uz.minipolya.minipolya_backend.repository.UserRepository;
 
 import java.security.SecureRandom;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
@@ -49,6 +56,7 @@ public class TeamService {
     private final TeamMemberRepository teamMemberRepository;
     private final UserRepository userRepository;
     private final GameRepository gameRepository;
+    private final GameTeamRepository gameTeamRepository;
     private final TeamMapper teamMapper;
     private final AuditService auditService;
 
@@ -68,7 +76,7 @@ public class TeamService {
         Team saved = teamRepository.save(team);
         log.info("Team created: id={} name='{}' level={} leaderId={}",
                 saved.getId(), saved.getName(), level, userId);
-        return teamMapper.toDetailResponse(saved);
+        return withGames(saved);
     }
 
     /**
@@ -92,7 +100,7 @@ public class TeamService {
             log.info("Team level changed: teamId={} {} -> {} by leaderId={}",
                     teamId, before, level, requesterId);
         }
-        return teamMapper.toDetailResponse(saved);
+        return withGames(saved);
     }
 
     /** All teams the user belongs to, whether as leader or member. */
@@ -106,7 +114,41 @@ public class TeamService {
 
     @Transactional(readOnly = true)
     public TeamDetailResponse getDetail(UUID teamId) {
-        return teamMapper.toDetailResponse(requireTeam(teamId));
+        return withGames(requireTeam(teamId));
+    }
+
+    /**
+     * The team's own detail plus the two figures its page shows: how many games it has
+     * played, and the next one ahead of it. Both are read from the games themselves — the
+     * page never counts or guesses anything of its own.
+     */
+    private TeamDetailResponse withGames(Team team) {
+        TeamDetailResponse response = teamMapper.toDetailResponse(team);
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        response.setGamesPlayed((int) gameRepository.countPlayedTeamGames(
+                team.getId(), now, GameTeam.Status.ACTIVE));
+        gameRepository.findUpcomingTeamGames(team.getId(), now, GameTeam.Status.ACTIVE,
+                        PageRequest.of(0, 1)).stream().findFirst()
+                .ifPresent(game -> response.setUpcomingGame(upcomingGame(team, game)));
+        return response;
+    }
+
+    /** The next game as its card reads it; the opponent is absent while one is still awaited. */
+    private TeamUpcomingGameResponse upcomingGame(Team team, Game game) {
+        String opponent = gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)
+                .stream()
+                .map(GameTeam::getTeam)
+                .filter(other -> other != null && !team.getId().equals(other.getId()))
+                .map(Team::getName)
+                .findFirst()
+                .orElse(null);
+        return TeamUpcomingGameResponse.builder()
+                .gameId(game.getId())
+                .startsAt(game.getStartsAt())
+                .status(game.getStatus())
+                .stadiumName(game.getStadium() == null ? null : game.getStadium().getName())
+                .opponentName(opponent)
+                .build();
     }
 
     @Transactional
@@ -120,7 +162,7 @@ public class TeamService {
         }
         Team saved = appendMember(team, requireUser(newMemberId));
         log.info("Team member added: teamId={} userId={} by leaderId={}", teamId, newMemberId, requesterId);
-        return teamMapper.toDetailResponse(saved);
+        return withGames(saved);
     }
 
     // ---- Invite links (R32) ----
@@ -169,13 +211,21 @@ public class TeamService {
         }
         Team saved = appendMember(team, requireUser(userId));
         log.info("Team joined by invite: teamId={} userId={}", team.getId(), userId);
-        return teamMapper.toDetailResponse(saved);
+        return withGames(saved);
     }
 
+    /**
+     * The leader removes a member, or a member leaves of their own accord — the same row
+     * disappears either way, so it is the same call. Nobody else may remove anybody, and
+     * the leader is not a member who can walk out: they delete the team instead.
+     */
     @Transactional
     public void removeMember(UUID requesterId, UUID teamId, UUID memberUserId) {
         Team team = requireTeam(teamId);
-        requireLeader(team, requesterId);
+        boolean leaving = requesterId.equals(memberUserId);
+        if (!leaving) {
+            requireLeader(team, requesterId);
+        }
 
         if (team.getLeader().getId().equals(memberUserId)) {
             throw new BadRequestException("The leader cannot be removed; delete the team instead");
@@ -188,7 +238,12 @@ public class TeamService {
 
         team.getMembers().remove(member); // orphanRemoval deletes the row
         teamRepository.save(team);
-        log.info("Team member removed: teamId={} userId={} by leaderId={}", teamId, memberUserId, requesterId);
+        if (leaving) {
+            log.info("Team left: teamId={} userId={}", teamId, memberUserId);
+        } else {
+            log.info("Team member removed: teamId={} userId={} by leaderId={}",
+                    teamId, memberUserId, requesterId);
+        }
     }
 
     @Transactional
