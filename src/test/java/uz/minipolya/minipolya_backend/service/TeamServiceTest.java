@@ -6,10 +6,16 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.dto.request.AddTeamMemberRequest;
 import uz.minipolya.minipolya_backend.dto.request.CreateTeamRequest;
+import uz.minipolya.minipolya_backend.dto.request.UpdateTeamRequest;
 import uz.minipolya.minipolya_backend.dto.response.TeamDetailResponse;
 import uz.minipolya.minipolya_backend.entity.Team;
+import uz.minipolya.minipolya_backend.entity.TeamLevel;
 import uz.minipolya.minipolya_backend.entity.TeamMember;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
@@ -45,6 +51,8 @@ class TeamServiceTest {
     private GameRepository gameRepository;
     @Mock
     private TeamMapper teamMapper;
+    @Mock
+    private AuditService auditService;
 
     @InjectMocks
     private TeamService teamService;
@@ -69,7 +77,7 @@ class TeamServiceTest {
         TeamDetailResponse dto = new TeamDetailResponse();
         when(teamMapper.toDetailResponse(any(Team.class))).thenReturn(dto);
 
-        TeamDetailResponse result = teamService.create(LEADER_ID, CreateTeamRequest.builder().name("  Dragons  ").build());
+        TeamDetailResponse result = teamService.create(LEADER_ID, CreateTeamRequest.builder().name("  Dragons  ").level("orta").build());
 
         assertThat(result).isSameAs(dto);
         ArgumentCaptor<Team> captor = ArgumentCaptor.forClass(Team.class);
@@ -88,7 +96,7 @@ class TeamServiceTest {
     void createThrowsWhenUserMissing() {
         when(userRepository.findById(LEADER_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> teamService.create(LEADER_ID, CreateTeamRequest.builder().name("Dragons").build()))
+        assertThatThrownBy(() -> teamService.create(LEADER_ID, CreateTeamRequest.builder().name("Dragons").level("orta").build()))
                 .isInstanceOf(ResourceNotFoundException.class);
 
         verify(teamRepository, never()).save(any());
@@ -233,5 +241,87 @@ class TeamServiceTest {
 
         verify(teamMapper).toResponse(a);
         verify(teamMapper).toResponse(b);
+    }
+
+    // ---- The team's level ----
+
+    @Test
+    void createStoresTheChosenLevel() {
+        User leader = user(LEADER_ID, "Dilnur");
+        when(userRepository.findById(LEADER_ID)).thenReturn(Optional.of(leader));
+        when(teamRepository.save(any(Team.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(teamMapper.toDetailResponse(any(Team.class))).thenReturn(new TeamDetailResponse());
+
+        teamService.create(LEADER_ID,
+                CreateTeamRequest.builder().name("Dragons").level("professional").build());
+
+        ArgumentCaptor<Team> captor = ArgumentCaptor.forClass(Team.class);
+        verify(teamRepository).save(captor.capture());
+        assertThat(captor.getValue().getLevel()).isEqualTo(TeamLevel.PROFESSIONAL);
+    }
+
+    @Test
+    void createRejectsAnUnknownLevel() {
+        assertThatThrownBy(() -> teamService.create(LEADER_ID,
+                CreateTeamRequest.builder().name("Dragons").level("elite").build()))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("level");
+
+        verify(teamRepository, never()).save(any());
+    }
+
+    @Test
+    void aTeamFromBeforeLevelsHasNone() {
+        Team team = Team.builder().id(TEAM_ID).leader(user(LEADER_ID, "Leader")).name("Old").build();
+
+        assertThat(team.getLevel()).isNull();
+    }
+
+    @Test
+    void onlyTheLeaderEditsTheLevel() {
+        Team team = Team.builder().id(TEAM_ID).leader(user(OWNER_ID, "Owner")).name("Dragons").build();
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
+
+        assertThatThrownBy(() -> teamService.updateLevel(LEADER_ID, TEAM_ID,
+                UpdateTeamRequest.builder().level("orta").build()))
+                .isInstanceOf(ForbiddenException.class);
+
+        verify(teamRepository, never()).save(any());
+    }
+
+    @Test
+    void updateLevelAuditsTheChange() {
+        Team team = Team.builder().id(TEAM_ID).leader(user(LEADER_ID, "Leader")).name("Dragons")
+                .level(TeamLevel.HAVASKOR).build();
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
+        when(teamRepository.save(any(Team.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(teamMapper.toDetailResponse(any(Team.class))).thenReturn(new TeamDetailResponse());
+
+        teamService.updateLevel(LEADER_ID, TEAM_ID,
+                UpdateTeamRequest.builder().level("professional").build());
+
+        assertThat(team.getLevel()).isEqualTo(TeamLevel.PROFESSIONAL);
+        AuditEntry entry = Audited.one(auditService, AuditAction.TEAM_LEVEL_CHANGED);
+        assertThat(entry.getEntityType()).isEqualTo(AuditEntityType.TEAM);
+        assertThat(entry.getEntityId()).isEqualTo(TEAM_ID);
+        assertThat(entry.getEntityLabel()).isEqualTo("Dragons");
+        assertThat(entry.getChanges()).singleElement().satisfies(change -> {
+            assertThat(change.field()).isEqualTo("level");
+            assertThat(change.oldValue()).isEqualTo("havaskor");
+            assertThat(change.newValue()).isEqualTo("professional");
+        });
+    }
+
+    @Test
+    void updateLevelToTheSameValueWritesNoEntry() {
+        Team team = Team.builder().id(TEAM_ID).leader(user(LEADER_ID, "Leader")).name("Dragons")
+                .level(TeamLevel.ORTA).build();
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
+        when(teamRepository.save(any(Team.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(teamMapper.toDetailResponse(any(Team.class))).thenReturn(new TeamDetailResponse());
+
+        teamService.updateLevel(LEADER_ID, TEAM_ID, UpdateTeamRequest.builder().level("orta").build());
+
+        assertThat(Audited.entries(auditService, AuditAction.TEAM_LEVEL_CHANGED)).isEmpty();
     }
 }

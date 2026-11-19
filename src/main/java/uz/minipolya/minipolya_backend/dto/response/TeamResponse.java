@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import uz.minipolya.minipolya_backend.entity.TeamLevel;
 
 import java.util.UUID;
 
@@ -23,4 +24,7 @@ public class TeamResponse {
     private String name;
     private String leaderName;
     private Integer memberCount;
+
+    /** {@code havaskor} / {@code orta} / {@code professional}; absent when the team has none yet. */
+    private TeamLevel level;
 }

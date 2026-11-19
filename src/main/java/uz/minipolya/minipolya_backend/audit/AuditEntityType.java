@@ -13,6 +13,7 @@ public final class AuditEntityType {
     public static final String BOOKING = "booking";
     public static final String BOOKING_SERIES = "booking_series";
     public static final String GAME = "game";
+    public static final String TEAM = "team";
     public static final String PAYMENT = "payment";
 
     private AuditEntityType() {

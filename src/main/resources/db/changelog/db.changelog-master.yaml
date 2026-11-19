@@ -105,3 +105,5 @@ databaseChangeLog:
       file: db/changelog/changes/052-game-team-payment-option.sql
   - include:
       file: db/changelog/changes/053-stadium-weekly-hours.sql
+  - include:
+      file: db/changelog/changes/054-team-level.sql

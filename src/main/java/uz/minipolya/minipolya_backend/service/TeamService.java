@@ -4,13 +4,19 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uz.minipolya.minipolya_backend.audit.AuditAction;
+import uz.minipolya.minipolya_backend.audit.AuditEntityType;
+import uz.minipolya.minipolya_backend.audit.AuditEntry;
+import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.request.AddTeamMemberRequest;
 import uz.minipolya.minipolya_backend.dto.request.CreateTeamRequest;
+import uz.minipolya.minipolya_backend.dto.request.UpdateTeamRequest;
 import uz.minipolya.minipolya_backend.dto.response.TeamDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.TeamInvitePreviewResponse;
 import uz.minipolya.minipolya_backend.dto.response.TeamInviteResponse;
 import uz.minipolya.minipolya_backend.dto.response.TeamResponse;
 import uz.minipolya.minipolya_backend.entity.Team;
+import uz.minipolya.minipolya_backend.entity.TeamLevel;
 import uz.minipolya.minipolya_backend.entity.TeamMember;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
@@ -44,20 +50,48 @@ public class TeamService {
     private final UserRepository userRepository;
     private final GameRepository gameRepository;
     private final TeamMapper teamMapper;
+    private final AuditService auditService;
 
     /** Creates a team; the caller becomes the leader and its first member. */
     @Transactional
     public TeamDetailResponse create(UUID userId, CreateTeamRequest request) {
+        TeamLevel level = TeamLevel.fromValue(request.getLevel());
         User leader = requireUser(userId);
 
         Team team = Team.builder()
                 .leader(leader)
                 .name(request.getName().trim())
+                .level(level)
                 .build();
         team.addMember(TeamMember.builder().user(leader).role(ROLE_LEADER).build());
 
         Team saved = teamRepository.save(team);
-        log.info("Team created: id={} name='{}' leaderId={}", saved.getId(), saved.getName(), userId);
+        log.info("Team created: id={} name='{}' level={} leaderId={}",
+                saved.getId(), saved.getName(), level, userId);
+        return teamMapper.toDetailResponse(saved);
+    }
+
+    /**
+     * The leader changes how seriously the team plays. One audit entry per real change —
+     * picking the level the team already has writes nothing, as every edit in this codebase
+     * does. The level never changes what a team may do, only what other teams are told.
+     */
+    @Transactional
+    public TeamDetailResponse updateLevel(UUID requesterId, UUID teamId, UpdateTeamRequest request) {
+        TeamLevel level = TeamLevel.fromValue(request.getLevel());
+        Team team = requireTeam(teamId);
+        requireLeader(team, requesterId);
+
+        TeamLevel before = team.getLevel();
+        team.setLevel(level);
+        Team saved = teamRepository.save(team);
+        if (before != level) {
+            auditService.record(AuditEntry.player(requesterId, AuditAction.TEAM_LEVEL_CHANGED)
+                    .entity(AuditEntityType.TEAM, saved.getId(), AuditLabels.team(saved))
+                    .change("level", before, level));
+            log.info("Team level changed: teamId={} {} -> {} by leaderId={}",
+                    teamId, before, level, requesterId);
+        }
         return teamMapper.toDetailResponse(saved);
     }
 

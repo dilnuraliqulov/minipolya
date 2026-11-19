@@ -9,6 +9,7 @@ import uz.minipolya.minipolya_backend.entity.PricingRule;
 import uz.minipolya.minipolya_backend.entity.Promotion;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.StadiumClosure;
+import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.User;
 
 import java.time.DayOfWeek;
@@ -45,6 +46,11 @@ public final class AuditLabels {
         String label = stadium(booking.getStadium()) + ", " + local(booking.getStartsAt())
                 + " (" + booking.getDurationHours() + "h)";
         return booking.getClientName() == null ? label : label + ", " + booking.getClientName();
+    }
+
+    /** A team's name — the one thing about it that does not change. */
+    public static String team(Team team) {
+        return team == null ? null : team.getName();
     }
 
     /** "Chilonzor Arena, 2026-11-02 20:00, team_vs_team". */
