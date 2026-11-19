@@ -13,6 +13,7 @@ import uz.minipolya.minipolya_backend.audit.AuditEntityType;
 import uz.minipolya.minipolya_backend.audit.AuditEntry;
 import uz.minipolya.minipolya_backend.audit.AuditLabels;
 import uz.minipolya.minipolya_backend.dto.request.CreateGameRequest;
+import uz.minipolya.minipolya_backend.dto.request.SendGameMessageRequest;
 import uz.minipolya.minipolya_backend.dto.response.GameChallengeResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameParticipantResponse;
@@ -675,6 +676,7 @@ public class GameService {
         if (TYPE_TEAM_VS_TEAM.equals(game.getType())) {
             dto.setTeams(viewerId == null ? teamGameService.teamsOf(game) : teamGameService.teamsOf(game, viewerId));
             dto.setJoinPending(teamGameService.joinPending(game.getId()));
+            dto.setChatMessageMaxLength(SendGameMessageRequest.MESSAGE_MAX);
         } else if (game.getTotalPrice() != null) {
             dto.setPrice(cardPricing().gameShareSplit(game).playerAmount());
         }

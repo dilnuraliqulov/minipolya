@@ -18,6 +18,7 @@ import uz.minipolya.minipolya_backend.dto.response.GameChallengeResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameTeamResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
+import uz.minipolya.minipolya_backend.entity.GameMessage;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
 import uz.minipolya.minipolya_backend.entity.GameParticipant.Side;
 import uz.minipolya.minipolya_backend.entity.GameTeam;
@@ -118,6 +119,8 @@ public class TeamGameService {
     private final AppProperties appProperties;
     private final TeamMemberRepository teamMemberRepository;
     private final TeamRepository teamRepository;
+    /** Only to write the chat's system lines when a game is confirmed; never read from here. */
+    private final GameMessageService gameMessageService;
     /** A join commits after every step (see {@link #join}); everything else here is ordinary {@code @Transactional}. */
     private final org.springframework.transaction.PlatformTransactionManager transactionManager;
 
@@ -412,6 +415,9 @@ public class TeamGameService {
                 Notification.Type.GAME_PLAYER_JOINED, "Новый игрок",
                 leader.getName() + " присоединился к вашей игре.", Notification.ReferenceType.GAME, game.getId()));
         notifyConfirmed(game);
+        // The chat opens with this confirmation, so it opens with the story of it.
+        gameMessageService.systemMessage(game, GameMessage.EVENT_GAME_CONFIRMED, null);
+        gameMessageService.systemMessage(game, GameMessage.EVENT_TEAM_JOINED, team.getName());
         auditService.record(AuditEntry.player(leader.getId(), AuditAction.GAME_JOINED)
                 .entity(AuditEntityType.GAME, game.getId(), AuditLabels.game(game))
                 .created("side", side)

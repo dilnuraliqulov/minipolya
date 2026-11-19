@@ -36,5 +36,6 @@ public interface GameMapper {
     @Mapping(target = "teams", ignore = true)
     @Mapping(target = "inviteLink", ignore = true)
     @Mapping(target = "joinPending", ignore = true)
+    @Mapping(target = "chatMessageMaxLength", ignore = true)
     GameDetailResponse toDetailResponse(Game game);
 }

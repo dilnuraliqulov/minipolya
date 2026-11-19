@@ -72,6 +72,12 @@ public class GameDetailResponse {
     /** R45, team games only: a team is half-way through joining (its payment being confirmed). */
     private Boolean joinPending;
 
+    /**
+     * Team games only: the longest chat message the server takes, so the composer's limit
+     * and its counter come from here rather than a number copied into the client.
+     */
+    private Integer chatMessageMaxLength;
+
     private List<GameParticipantResponse> participants;
 
     private OffsetDateTime createdAt;

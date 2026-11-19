@@ -87,7 +87,7 @@ class TeamGameChallengesTest {
                 mock(PaymentService.class), mock(SavedCardService.class), platformSettingsService,
                 mock(NotificationService.class), mock(AuditService.class),
                 new CancellationPolicy(), new AppProperties(),
-                teamMemberRepository, teamRepository, org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
+                teamMemberRepository, teamRepository, mock(GameMessageService.class), org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         User waitingLeader = User.builder().id(UUID.randomUUID()).name("Leader A").build();
         stadium = Stadium.builder().id(STADIUM_ID).name("Chilonzor Arena")
