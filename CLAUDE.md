@@ -26,7 +26,7 @@ Break none of these. Each is explained in full in the doc named beside it.
 ### Database and migrations — `docs/claude/database.md`
 
 - **NEVER edit an already-applied Liquibase changeset.** Liquibase checksums it and the app
-  refuses to start. Any schema change is a **new** file `changes/054-description.sql` with a
+  refuses to start. Any schema change is a **new** file `changes/056-description.sql` with a
   unique `--changeset minipolya:<id>` tag, added to `db.changelog-master.yaml`. The one-time
   exception (001–017 edited in place before the first deploy) is spent.
 - Hibernate is `ddl-auto: validate` — it never creates or alters a table. A failing migration

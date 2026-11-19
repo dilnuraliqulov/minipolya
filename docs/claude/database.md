@@ -8,7 +8,7 @@
 
 - **Migrations**: Managed by Liquibase
   - Master changelog: `src/main/resources/db/changelog/db.changelog-master.yaml`
-  - Changeset files: `src/main/resources/db/changelog/changes/*.sql` (53 files, 33 tables)
+  - Changeset files: `src/main/resources/db/changelog/changes/*.sql` (55 files, 33 tables)
   - Format: SQL changesets with `--liquibase formatted sql` header
   - Each changeset has a unique `--changeset minipolya:<id>` tag
   - Liquibase tracks applied changesets in `DATABASECHANGELOG` and `DATABASECHANGELOGLOCK` tables
@@ -75,7 +75,9 @@ db/changelog/
     ├── 050-remainder-marks.sql       # bookings.remainder_mark / _marked_at / _marked_by; payments status 'cancelled' (voided cash)
     ├── 051-default-min-booking-amount.sql # platform_settings.default_min_booking_amount (5 000 000 tiyin)
     ├── 052-game-team-payment-option.sql   # game_teams payment_option, join_price, remainder_price + remainder_mark / _marked_at / _marked_by
-    └── 053-stadium-weekly-hours.sql       # stadium_hours: one row per day of the week per stadium, backfilled from the stadiums' own open/close
+    ├── 053-stadium-weekly-hours.sql       # stadium_hours: one row per day of the week per stadium, backfilled from the stadiums' own open/close
+    ├── 054-team-level.sql                 # teams.level: havaskor / orta / professional, nullable (teams from before have none)
+    └── 055-game-message-system.sql        # game_messages kind / event / event_team_name; user_id nullable for the platform's own lines
 ```
 
 ## Adding New Migrations

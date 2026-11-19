@@ -230,7 +230,7 @@ answers: past the 3-hour point a team's own figure is 0 because cancelling
 forfeits, yet that same team is made whole if its *opponent* cancels.
 
 *Finding opponents.* `GET /api/games/challenges` (filters `date`, `format`,
-`stadiumId`; paged) lists WAITING team games before their 3-hour point, excluding
+`stadiumId`, `level`; paged) lists WAITING team games before their 3-hour point, excluding
 any the caller's own team is waiting on (membership and leadership both count), and
 any another team is half-way through joining (R45: a `joining` team, e.g. after 202
 `PAYMENT_PENDING` — left out for everyone, the joining captain too; back on the board
@@ -246,6 +246,14 @@ anyone who opens it, in every status) carry `location` — `StadiumLocationRespo
 `latitude`, `longitude`, `coverPhotoUrl`, `format` (absent fields omitted). The board fetches
 the stadiums with its page (`@EntityGraph` on `findChallenges`), so no stadium loads per card
 (`TeamGameLocationTest`).
+`level` (`havaskor` / `orta` / `professional`, changeset 054) narrows the board to the games
+whose **waiting team** is of that level, **in the query itself** — a page is never sliced
+after the fact. An unknown value is a 400 before anything is read; leaving it out lists every
+level, teams without one included. It is switched off by an `anyLevel` flag with a sentinel
+level rather than a null bind, the same reason `stadiumId` and `format` are (see
+`GameRepository.findChallenges`). Each card carries `waitingTeamLevel`, and each side of a
+game carries `teamLevel`, so the badge is shown without another request. The level never
+decides who may join — the app only asks a captain to confirm a mismatch.
 A team game
 stays `is_public = false`; this endpoint queries by type and status instead.
 Availability and the owner's schedule mark a slot where a team is looking for an
@@ -257,6 +265,27 @@ after they joined. A team that **left** loses the chat entirely: its players are
 marked `cancelled` with it, so a departed leader cannot read what the teams
 still playing say afterwards. An invited member leads no team, so they keep
 their side's whole history.
+
+- **System lines (changeset 055).** The platform writes in the chat too: when a game is
+  confirmed it says `game_confirmed`, then `team_joined` naming the team that took the free
+  side. They are ordinary `game_messages` rows with `kind = 'system'`, **no sender**
+  (`user_id` is nullable from 055) and the event in `event` / `event_team_name`, so they
+  page, sort and get cut at a late joiner's join like everything else, and the clients word
+  them in the reader's own language. `GameMessageService.systemMessage` is written in the
+  confirming transaction and never throws at it — a game has just been confirmed and money
+  has moved.
+- **Who is speaking.** Every message carries its sender's `side`, `teamId`, `teamName` and
+  `teamLevel`, resolved once for a whole page from the game's participants and its active
+  teams — never once per message. A sender in neither team simply has none.
+- **Older messages.** `GET /api/games/{id}/messages` takes an optional `before` (an ISO
+  instant): the page of messages strictly older than it, newest first. Without it the
+  endpoint behaves exactly as before. It is a cursor rather than a deeper page number
+  because a message arriving meanwhile would shift every page boundary under the reader's
+  thumb. The joined-at cutoff still applies on top of it.
+- **How long a message may be** is the server's: `chatMessageMaxLength` on a team game's
+  `GameDetailResponse` (= `SendGameMessageRequest.MESSAGE_MAX`, the same constant its
+  `@Size` validates against), so a composer's limit and counter are never a number copied
+  into a client.
 
 *Members.* Leaders still invite team members via the link, and members do **not**
 pay for the pitch — but a member cannot join a team game through
