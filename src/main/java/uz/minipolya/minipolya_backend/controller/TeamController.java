@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.AddTeamMemberRequest;
 import uz.minipolya.minipolya_backend.dto.request.CreateTeamRequest;
 import uz.minipolya.minipolya_backend.dto.request.JoinTeamRequest;
+import uz.minipolya.minipolya_backend.dto.request.UpdateTeamRequest;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.TeamDetailResponse;
 import uz.minipolya.minipolya_backend.dto.response.TeamInvitePreviewResponse;
@@ -32,6 +34,14 @@ public class TeamController {
     public ApiResponse<TeamDetailResponse> create(@AuthenticationPrincipal UUID userId,
                                                   @Valid @RequestBody CreateTeamRequest request) {
         return ApiResponse.ok(teamService.create(userId, request), "Team created");
+    }
+
+    /** The team's level — the leader only. The name is not editable. */
+    @PatchMapping("/api/teams/{id}")
+    public ApiResponse<TeamDetailResponse> update(@AuthenticationPrincipal UUID userId,
+                                                  @PathVariable UUID id,
+                                                  @Valid @RequestBody UpdateTeamRequest request) {
+        return ApiResponse.ok(teamService.updateLevel(userId, id, request), "Team updated");
     }
 
     @GetMapping("/api/teams/me")

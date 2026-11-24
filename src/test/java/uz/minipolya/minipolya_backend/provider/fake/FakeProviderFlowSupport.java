@@ -135,7 +135,8 @@ abstract class FakeProviderFlowSupport {
 
     protected UUID team(User leader, String name) throws Exception {
         String body = mvc.perform(post("/api/teams").header("Authorization", data.bearer(leader))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"" + name + "\"}"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"" + name + "\",\"level\":\"orta\"}"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         return UUID.fromString(JsonPath.read(body, "$.data.id"));

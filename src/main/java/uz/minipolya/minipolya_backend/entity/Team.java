@@ -2,6 +2,7 @@ package uz.minipolya.minipolya_backend.entity;
 
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import org.hibernate.annotations.UuidGenerator;
@@ -48,6 +49,15 @@ public class Team {
 
     @Column(nullable = false, length = 100)
     private String name;
+
+    /**
+     * How seriously the team plays (changeset 054). Required when a team is created and
+     * changed afterwards only by the leader, who is audited for it. Null on every team
+     * created before levels existed — the apps read that as "not set".
+     */
+    @Convert(converter = TeamLevel.TeamLevelConverter.class)
+    @Column(length = 20)
+    private TeamLevel level;
 
     /**
      * R32: the code in the team's invite link — random, URL-safe, unique. Null until the

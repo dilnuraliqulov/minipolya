@@ -10,6 +10,8 @@ import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameMessage;
 import uz.minipolya.minipolya_backend.entity.GameParticipant;
 import uz.minipolya.minipolya_backend.entity.GameTeam;
+import uz.minipolya.minipolya_backend.entity.Team;
+import uz.minipolya.minipolya_backend.entity.TeamLevel;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
@@ -129,7 +131,7 @@ class GameMessageServiceTest {
                 .thenReturn(new PageImpl<>(List.of(new GameMessage())));
         when(gameMessageMapper.toResponse(any(GameMessage.class))).thenReturn(new GameMessageResponse());
 
-        var result = service.getMessages(GAME_ID, USER_ID, Pageable.ofSize(20));
+        var result = service.getMessages(GAME_ID, USER_ID, null, Pageable.ofSize(20));
 
         assertThat(result.getContent()).hasSize(1);
     }
@@ -153,7 +155,7 @@ class GameMessageServiceTest {
         when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game));
         stubParticipant(GAME_ID);
 
-        assertThatThrownBy(() -> service.getMessages(GAME_ID, USER_ID, Pageable.ofSize(20)))
+        assertThatThrownBy(() -> service.getMessages(GAME_ID, USER_ID, null, Pageable.ofSize(20)))
                 .isInstanceOf(BadRequestException.class);
     }
 
@@ -181,7 +183,7 @@ class GameMessageServiceTest {
                 .thenReturn(new PageImpl<>(List.of(new GameMessage())));
         when(gameMessageMapper.toResponse(any(GameMessage.class))).thenReturn(new GameMessageResponse());
 
-        var result = service.getMessages(GAME_ID, USER_ID, Pageable.ofSize(20));
+        var result = service.getMessages(GAME_ID, USER_ID, null, Pageable.ofSize(20));
 
         // What the previous opponent said is not this team's business.
         assertThat(result.getContent()).hasSize(1);
@@ -198,7 +200,7 @@ class GameMessageServiceTest {
                 GameParticipant.builder().id(PARTICIPANT_ID).user(player)
                         .status(GameParticipant.Status.CANCELLED).build()));
 
-        assertThatThrownBy(() -> service.getMessages(GAME_ID, USER_ID, Pageable.ofSize(20)))
+        assertThatThrownBy(() -> service.getMessages(GAME_ID, USER_ID, null, Pageable.ofSize(20)))
                 .isInstanceOf(ForbiddenException.class);
         assertThatThrownBy(() -> service.sendMessage(GAME_ID, USER_ID, "still here"))
                 .isInstanceOf(ForbiddenException.class);
@@ -216,6 +218,132 @@ class GameMessageServiceTest {
         when(gameMessageMapper.toResponse(any(GameMessage.class))).thenReturn(new GameMessageResponse());
 
         // An invited member leads no team, so there is no join moment to cut at.
-        assertThat(service.getMessages(GAME_ID, USER_ID, Pageable.ofSize(20)).getContent()).hasSize(2);
+        assertThat(service.getMessages(GAME_ID, USER_ID, null, Pageable.ofSize(20)).getContent()).hasSize(2);
+    }
+
+    // ---- System messages (changeset 055) ----
+
+    @Test
+    void aSystemMessageHasNoSenderAndNamesItsEvent() {
+        Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("confirmed").build();
+        when(gameMessageRepository.save(any(GameMessage.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.systemMessage(game, GameMessage.EVENT_TEAM_JOINED, "Delta FC");
+
+        ArgumentCaptor<GameMessage> captor = ArgumentCaptor.forClass(GameMessage.class);
+        verify(gameMessageRepository).save(captor.capture());
+        GameMessage saved = captor.getValue();
+        assertThat(saved.getUser()).isNull();
+        assertThat(saved.getKind()).isEqualTo(GameMessage.Kind.SYSTEM);
+        assertThat(saved.getEvent()).isEqualTo("team_joined");
+        assertThat(saved.getEventTeamName()).isEqualTo("Delta FC");
+        assertThat(saved.getGame()).isSameAs(game);
+    }
+
+    @Test
+    void aSystemMessageThatCannotBeWrittenNeverBreaksTheFlowThatCausedIt() {
+        Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("confirmed").build();
+        when(gameMessageRepository.save(any(GameMessage.class)))
+                .thenThrow(new RuntimeException("database is away"));
+
+        // A game is confirmed and money has moved; a chat line must never undo that.
+        service.systemMessage(game, GameMessage.EVENT_GAME_CONFIRMED, null);
+    }
+
+    @Test
+    void aUserMessageIsSavedAsOne() {
+        Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("confirmed").build();
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game));
+        stubParticipant(GAME_ID);
+        when(gameMessageRepository.save(any(GameMessage.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(gameMessageMapper.toResponse(any(GameMessage.class))).thenReturn(new GameMessageResponse());
+
+        service.sendMessage(GAME_ID, USER_ID, "hi");
+
+        ArgumentCaptor<GameMessage> captor = ArgumentCaptor.forClass(GameMessage.class);
+        verify(gameMessageRepository).save(captor.capture());
+        assertThat(captor.getValue().getKind()).isEqualTo(GameMessage.Kind.USER);
+    }
+
+    // ---- The sender's team ----
+
+    @Test
+    void aMessageCarriesItsSendersSideTeamAndLevel() {
+        Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("confirmed").build();
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game));
+        stubParticipant(GAME_ID);
+        when(participantRepository.findByGameId(GAME_ID)).thenReturn(List.of(
+                GameParticipant.builder().user(player).side(GameParticipant.Side.B).build()));
+        when(gameTeamRepository.findByGameIdAndStatus(GAME_ID, GameTeam.Status.ACTIVE)).thenReturn(List.of(
+                GameTeam.builder().side(GameParticipant.Side.B)
+                        .team(Team.builder().id(UUID.randomUUID()).name("Delta FC")
+                                .level(TeamLevel.PROFESSIONAL).build())
+                        .build()));
+        GameMessage message = GameMessage.builder().id(UUID.randomUUID()).user(player).message("hi").build();
+        when(gameMessageRepository.findByGameIdOrderByCreatedAtDesc(eq(GAME_ID), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(message)));
+        when(gameMessageMapper.toResponse(message)).thenReturn(new GameMessageResponse());
+
+        GameMessageResponse response = service.getMessages(GAME_ID, USER_ID, null, Pageable.ofSize(20))
+                .getContent().getFirst();
+
+        assertThat(response.getSide()).isEqualTo(GameParticipant.Side.B);
+        assertThat(response.getTeamName()).isEqualTo("Delta FC");
+        assertThat(response.getTeamLevel()).isEqualTo(TeamLevel.PROFESSIONAL);
+    }
+
+    @Test
+    void aSenderOutsideBothTeamsSimplyHasNoTeamOnTheirMessage() {
+        Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("confirmed").build();
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game));
+        stubParticipant(GAME_ID);
+        when(participantRepository.findByGameId(GAME_ID)).thenReturn(List.of());
+        when(gameTeamRepository.findByGameIdAndStatus(GAME_ID, GameTeam.Status.ACTIVE)).thenReturn(List.of());
+        GameMessage message = GameMessage.builder().id(UUID.randomUUID()).user(player).message("hi").build();
+        when(gameMessageRepository.findByGameIdOrderByCreatedAtDesc(eq(GAME_ID), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(message)));
+        when(gameMessageMapper.toResponse(message)).thenReturn(new GameMessageResponse());
+
+        GameMessageResponse response = service.getMessages(GAME_ID, USER_ID, null, Pageable.ofSize(20))
+                .getContent().getFirst();
+
+        assertThat(response.getTeamName()).isNull();
+        assertThat(response.getTeamLevel()).isNull();
+    }
+
+    // ---- Loading older messages ----
+
+    @Test
+    void beforeLoadsOlderMessagesOnly() {
+        Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("confirmed").build();
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game));
+        stubParticipant(GAME_ID);
+        OffsetDateTime before = OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(3);
+        when(gameMessageRepository.findByGameIdAndCreatedAtBeforeOrderByCreatedAtDesc(
+                eq(GAME_ID), eq(before), any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
+
+        service.getMessages(GAME_ID, USER_ID, before, Pageable.ofSize(20));
+
+        verify(gameMessageRepository, never()).findByGameIdOrderByCreatedAtDesc(any(), any(Pageable.class));
+    }
+
+    @Test
+    void aNewOpponentLoadingOlderMessagesStillOnlySeesTheirOwnHistory() {
+        Game game = Game.builder().id(GAME_ID).type("team_vs_team").status("confirmed").build();
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game));
+        stubParticipant(GAME_ID);
+        OffsetDateTime joinedAt = OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(30);
+        OffsetDateTime before = OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(3);
+        when(gameTeamRepository.findByGameIdAndLeaderIdAndStatus(GAME_ID, USER_ID, GameTeam.Status.ACTIVE))
+                .thenReturn(Optional.of(GameTeam.builder().id(UUID.randomUUID())
+                        .joinedAt(joinedAt).status(GameTeam.Status.ACTIVE).build()));
+        when(gameMessageRepository.findByGameIdAndCreatedAtAfterAndCreatedAtBeforeOrderByCreatedAtDesc(
+                eq(GAME_ID), eq(joinedAt), eq(before), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service.getMessages(GAME_ID, USER_ID, before, Pageable.ofSize(20));
+
+        verify(gameMessageRepository, never())
+                .findByGameIdAndCreatedAtBeforeOrderByCreatedAtDesc(any(), any(), any(Pageable.class));
     }
 }

@@ -14,8 +14,10 @@ import uz.minipolya.minipolya_backend.entity.GameTeam;
 import uz.minipolya.minipolya_backend.entity.PlatformSettings;
 import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.Team;
+import uz.minipolya.minipolya_backend.entity.TeamLevel;
 import uz.minipolya.minipolya_backend.entity.TeamMember;
 import uz.minipolya.minipolya_backend.entity.User;
+import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.repository.GameParticipantRepository;
 import uz.minipolya.minipolya_backend.repository.GameRepository;
@@ -34,6 +36,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
@@ -84,7 +87,7 @@ class TeamGameChallengesTest {
                 mock(PaymentService.class), mock(SavedCardService.class), platformSettingsService,
                 mock(NotificationService.class), mock(AuditService.class),
                 new CancellationPolicy(), new AppProperties(),
-                teamMemberRepository, teamRepository, org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
+                teamMemberRepository, teamRepository, mock(GameMessageService.class), org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         User waitingLeader = User.builder().id(UUID.randomUUID()).name("Leader A").build();
         stadium = Stadium.builder().id(STADIUM_ID).name("Chilonzor Arena")
@@ -108,12 +111,16 @@ class TeamGameChallengesTest {
         when(gameTeamRepository.findByGameIdAndSideAndStatus(game.getId(), Side.A, GameTeam.Status.ACTIVE))
                 .thenReturn(Optional.of(sideA));
         when(gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)).thenReturn(List.of(sideA));
-        when(gameRepository.findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any(), any()))
+        when(gameRepository.findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any()))
                 .thenReturn(new PageImpl<>(List.of(game)));
     }
 
     private Page<GameChallengeResponse> challenges(LocalDate date, String format, UUID stadiumId) {
-        return service.challenges(VIEWER_ID, date, format, stadiumId, PageRequest.of(0, 20));
+        return challenges(date, format, stadiumId, null);
+    }
+
+    private Page<GameChallengeResponse> challenges(LocalDate date, String format, UUID stadiumId, String level) {
+        return service.challenges(VIEWER_ID, date, format, stadiumId, level, PageRequest.of(0, 20));
     }
 
     @Test
@@ -175,10 +182,14 @@ class TeamGameChallengesTest {
         ArgumentCaptor<Boolean> anyFormat = ArgumentCaptor.forClass(Boolean.class);
         ArgumentCaptor<String> format = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<Boolean> anyLevel = ArgumentCaptor.forClass(Boolean.class);
+        ArgumentCaptor<TeamLevel> level = ArgumentCaptor.forClass(TeamLevel.class);
         verify(gameRepository).findChallenges(from.capture(), to.capture(), anyStadium.capture(),
-                stadiumId.capture(), anyFormat.capture(), format.capture(), any(), excluded.capture(), any(), any());
+                stadiumId.capture(), anyFormat.capture(), format.capture(), any(), excluded.capture(),
+                any(), any(), anyLevel.capture(), level.capture());
         return new Object[]{from.getValue(), to.getValue(), anyStadium.getValue(),
-                stadiumId.getValue(), anyFormat.getValue(), format.getValue(), excluded.getValue()};
+                stadiumId.getValue(), anyFormat.getValue(), format.getValue(), excluded.getValue(),
+                anyLevel.getValue(), level.getValue()};
     }
 
     @Test
@@ -243,7 +254,7 @@ class TeamGameChallengesTest {
         challenges(null, null, null);
 
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
-        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any(), any());
+        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any(), any(), anyBoolean(), any());
         assertThat(excluded.getValue()).contains(VIEWER_TEAM_ID);
     }
 
@@ -255,7 +266,7 @@ class TeamGameChallengesTest {
         challenges(null, null, null);
 
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
-        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any(), any());
+        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any(), any(), anyBoolean(), any());
         assertThat(excluded.getValue()).contains(VIEWER_TEAM_ID);
     }
 
@@ -264,9 +275,54 @@ class TeamGameChallengesTest {
         challenges(null, null, null);
 
         ArgumentCaptor<List<UUID>> excluded = ArgumentCaptor.forClass(List.class);
-        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any(), any());
+        verify(gameRepository).findChallenges(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), excluded.capture(), any(), any(), anyBoolean(), any());
 
         // An empty IN (...) is not valid SQL, so the list always holds something.
         assertThat(excluded.getValue()).isNotEmpty();
+    }
+
+    // ---- The level filter (changeset 054) ----
+
+    @Test
+    void challengesFilterByLevel() {
+        challenges(null, null, null, "orta");
+
+        Object[] call = lastCall();
+        assertThat(call[7]).isEqualTo(false);              // anyLevel
+        assertThat(call[8]).isEqualTo(TeamLevel.ORTA);
+    }
+
+    @Test
+    void challengesWithoutALevelAskForEveryLevel() {
+        challenges(null, null, null, null);
+
+        Object[] call = lastCall();
+        assertThat(call[7]).isEqualTo(true);               // anyLevel
+        assertThat(call).doesNotContainNull();             // the sentinel, never a null bind
+    }
+
+    @Test
+    void challengesRejectAnUnknownLevel() {
+        assertThatThrownBy(() -> challenges(null, null, null, "elite"))
+                .isInstanceOf(BadRequestException.class);
+
+        verify(gameRepository, org.mockito.Mockito.never()).findChallenges(any(), any(), anyBoolean(),
+                any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any());
+    }
+
+    @Test
+    void aChallengeCarriesTheWaitingTeamsLevel() {
+        waitingTeam.setLevel(TeamLevel.PROFESSIONAL);
+
+        GameChallengeResponse card = challenges(null, null, null).getContent().getFirst();
+
+        assertThat(card.getWaitingTeamLevel()).isEqualTo(TeamLevel.PROFESSIONAL);
+    }
+
+    @Test
+    void aChallengeOfATeamFromBeforeLevelsHasNone() {
+        GameChallengeResponse card = challenges(null, null, null).getContent().getFirst();
+
+        assertThat(card.getWaitingTeamLevel()).isNull();
     }
 }

@@ -25,6 +25,18 @@ public interface GameMessageRepository extends JpaRepository<GameMessage, UUID> 
     Page<GameMessage> findByGameIdAndCreatedAtAfterOrderByCreatedAtDesc(UUID gameId, OffsetDateTime since,
                                                                         Pageable pageable);
 
+    /**
+     * One page of history older than {@code before} — what "load the earlier messages"
+     * asks for. A cursor rather than a deeper page number, because a message arriving
+     * meanwhile would shift every page boundary under the reader's thumb.
+     */
+    Page<GameMessage> findByGameIdAndCreatedAtBeforeOrderByCreatedAtDesc(UUID gameId, OffsetDateTime before,
+                                                                         Pageable pageable);
+
+    /** The same, for a team that joined partway through: never behind its own join. */
+    Page<GameMessage> findByGameIdAndCreatedAtAfterAndCreatedAtBeforeOrderByCreatedAtDesc(
+            UUID gameId, OffsetDateTime since, OffsetDateTime before, Pageable pageable);
+
     /** Unread count: messages posted since the user last looked. */
     int countByGameIdAndCreatedAtAfter(UUID gameId, OffsetDateTime since);
 }

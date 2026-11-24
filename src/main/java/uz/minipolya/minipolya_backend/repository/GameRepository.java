@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import uz.minipolya.minipolya_backend.entity.Game;
 import uz.minipolya.minipolya_backend.entity.GameTeam;
+import uz.minipolya.minipolya_backend.entity.TeamLevel;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -88,6 +89,11 @@ public interface GameRepository extends JpaRepository<Game, UUID>, JpaSpecificat
                   SELECT 1 FROM GameTeam j
                   WHERE j.game = g
                     AND j.status = :joiningStatus)
+              AND (:anyLevel = TRUE OR EXISTS (
+                  SELECT 1 FROM GameTeam w
+                  WHERE w.game = g
+                    AND w.status = :activeStatus
+                    AND w.team.level = :level))
             ORDER BY g.startsAt ASC
             """)
     Page<Game> findChallenges(@Param("from") OffsetDateTime from,
@@ -99,7 +105,52 @@ public interface GameRepository extends JpaRepository<Game, UUID>, JpaSpecificat
                               Pageable pageable,
                               @Param("excludedTeamIds") List<UUID> excludedTeamIds,
                               @Param("activeStatus") GameTeam.Status activeStatus,
-                              @Param("joiningStatus") GameTeam.Status joiningStatus);
+                              @Param("joiningStatus") GameTeam.Status joiningStatus,
+                              @Param("anyLevel") boolean anyLevel,
+                              @Param("level") TeamLevel level);
+
+    /**
+     * How many team games this team has actually played: confirmed games whose hour has
+     * started. Nothing sets {@code games.status = 'completed'} yet, so "played" is
+     * "confirmed and in the past" — the only honest count the data supports.
+     */
+    @Query("""
+            SELECT COUNT(g) FROM Game g
+            WHERE g.type = 'team_vs_team'
+              AND g.status = 'confirmed'
+              AND g.startsAt < :now
+              AND EXISTS (
+                  SELECT 1 FROM GameTeam t
+                  WHERE t.game = g
+                    AND t.team.id = :teamId
+                    AND t.status = :activeStatus)
+            """)
+    long countPlayedTeamGames(@Param("teamId") UUID teamId,
+                              @Param("now") OffsetDateTime now,
+                              @Param("activeStatus") GameTeam.Status activeStatus);
+
+    /**
+     * The team's games still ahead of it, soonest first — waiting for an opponent
+     * ({@code open}) or confirmed. The caller takes the first; the stadium comes with it,
+     * because the card names it.
+     */
+    @EntityGraph(attributePaths = "stadium")
+    @Query("""
+            SELECT g FROM Game g
+            WHERE g.type = 'team_vs_team'
+              AND g.status IN ('open', 'confirmed')
+              AND g.startsAt >= :now
+              AND EXISTS (
+                  SELECT 1 FROM GameTeam t
+                  WHERE t.game = g
+                    AND t.team.id = :teamId
+                    AND t.status = :activeStatus)
+            ORDER BY g.startsAt ASC
+            """)
+    List<Game> findUpcomingTeamGames(@Param("teamId") UUID teamId,
+                                     @Param("now") OffsetDateTime now,
+                                     @Param("activeStatus") GameTeam.Status activeStatus,
+                                     Pageable pageable);
 
     /** True if either side of any game still references the team (blocks team deletion). */
     boolean existsByTeamAIdOrTeamBId(UUID teamAId, UUID teamBId);

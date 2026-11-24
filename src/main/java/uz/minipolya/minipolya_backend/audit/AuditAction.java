@@ -64,6 +64,8 @@ public enum AuditAction {
     GAME_CANCELLED,
     GAME_OPPONENT_LEFT,
     GAME_REMAINDER_PAID,
+    /** Changeset 054: the team's leader changed how seriously the team plays. */
+    TEAM_LEVEL_CHANGED,
     PROFILE_UPDATED,
     /** The user shared their own Telegram contact with the bot; the number itself is never logged. */
     PHONE_SHARED_VIA_BOT,
