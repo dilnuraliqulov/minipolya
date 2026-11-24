@@ -15,6 +15,7 @@ import uz.minipolya.minipolya_backend.provider.HoldOutcome;
 import uz.minipolya.minipolya_backend.provider.HoldRequest;
 import uz.minipolya.minipolya_backend.provider.PaymentProviderException;
 import uz.minipolya.minipolya_backend.provider.PendingCharge;
+import uz.minipolya.minipolya_backend.provider.ProviderCheck;
 import uz.minipolya.minipolya_backend.provider.ProviderStatus;
 import uz.minipolya.minipolya_backend.provider.ProviderTimeoutException;
 import uz.minipolya.minipolya_backend.provider.Split;
@@ -331,6 +332,83 @@ class AtmosPaymentProviderTest {
                 .andRespond(withSuccess("{" + OK + "}", MediaType.APPLICATION_JSON));
 
         assertThat(provider.releaseHold("3001").status()).isEqualTo(ProviderStatus.RELEASED);
+    }
+
+    // ---- the provider check ----
+
+    @Test
+    void theCheckAsksForATokenAndReportsTheHost() {
+        expectToken();
+
+        ProviderCheck check = provider.check();
+
+        assertThat(check.ok()).isTrue();
+        assertThat(check.provider()).isEqualTo("atmos");
+        assertThat(check.host()).isEqualTo("apigw.test");
+        assertThat(check.errorCode()).isNull();
+        server.verify();
+    }
+
+    /** A cached token proves only that one was bought earlier, so the check buys a new one. */
+    @Test
+    void theCheckNeverAnswersFromTheCachedToken() {
+        expectToken();
+        server.expect(requestTo(BASE + "/partner/remove-card"))
+                .andRespond(withSuccess("{" + OK + "}", MediaType.APPLICATION_JSON));
+        // A second /token, although the one bought above is still valid for an hour.
+        expectToken();
+
+        provider.removeCard("1666711", "t1");
+
+        assertThat(provider.check().ok()).isTrue();
+        server.verify();
+    }
+
+    @Test
+    void aRefusedTokenIsAFailedCheckCarryingTheCode() {
+        server.expect(requestTo(BASE + "/token")).andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+
+        ProviderCheck check = provider.check();
+
+        assertThat(check.ok()).isFalse();
+        assertThat(check.provider()).isEqualTo("atmos");
+        assertThat(check.host()).isEqualTo("apigw.test");
+        assertThat(check.errorCode()).isEqualTo("HTTP_401");
+    }
+
+    @Test
+    void anAnswerWithNoTokenAndNoAnswerAtAllEachHaveTheirOwnCode() {
+        server.expect(requestTo(BASE + "/token")).andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+        assertThat(provider.check().errorCode()).isEqualTo("TOKEN");
+
+        server.reset();
+        server.expect(requestTo(BASE + "/token")).andRespond(request -> {
+            throw new SocketTimeoutException("read timed out");
+        });
+        assertThat(provider.check().errorCode()).isEqualTo("TIMEOUT");
+    }
+
+    /** The check is shown to an admin, so it may carry no token and no credential at all. */
+    @Test
+    void theCheckCarriesNeitherTheTokenNorTheCredentials() {
+        expectToken();
+
+        ProviderCheck check = provider.check();
+
+        assertThat(check.toString()).doesNotContain("tok-abc", "key", "secret")
+                .contains("atmos", "apigw.test");
+        assertThat(check.host()).isEqualTo("apigw.test").isNotEqualTo(BASE);
+    }
+
+    @Test
+    void onlyTheHostOfABaseUrlIsEverReported() {
+        assertThat(ProviderCheck.hostOf("https://apigw.atmos.uz")).isEqualTo("apigw.atmos.uz");
+        assertThat(ProviderCheck.hostOf("  https://apigw.atmos.uz/partner  ")).isEqualTo("apigw.atmos.uz");
+        // Credentials in a URL stay out of the host.
+        assertThat(ProviderCheck.hostOf("https://user:pass@apigw.atmos.uz")).isEqualTo("apigw.atmos.uz");
+        assertThat(ProviderCheck.hostOf("not a url")).isNull();
+        assertThat(ProviderCheck.hostOf("")).isNull();
+        assertThat(ProviderCheck.hostOf(null)).isNull();
     }
 
     // ---- configuration ----

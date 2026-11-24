@@ -14,7 +14,9 @@ import uz.minipolya.minipolya_backend.dto.response.AdminPaymentResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminPaymentSummaryResponse;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
+import uz.minipolya.minipolya_backend.dto.response.ProviderCheckResponse;
 import uz.minipolya.minipolya_backend.service.AdminPaymentService;
+import uz.minipolya.minipolya_backend.service.ProviderCheckService;
 import uz.minipolya.minipolya_backend.service.RefundRecoveryService;
 
 import java.time.LocalDate;
@@ -31,6 +33,7 @@ public class AdminPaymentController {
 
     private final AdminPaymentService adminPaymentService;
     private final RefundRecoveryService refundRecoveryService;
+    private final ProviderCheckService providerCheckService;
 
     @GetMapping("/api/admin/payments")
     public ApiResponse<PageResponse<AdminPaymentResponse>> list(
@@ -53,6 +56,19 @@ public class AdminPaymentController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         return ApiResponse.ok(adminPaymentService.summary(from, to));
+    }
+
+    /**
+     * Which card provider this server talks to, and whether it answers right now. A literal
+     * path, so it is matched before {@code /{id}} and never read as a payment id.
+     *
+     * <p>A provider that refuses or cannot be reached is still 200, with
+     * {@code status: "failed"} and its code: that is the answer, not an error. The body
+     * carries no token and no credential.
+     */
+    @GetMapping("/api/admin/payments/provider-check")
+    public ApiResponse<ProviderCheckResponse> providerCheck() {
+        return ApiResponse.ok(providerCheckService.check());
     }
 
     @GetMapping("/api/admin/payments/{id}")

@@ -102,6 +102,15 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   `otp-ttl-seconds` (180), `resend-cooldown-seconds` (60), `starting-balance` (10 000 000
   so'm), `min-amount` (500 so'm), `refund-window-months` (3), `delay-min-ms` /
   `delay-max-ms` (300 / 800; `@DatabaseTest` sets 0).
+- **Is the provider there?** `PaymentProvider.check()` answers a `ProviderCheck`
+  (`provider`, `ok`, `host`, `errorCode`) and never throws. `AtmosPaymentProvider` asks for a
+  **fresh** access token — the smallest call that proves the network, the base URL, the
+  consumer key and the secret — and turns a refusal into its code (`HTTP_401`, `TOKEN`,
+  `TIMEOUT`, `UNREACHABLE`); `FakePaymentProvider` is always ok with no host, because there is
+  nothing to reach. It carries the base URL's **host**, never the URL, the token or a
+  credential. `ProviderCheckService` behind `GET /api/admin/payments/provider-check` is what
+  the admin panel's Sozlamalar page shows (see "Admin panel API"). Nothing is charged or
+  stored and nothing is audited, but every call is a real round trip — don't poll it.
 - `GET /api/dev/fake-payments?limit=` (dev profile + `X-Dev-Login-Key`, no JWT; 404
   otherwise): the latest fake cards (masked, balance, scenario), charges and holds (status,
   splits, commission, what each recipient receives) and reverses. No token anywhere.

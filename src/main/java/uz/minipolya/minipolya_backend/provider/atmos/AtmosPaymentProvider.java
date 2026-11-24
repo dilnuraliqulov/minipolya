@@ -32,6 +32,7 @@ import uz.minipolya.minipolya_backend.provider.HoldRequest;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProviderException;
 import uz.minipolya.minipolya_backend.provider.PendingCharge;
+import uz.minipolya.minipolya_backend.provider.ProviderCheck;
 import uz.minipolya.minipolya_backend.provider.ProviderStatus;
 import uz.minipolya.minipolya_backend.provider.ProviderTimeoutException;
 import uz.minipolya.minipolya_backend.provider.Split;
@@ -151,6 +152,33 @@ public class AtmosPaymentProvider implements PaymentProvider {
 
     private boolean platformRecipientMissing() {
         return config.getPlatformRecipientId() == null || config.getPlatformRecipientId().isBlank();
+    }
+
+    /**
+     * Asks for a <b>fresh</b> access token (never the cached one), which is the smallest
+     * call that proves all four of the network, the base URL, the consumer key and the
+     * secret. Nothing is charged and nothing is stored.
+     *
+     * <p>Never throws: a refused, timed-out or unreachable provider comes back as a
+     * {@link ProviderCheck} that is not ok, carrying the code. An unexpected exception is
+     * logged by its type alone — its message could hold a URL or a credential.
+     */
+    @Override
+    public ProviderCheck check() {
+        String host = ProviderCheck.hostOf(config.getBaseUrl());
+        try {
+            token(true);
+            return ProviderCheck.ok(ProviderCheck.ATMOS, host);
+        } catch (PaymentProviderException ex) {
+            log.warn("ATMOS provider check failed: code={}", ex.getCode());
+            return ProviderCheck.failed(ProviderCheck.ATMOS, host, ex.getCode());
+        } catch (ProviderTimeoutException ex) {
+            log.warn("ATMOS provider check timed out");
+            return ProviderCheck.failed(ProviderCheck.ATMOS, host, ProviderCheck.TIMEOUT);
+        } catch (RuntimeException ex) {
+            log.warn("ATMOS provider check could not be made: {}", ex.getClass().getSimpleName());
+            return ProviderCheck.failed(ProviderCheck.ATMOS, host, ProviderCheck.UNREACHABLE);
+        }
     }
 
     // ---- Cards ----
