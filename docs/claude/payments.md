@@ -86,6 +86,19 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   it once. `ofd_items` are sent only when `ATMOS_OFD_CODE_RENTAL` and
   `ATMOS_OFD_CODE_SERVICE` are both set; `ofd_url` is saved on the payment. It never
   logs a request or response body — only operation names, ids and result codes.
+- **Who a split is paid to.** The owner's split carries the recipient id an admin entered on
+  the owner's legal details (`owner_legal_details.atmos_recipient_id`, required once the
+  contract is `signed`), and the platform's split carries none — the provider fills in
+  `ATMOS_PLATFORM_RECIPIENT_ID`. Which **field** names it on the wire is
+  `ATMOS_RECIPIENT_FIELD`: `store_id` (the default, as the request examples show) or
+  `terminal_id`, in which case `store_id` stays our own merchant store. It is a setting
+  because the ATMOS docs contradict themselves, so a wrong payout is a restart, not a release.
+- **A recipient we do not know yet.** Under `staging` only, a payment or hold whose recipient
+  has no ATMOS id is collapsed into **one payment of the same total to `ATMOS_STORE_ID`**,
+  with a warning naming it — that is how the test server walks a real sandbox payment end to
+  end before any owner's contract is signed. Nobody is paid out by it. Under `prod` it is
+  refused (`RECIPIENT_MISSING`) and no combination of profiles turns the fallback on there:
+  money that cannot reach the person it is owed to must not be taken.
 - **One recipient is a single payment, several are a multi-transaction.** The ATMOS docs
   describe the two as separate flows, and an ordinary booking pays one recipient (the owner;
   the platform takes nothing from a booking), so it goes through `merchant/pay/create` →

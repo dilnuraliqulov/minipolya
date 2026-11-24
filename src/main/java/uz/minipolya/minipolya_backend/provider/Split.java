@@ -9,9 +9,9 @@ package uz.minipolya.minipolya_backend.provider;
  * fills in the platform's own recipient from its configuration
  * ({@code ATMOS_PLATFORM_RECIPIENT_ID}).
  *
- * <p>TODO(ATMOS): the docs use {@code store_id} in the bulk-payment and hold requests but
- * {@code terminal_id} in the responses; which of the two identifies a recipient is an
- * open question.
+ * <p>Which field names the recipient on the wire — {@code store_id} or {@code terminal_id} —
+ * is the provider's business and a setting, because the ATMOS docs contradict themselves:
+ * see {@code AtmosRecipientField} ({@code ATMOS_RECIPIENT_FIELD}).
  *
  * @param recipientId the owner's ATMOS recipient; null for the platform's split
  * @param amount      tiyin, positive

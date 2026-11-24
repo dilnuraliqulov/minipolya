@@ -163,6 +163,10 @@ services:
       # it only that one payout fails, and ordinary bookings — which the platform takes
       # nothing from — are paid and refunded as usual.
       ATMOS_PLATFORM_RECIPIENT_ID: ${ATMOS_PLATFORM_RECIPIENT_ID:-}
+      # store_id (empty = the default) or terminal_id: which field names the account a split
+      # is paid into. The ATMOS docs contradict themselves, so it is a setting: if payouts
+      # land in the wrong place, change this and restart rather than waiting for a release.
+      ATMOS_RECIPIENT_FIELD: ${ATMOS_RECIPIENT_FIELD:-}
 
       # Deliberately absent:
       #   CORS_ALLOWED_ORIGINS — Caddy serves the apps and the API on one origin, so there

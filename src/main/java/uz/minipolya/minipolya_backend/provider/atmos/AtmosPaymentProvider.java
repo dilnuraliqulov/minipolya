@@ -4,6 +4,8 @@ import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
@@ -102,6 +104,8 @@ public class AtmosPaymentProvider implements PaymentProvider {
     private final AppProperties.Atmos config;
     private final RestClient http;
     private final Clock clock;
+    private final AtmosRecipientField recipientField;
+    private final boolean fallbackToOwnStore;
     private final ObjectMapper json = JsonMapper.builder().build();
 
     private String accessToken;
@@ -109,10 +113,16 @@ public class AtmosPaymentProvider implements PaymentProvider {
 
     public AtmosPaymentProvider(AppProperties appProperties,
                                 @Qualifier("atmosRestClientBuilder") RestClient.Builder builder,
-                                Clock clock) {
+                                Clock clock,
+                                Environment environment) {
         this.config = appProperties.getAtmos();
         this.http = builder.baseUrl(config.getBaseUrl() == null ? "" : config.getBaseUrl()).build();
         this.clock = clock;
+        this.recipientField = AtmosRecipientField.of(config.getRecipientField());
+        // Only a staging test server may pay itself instead of a recipient it does not know,
+        // and prod is named explicitly so that no combination of profiles can turn it on there.
+        this.fallbackToOwnStore = environment.acceptsProfiles(Profiles.of("staging"))
+                && !environment.acceptsProfiles(Profiles.of("prod"));
     }
 
     /**
@@ -148,8 +158,13 @@ public class AtmosPaymentProvider implements PaymentProvider {
             log.warn("ATMOS_PLATFORM_RECIPIENT_ID is not set: a team game's platform fee cannot be collected "
                     + "until it is. Ordinary bookings are unaffected.");
         }
-        log.info("AtmosPaymentProvider is active: environment={} storeId={} receipts={}",
-                AtmosEnvironment.of(config.getEnvironment()).value(), config.getStoreId(), receiptsOn());
+        log.info("AtmosPaymentProvider is active: environment={} storeId={} recipientField={} receipts={}",
+                AtmosEnvironment.of(config.getEnvironment()).value(), config.getStoreId(),
+                recipientField.field(), receiptsOn());
+        if (fallbackToOwnStore) {
+            log.warn("Staging: a payment whose recipient has no ATMOS id will be paid to our own store "
+                    + "instead of failing. Never on a production server.");
+        }
     }
 
     private boolean platformRecipientMissing() {
@@ -243,7 +258,40 @@ public class AtmosPaymentProvider implements PaymentProvider {
      */
     @Override
     public PendingCharge charge(ChargeRequest request) {
-        return request.splits().size() == 1 ? singleCharge(request) : bulkCharge(request);
+        List<Split> splits = payable(request.splits(), "payment " + request.account());
+        return splits.size() == 1 ? singleCharge(request, splits.getFirst()) : bulkCharge(request, splits);
+    }
+
+    /**
+     * The splits as they can actually be paid.
+     *
+     * <p>Normally they are themselves, and a recipient with no ATMOS id is refused: money
+     * that cannot reach the person it is owed to must not be taken. On a <b>staging</b> test
+     * server that refusal would block the thing staging exists for — walking a real ATMOS
+     * payment end to end — because an owner's recipient id is entered by an admin after the
+     * contract is signed, and a sandbox platform id arrives later still. So there, and only
+     * there, the splits collapse into one payment of the same total to our own store, with a
+     * warning naming the payment.
+     *
+     * <p>Never under {@code prod}: {@link #fallbackToOwnStore} is false there whatever else
+     * is active, so {@link #recipientOf} refuses as before. The money is then ours rather
+     * than the owner's, which is exactly why it may only happen where no real money moves.
+     */
+    private List<Split> payable(List<Split> splits, String what) {
+        if (!fallbackToOwnStore || recipientsKnown(splits)) {
+            return splits;
+        }
+        long total = splits.stream().mapToLong(Split::amount).sum();
+        log.warn("Staging fallback: {} has a recipient with no ATMOS id, so its {} split(s) are paid to "
+                + "our own store as one payment of {} tiyin. Nobody is paid out by this.",
+                what, splits.size(), total);
+        return List.of(Split.owner(config.getStoreId(), total));
+    }
+
+    private boolean recipientsKnown(List<Split> splits) {
+        return splits.stream().allMatch(split -> split.platform()
+                ? !platformRecipientMissing()
+                : split.recipientId() != null && !split.recipientId().isBlank());
     }
 
     /**
@@ -255,9 +303,8 @@ public class AtmosPaymentProvider implements PaymentProvider {
      * {@code account} "takes a numeric value" while every example is text ({@code "user_1"}).
      * Ours is the payment id, which is what keeps ATMOS from taking the same payment twice.
      */
-    private PendingCharge singleCharge(ChargeRequest request) {
-        Split split = request.splits().getFirst();
-        ObjectNode create = withId(json.createObjectNode(), "store_id", recipientOf(split))
+    private PendingCharge singleCharge(ChargeRequest request, Split split) {
+        ObjectNode create = recipient(json.createObjectNode(), split)
                 .put("account", request.account())
                 .put("amount", split.amount());
         if (receiptsOn()) {
@@ -288,11 +335,11 @@ public class AtmosPaymentProvider implements PaymentProvider {
      * with a card number rather than a token: the bulk pre-apply example shows only
      * {@code card_token}, while the single-payment one shows both.
      */
-    private PendingCharge bulkCharge(ChargeRequest request) {
+    private PendingCharge bulkCharge(ChargeRequest request, List<Split> splits) {
         ObjectNode create = withId(json.createObjectNode(), "store_id", config.getStoreId());
         ArrayNode params = create.putArray("params");
-        for (Split split : request.splits()) {
-            ObjectNode item = withId(params.addObject(), "store_id", recipientOf(split))
+        for (Split split : splits) {
+            ObjectNode item = recipient(params.addObject(), split)
                     .put("account", request.account())
                     .put("amount", split.amount())
                     .put("details", detailsOf(split));
@@ -419,8 +466,8 @@ public class AtmosPaymentProvider implements PaymentProvider {
                 .put("card_token", request.cardToken())
                 .put("duration", String.valueOf(request.durationMinutes()));
         ArrayNode items = body.putArray("items");
-        for (Split split : request.splits()) {
-            withId(items.addObject(), "store_id", recipientOf(split))
+        for (Split split : payable(request.splits(), "hold " + request.account())) {
+            recipient(items.addObject(), split)
                     .put("account", request.account())
                     .put("payment_details", split.platform() ? "MiniPolya service" : "Pitch rental")
                     .put("amount", String.valueOf(split.amount()));
@@ -662,6 +709,24 @@ public class AtmosPaymentProvider implements PaymentProvider {
     private PaymentProviderException httpError(String operation, HttpStatusCode status) {
         log.warn("ATMOS answered HTTP {} to {}", status.value(), operation);
         return new PaymentProviderException("HTTP_" + status.value(), "ATMOS refused " + operation);
+    }
+
+    /**
+     * Names the recipient of one split on a request.
+     *
+     * <p>With {@code store_id} (the default) the recipient <em>is</em> the store the item
+     * names. With {@code terminal_id} it is the terminal, and {@code store_id} stays our own
+     * merchant store, which is how the docs' single-payment example reads. Which of the two
+     * ATMOS actually pays out on is {@link AtmosRecipientField}'s open question.
+     */
+    private ObjectNode recipient(ObjectNode node, Split split) {
+        String id = recipientOf(split);
+        if (recipientField == AtmosRecipientField.TERMINAL_ID) {
+            withId(node, "store_id", config.getStoreId());
+            // A string in every example, unlike store_id.
+            return node.put("terminal_id", id);
+        }
+        return withId(node, "store_id", id);
     }
 
     private String recipientOf(Split split) {

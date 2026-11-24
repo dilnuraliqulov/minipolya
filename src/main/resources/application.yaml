@@ -131,6 +131,10 @@ app:
     consumer-secret: ${ATMOS_CONSUMER_SECRET:}
     store-id: ${ATMOS_STORE_ID:}
     platform-recipient-id: ${ATMOS_PLATFORM_RECIPIENT_ID:}
+    # store_id (default) or terminal_id: which field of a split names the recipient the money
+    # lands in. A setting because the ATMOS docs contradict themselves; changing it is a
+    # restart, not a release.
+    recipient-field: ${ATMOS_RECIPIENT_FIELD:}
     # Fiscal receipt (OFD) IKPU codes: receipts are sent only when both are set.
     ofd-code-rental: ${ATMOS_OFD_CODE_RENTAL:}
     ofd-code-service: ${ATMOS_OFD_CODE_SERVICE:}

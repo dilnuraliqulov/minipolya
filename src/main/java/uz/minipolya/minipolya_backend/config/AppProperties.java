@@ -203,6 +203,13 @@ public class AppProperties {
         private String storeId;
         /** ATMOS_PLATFORM_RECIPIENT_ID: where the platform's split of every payment goes. */
         private String platformRecipientId;
+        /**
+         * ATMOS_RECIPIENT_FIELD: {@code store_id} (the default) or {@code terminal_id} — which
+         * field of a split names the account the money lands in. A setting because the ATMOS
+         * docs do not agree with themselves; see
+         * {@link uz.minipolya.minipolya_backend.provider.atmos.AtmosRecipientField}.
+         */
+        private String recipientField;
         /** ATMOS_OFD_CODE_RENTAL (optional): IKPU code for the pitch-rental receipt line. */
         private String ofdCodeRental;
         /** ATMOS_OFD_CODE_SERVICE (optional): IKPU code for the platform-service receipt line. */
@@ -227,6 +234,10 @@ public class AppProperties {
 
         public void setEnvironment(String environment) {
             this.environment = trimmed(environment);
+        }
+
+        public void setRecipientField(String recipientField) {
+            this.recipientField = trimmed(recipientField);
         }
 
         public void setConsumerKey(String consumerKey) {

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 import uz.minipolya.minipolya_backend.config.AppProperties;
@@ -54,6 +55,8 @@ class AtmosPaymentProviderTest {
 
     private final MovableClock clock = new MovableClock();
     private MockRestServiceServer server;
+    /** For a provider a test builds itself (other profiles, other settings). */
+    private MockRestServiceServer server2;
     private AtmosPaymentProvider provider;
     private AppProperties properties;
 
@@ -68,7 +71,32 @@ class AtmosPaymentProviderTest {
         atmos.setPlatformRecipientId("900");
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
-        provider = new AtmosPaymentProvider(properties, builder, clock);
+        provider = providerWith(properties, builder);
+    }
+
+    /** The provider as a developer's machine has it: no profile, so no staging fallback. */
+    private AtmosPaymentProvider providerWith(AppProperties properties, RestClient.Builder builder) {
+        return onProfiles(properties, builder);
+    }
+
+    private AtmosPaymentProvider onProfiles(AppProperties properties, RestClient.Builder builder,
+                                            String... profiles) {
+        MockEnvironment environment = new MockEnvironment();
+        environment.setActiveProfiles(profiles);
+        return new AtmosPaymentProvider(properties, builder, clock, environment);
+    }
+
+    private RestClient.Builder server2() {
+        RestClient.Builder builder = RestClient.builder();
+        server2 = MockRestServiceServer.bindTo(builder).build();
+        return builder;
+    }
+
+    private void expectTokenOn(MockRestServiceServer target) {
+        target.expect(once(), requestTo(TOKEN_URL))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header("Authorization", "Basic a2V5OnNlY3JldA=="))
+                .andRespond(withSuccess(TOKEN_ANSWER, MediaType.APPLICATION_JSON));
     }
 
     private void expectToken() {
@@ -535,6 +563,141 @@ class AtmosPaymentProviderTest {
                 .hasMessageContaining("could not read");
     }
 
+    // ---- who the money goes to ----
+
+    /**
+     * With {@code terminal_id} the recipient is the terminal and {@code store_id} stays our
+     * own merchant store — the shape the docs' single-payment example reads as. Which of the
+     * two ATMOS pays out on is the open question the setting exists for.
+     */
+    @Test
+    void theRecipientFieldDecidesWhoIsNamedWhere() {
+        properties.getAtmos().setRecipientField("terminal_id");
+        AtmosPaymentProvider terminals = providerWith(properties, server2());
+        expectTokenOn(server2);
+        server2.expect(requestTo(BASE + "/merchant/pay/create"))
+                .andExpect(jsonPath("$.store_id").value(777))
+                .andExpect(jsonPath("$.terminal_id").value("501"))
+                .andRespond(withSuccess("{" + OK + ",\"transaction_id\":111111}", MediaType.APPLICATION_JSON));
+        server2.expect(requestTo(BASE + "/merchant/pay/pre-apply"))
+                .andRespond(withSuccess("{" + OK + "}", MediaType.APPLICATION_JSON));
+
+        terminals.charge(oneRecipient());
+
+        server2.verify();
+    }
+
+    @Test
+    void everyBulkItemIsNamedTheSameWay() {
+        properties.getAtmos().setRecipientField(" Terminal-ID ");
+        AtmosPaymentProvider terminals = providerWith(properties, server2());
+        expectTokenOn(server2);
+        server2.expect(requestTo(BASE + "/merchant/bulk/pay/create"))
+                .andExpect(jsonPath("$.store_id").value(777))
+                .andExpect(jsonPath("$.params[0].store_id").value(777))
+                .andExpect(jsonPath("$.params[0].terminal_id").value("501"))
+                .andExpect(jsonPath("$.params[1].terminal_id").value("900"))
+                .andRespond(withSuccess("{" + OK + ",\"transaction_id\":[1,2]}", MediaType.APPLICATION_JSON));
+        server2.expect(requestTo(BASE + "/merchant/bulk/pay/pre-apply"))
+                .andRespond(withSuccess("{" + OK + "}", MediaType.APPLICATION_JSON));
+
+        terminals.charge(charge());
+
+        server2.verify();
+    }
+
+    @Test
+    void theRecipientFieldIsOneOfTwoAndIsNotEchoedBack() {
+        assertThat(AtmosRecipientField.of(null)).isEqualTo(AtmosRecipientField.STORE_ID);
+        assertThat(AtmosRecipientField.of("")).isEqualTo(AtmosRecipientField.STORE_ID);
+        assertThat(AtmosRecipientField.of(" Terminal-ID ")).isEqualTo(AtmosRecipientField.TERMINAL_ID);
+        assertThat(AtmosRecipientField.TERMINAL_ID.field()).isEqualTo("terminal_id");
+        assertThatThrownBy(() -> AtmosRecipientField.of("kQ8sW2mZ"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("ATMOS_RECIPIENT_FIELD")
+                .hasMessageNotContaining("kQ8sW2mZ");
+    }
+
+    // ---- a recipient we do not know yet ----
+
+    private ChargeRequest noRecipients() {
+        // An owner whose admin has not entered an ATMOS recipient, plus the platform's own
+        // split while ATMOS_PLATFORM_RECIPIENT_ID is still empty.
+        return ChargeRequest.withToken(List.of(Split.owner(null, 20_304_569L), Split.platform(5_431L)),
+                "card-token", "0190c3a1-0000-7000-8000-000000000001");
+    }
+
+    /**
+     * On a staging test server the point is to walk a real ATMOS payment end to end before
+     * any owner has a recipient id, so the splits collapse into one payment to our own store
+     * — for the same total, and nobody is paid out.
+     */
+    @Test
+    void underStagingAPaymentWithNoRecipientGoesToOurOwnStore() {
+        properties.getAtmos().setPlatformRecipientId(null);
+        AtmosPaymentProvider staging = onProfiles(properties, server2(), "staging", "atmos");
+        expectTokenOn(server2);
+        server2.expect(requestTo(BASE + "/merchant/pay/create"))
+                // One payment, to us, for the whole amount: 20 304 569 + 5 431.
+                .andExpect(jsonPath("$.store_id").value(777))
+                .andExpect(jsonPath("$.amount").value(20_310_000L))
+                .andRespond(withSuccess("{" + OK + ",\"transaction_id\":111111}", MediaType.APPLICATION_JSON));
+        server2.expect(requestTo(BASE + "/merchant/pay/pre-apply"))
+                .andRespond(withSuccess("{" + OK + "}", MediaType.APPLICATION_JSON));
+
+        assertThat(staging.charge(noRecipients()).transactionIds()).containsExactly("111111");
+
+        server2.verify();
+    }
+
+    /** A hold is the same money by another name, so it falls back the same way. */
+    @Test
+    void underStagingAHoldWithNoRecipientDoesTheSame() {
+        properties.getAtmos().setPlatformRecipientId(null);
+        AtmosPaymentProvider staging = onProfiles(properties, server2(), "staging", "atmos");
+        expectTokenOn(server2);
+        server2.expect(requestTo(BASE + "/hold/multiple/create"))
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].store_id").value(777))
+                .andExpect(jsonPath("$.items[0].amount").value("7609999"))
+                .andRespond(withSuccess("{" + OK + ",\"parent_id\":3001}", MediaType.APPLICATION_JSON));
+
+        staging.hold(new HoldRequest(List.of(Split.owner(null, 5_076_142L), Split.platform(2_533_857L)),
+                "card-token", "a", 600));
+
+        server2.verify();
+    }
+
+    /** Never where real money moves: prod refuses, whatever else is active beside it. */
+    @Test
+    void underProdOrAnythingButStagingTheyAreRefused() {
+        properties.getAtmos().setPlatformRecipientId(null);
+        for (String[] profiles : new String[][] {{"prod", "atmos"}, {"prod", "staging", "atmos"}, {"atmos"}}) {
+            AtmosPaymentProvider real = onProfiles(properties, RestClient.builder(), profiles);
+            assertThatThrownBy(() -> real.charge(noRecipients()))
+                    .isInstanceOf(PaymentProviderException.class)
+                    .hasMessageContaining("recipient");
+        }
+    }
+
+    /** With every recipient known, staging pays them and not us. */
+    @Test
+    void stagingPaysTheRealRecipientsWhenItKnowsThem() {
+        AtmosPaymentProvider staging = onProfiles(properties, server2(), "staging", "atmos");
+        expectTokenOn(server2);
+        server2.expect(requestTo(BASE + "/merchant/bulk/pay/create"))
+                .andExpect(jsonPath("$.params.length()").value(2))
+                .andExpect(jsonPath("$.params[0].store_id").value(501))
+                .andExpect(jsonPath("$.params[1].store_id").value(900))
+                .andRespond(withSuccess("{" + OK + ",\"transaction_id\":[1,2]}", MediaType.APPLICATION_JSON));
+        server2.expect(requestTo(BASE + "/merchant/bulk/pay/pre-apply"))
+                .andRespond(withSuccess("{" + OK + "}", MediaType.APPLICATION_JSON));
+
+        staging.charge(charge());
+
+        server2.verify();
+    }
+
     // ---- the provider check ----
 
     @Test
@@ -638,7 +801,7 @@ class AtmosPaymentProviderTest {
     void itRefusesToStartWithoutItsConfigurationAndSaysWhatIsMissing() {
         AppProperties empty = new AppProperties();
         empty.getAtmos().setBaseUrl(BASE);
-        AtmosPaymentProvider unconfigured = new AtmosPaymentProvider(empty, RestClient.builder(), clock);
+        AtmosPaymentProvider unconfigured = providerWith(empty, RestClient.builder());
 
         assertThatThrownBy(unconfigured::requireConfiguration)
                 .isInstanceOf(IllegalStateException.class)
@@ -658,7 +821,7 @@ class AtmosPaymentProviderTest {
         padded.getAtmos().setStoreId("777");
 
         assertThat(padded.getAtmos().getConsumerKey()).isEmpty();
-        assertThatThrownBy(() -> new AtmosPaymentProvider(padded, RestClient.builder(), clock)
+        assertThatThrownBy(() -> providerWith(padded, RestClient.builder())
                 .requireConfiguration())
                 .hasMessageContaining("ATMOS_CONSUMER_KEY")
                 .hasMessageContaining("ATMOS_CONSUMER_SECRET")
@@ -690,7 +853,7 @@ class AtmosPaymentProviderTest {
 
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer paddedServer = MockRestServiceServer.bindTo(builder).build();
-        AtmosPaymentProvider trimmed = new AtmosPaymentProvider(padded, builder, clock);
+        AtmosPaymentProvider trimmed = providerWith(padded, builder);
         paddedServer.expect(once(), requestTo(TOKEN_URL))
                 .andExpect(header("Authorization", "Basic a2V5OnNlY3JldA=="))
                 .andRespond(withSuccess(TOKEN_ANSWER, MediaType.APPLICATION_JSON));
@@ -715,7 +878,7 @@ class AtmosPaymentProviderTest {
         atmos.setConsumerKey("key");
         atmos.setConsumerSecret("secret");
         atmos.setStoreId("777");
-        AtmosPaymentProvider provider = new AtmosPaymentProvider(noRecipient, RestClient.builder(), clock);
+        AtmosPaymentProvider provider = providerWith(noRecipient, RestClient.builder());
 
         assertThatCode(provider::requireConfiguration).doesNotThrowAnyException();
 
