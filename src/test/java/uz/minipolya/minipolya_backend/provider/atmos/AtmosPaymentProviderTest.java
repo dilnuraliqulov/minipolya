@@ -45,6 +45,8 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 class AtmosPaymentProviderTest {
 
     private static final String BASE = "https://apigw.test";
+    /** The docs' own token call has grant_type in the query as well as in the form. */
+    private static final String TOKEN_URL = BASE + "/token?grant_type=client_credentials";
     private static final String TOKEN_ANSWER = """
             {"access_token":"tok-abc","scope":"am_application_scope default","token_type":"Bearer","expires_in":3600}
             """;
@@ -70,7 +72,7 @@ class AtmosPaymentProviderTest {
     }
 
     private void expectToken() {
-        server.expect(once(), requestTo(BASE + "/token"))
+        server.expect(once(), requestTo(TOKEN_URL))
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(header("Authorization", "Basic a2V5OnNlY3JldA=="))
                 .andExpect(content().string("grant_type=client_credentials"))
@@ -79,6 +81,12 @@ class AtmosPaymentProviderTest {
 
     private ChargeRequest charge() {
         return ChargeRequest.withToken(List.of(Split.owner("501", 20_304_569L), Split.platform(5_431L)),
+                "card-token", "0190c3a1-0000-7000-8000-000000000001");
+    }
+
+    /** An ordinary booking: the owner is the only recipient, because the platform takes nothing. */
+    private ChargeRequest oneRecipient() {
+        return ChargeRequest.withToken(List.of(Split.owner("501", 20_304_569L)),
                 "card-token", "0190c3a1-0000-7000-8000-000000000001");
     }
 
@@ -183,6 +191,20 @@ class AtmosPaymentProviderTest {
                 .andRespond(withSuccess("{\"result\":{\"code\":\"STPIMS-ERR-057\",\"description\":\"Недостаточно средств\"}}",
                         MediaType.APPLICATION_JSON));
 
+        ChargeOutcome outcome = provider.confirmCharge(List.of("1001", "1002"), null);
+
+        assertThat(outcome.status()).isEqualTo(ProviderStatus.FAILED);
+        assertThat(outcome.errorCode()).isEqualTo("STPIMS-ERR-057");
+    }
+
+    /** The same decline on the single-payment endpoint, which one transaction uses. */
+    @Test
+    void aDeclinedSinglePaymentIsAFailedOutcomeToo() {
+        expectToken();
+        server.expect(requestTo(BASE + "/merchant/pay/apply"))
+                .andRespond(withSuccess("{\"result\":{\"code\":\"STPIMS-ERR-057\",\"description\":\"Недостаточно средств\"}}",
+                        MediaType.APPLICATION_JSON));
+
         ChargeOutcome outcome = provider.confirmCharge(List.of("1001"), null);
 
         assertThat(outcome.status()).isEqualTo(ProviderStatus.FAILED);
@@ -192,7 +214,7 @@ class AtmosPaymentProviderTest {
     @Test
     void aLostAnswerIsATimeoutAndGetChargeTellsWhatHappened() {
         expectToken();
-        server.expect(requestTo(BASE + "/merchant/bulk/pay/apply")).andRespond(request -> {
+        server.expect(requestTo(BASE + "/merchant/pay/apply")).andRespond(request -> {
             throw new SocketTimeoutException("read timed out");
         });
         server.expect(requestTo(BASE + "/merchant/pay/get"))
@@ -334,6 +356,185 @@ class AtmosPaymentProviderTest {
         assertThat(provider.releaseHold("3001").status()).isEqualTo(ProviderStatus.RELEASED);
     }
 
+    // ---- one recipient: the single-payment flow ----
+
+    /**
+     * Shaped like the docs' pay/create → pay/pre-apply → pay/apply examples: amount a number
+     * in tiyin, ids numbers, the apply answering one store_transaction object with the
+     * receipt URL beside it rather than inside it.
+     */
+    @Test
+    void oneRecipientIsPaidThroughTheSinglePaymentEndpoints() {
+        expectToken();
+        server.expect(requestTo(BASE + "/merchant/pay/create"))
+                .andExpect(method(HttpMethod.POST))
+                // The store being paid, the payment id as the account, tiyin as a number.
+                .andExpect(jsonPath("$.store_id").value(501))
+                .andExpect(jsonPath("$.account").value("0190c3a1-0000-7000-8000-000000000001"))
+                .andExpect(jsonPath("$.amount").value(20_304_569L))
+                .andExpect(jsonPath("$.params").doesNotExist())
+                .andRespond(withSuccess("{" + OK + ",\"transaction_id\":111111,\"store_transaction\":"
+                        + "{\"success_trans_id\":null,\"trans_id\":111111,\"confirmed\":false,"
+                        + "\"commission_value\":\"0\",\"status_code\":null}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/merchant/pay/pre-apply"))
+                // Our own store here, and the transaction just created.
+                .andExpect(jsonPath("$.store_id").value(777))
+                .andExpect(jsonPath("$.transaction_id").value(111111))
+                .andExpect(jsonPath("$.card_token").value("card-token"))
+                .andRespond(withSuccess("{" + OK + ",\"transaction_id\":111111}", MediaType.APPLICATION_JSON));
+
+        PendingCharge pending = provider.charge(oneRecipient());
+
+        assertThat(pending.transactionIds()).containsExactly("111111");
+        assertThat(pending.otpRequired()).isFalse();
+        server.verify();
+    }
+
+    @Test
+    void aSingleChargeIsConfirmedWithPayApplyAndReadsItsOneTransaction() {
+        expectToken();
+        server.expect(requestTo(BASE + "/merchant/pay/apply"))
+                .andExpect(jsonPath("$.store_id").value(777))
+                .andExpect(jsonPath("$.transaction_id").value(111111))
+                // A token payment confirms with the fixed code; no SMS was sent.
+                .andExpect(jsonPath("$.otp").value("111111"))
+                .andRespond(withSuccess("{" + OK + ",\"store_transaction\":{\"success_trans_id\":2730590,"
+                        + "\"trans_id\":111111,\"account\":\"0001\",\"amount\":20304569,\"confirmed\":true,"
+                        + "\"commission_value\":\"300\",\"status_code\":\"0\",\"status_message\":\"Success\"},"
+                        + "\"ofd_url\":\"https://ofd.test/receipt/1\"}", MediaType.APPLICATION_JSON));
+
+        ChargeOutcome outcome = provider.confirmCharge(List.of("111111"), null);
+
+        assertThat(outcome.status()).isEqualTo(ProviderStatus.SUCCESS);
+        assertThat(outcome.successTransIds()).containsExactly("2730590");
+        assertThat(outcome.commission()).isEqualTo(300L);
+        // Top-level in a single apply, inside each transaction in a bulk one.
+        assertThat(outcome.ofdUrl()).isEqualTo("https://ofd.test/receipt/1");
+        server.verify();
+    }
+
+    /** A card number rather than a token: ATMOS sends the cardholder an SMS code. */
+    @Test
+    void aSinglePaymentWithACardNumberAsksForTheSmsCode() {
+        expectToken();
+        server.expect(requestTo(BASE + "/merchant/pay/create"))
+                .andRespond(withSuccess("{" + OK + ",\"transaction_id\":111111}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/merchant/pay/pre-apply"))
+                .andExpect(jsonPath("$.card_number").value("8600490744313347"))
+                // YYmm, as the docs print it.
+                .andExpect(jsonPath("$.expiry").value("2801"))
+                .andExpect(jsonPath("$.card_token").doesNotExist())
+                .andRespond(withSuccess("{" + OK + "}", MediaType.APPLICATION_JSON));
+
+        PendingCharge pending = provider.charge(new ChargeRequest(List.of(Split.owner("501", 20_304_569L)),
+                null, "8600 4907 4431 3347", "01/28", "0190c3a1-0000-7000-8000-000000000001"));
+
+        assertThat(pending.otpRequired()).isTrue();
+        server.verify();
+    }
+
+    /** Two recipients are a multi-transaction, which is a different set of endpoints. */
+    @Test
+    void twoRecipientsStillGoThroughTheBulkEndpoints() {
+        expectToken();
+        server.expect(requestTo(BASE + "/merchant/bulk/pay/create"))
+                .andExpect(jsonPath("$.params.length()").value(2))
+                .andRespond(withSuccess("{" + OK + ",\"transaction_id\":[1001,1002]}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/merchant/bulk/pay/pre-apply"))
+                .andRespond(withSuccess("{" + OK + "}", MediaType.APPLICATION_JSON));
+
+        assertThat(provider.charge(charge()).transactionIds()).containsExactly("1001", "1002");
+        server.verify();
+    }
+
+    // ---- pay/get ----
+
+    /**
+     * The docs' own pay/get example: result STPIMS-ERR-092 ("Транзакция закрыта")
+     * together with a confirmed transaction and its success_trans_id. The transaction is the
+     * answer — reading the code instead would report a payment that went through as given
+     * back, and the reconcile job would fail a booking the player had paid for.
+     */
+    @Test
+    void aClosedButConfirmedTransactionIsReadAsPaid() {
+        expectToken();
+        server.expect(requestTo(BASE + "/merchant/pay/get"))
+                .andExpect(jsonPath("$.store_id").value(777))
+                .andExpect(jsonPath("$.transaction_id").value(51827))
+                .andRespond(withSuccess("{\"result\":{\"code\":\"STPIMS-ERR-092\","
+                        + "\"description\":\"Транзакция закрыта\"},"
+                        + "\"store_transaction\":{\"success_trans_id\":2730590,\"trans_id\":51827,"
+                        + "\"amount\":5000000,\"confirmed\":true,\"commission_value\":\"0\","
+                        + "\"status_code\":\"0\",\"status_message\":\"Success\"}}", MediaType.APPLICATION_JSON));
+
+        ChargeOutcome outcome = provider.getCharge("51827");
+
+        assertThat(outcome.status()).isEqualTo(ProviderStatus.SUCCESS);
+        assertThat(outcome.successTransIds()).containsExactly("2730590");
+        server.verify();
+    }
+
+    /** Closed with nothing to read is all we know: the money is not ours. */
+    @Test
+    void aClosedTransactionWithNothingToReadIsAGiveBack() {
+        expectToken();
+        server.expect(requestTo(BASE + "/merchant/pay/get"))
+                .andRespond(withSuccess("{\"result\":{\"code\":\"STPIMS-ERR-092\","
+                        + "\"description\":\"Транзакция закрыта\"}}",
+                        MediaType.APPLICATION_JSON));
+
+        ChargeOutcome outcome = provider.getCharge("51827");
+
+        assertThat(outcome.status()).isEqualTo(ProviderStatus.REVERSED);
+        assertThat(outcome.errorCode()).isEqualTo("STPIMS-ERR-092");
+    }
+
+    /** An unconfirmed transaction is not an answer yet: ask again rather than guess. */
+    @Test
+    void anUnconfirmedTransactionStaysPending() {
+        expectToken();
+        server.expect(requestTo(BASE + "/merchant/pay/get"))
+                .andRespond(withSuccess("{" + OK + ",\"store_transaction\":{\"success_trans_id\":null,"
+                        + "\"trans_id\":51827,\"confirmed\":false}}", MediaType.APPLICATION_JSON));
+
+        assertThat(provider.getCharge("51827").status()).isEqualTo(ProviderStatus.PENDING);
+    }
+
+    // ---- what we do not know, we never call a failure ----
+
+    /**
+     * A 401 refreshes the token and tries once more; if THAT call times out it is still a
+     * timeout. It used to escape as a transport exception, because an exception thrown
+     * inside a catch block is not caught by its own try — and a payment read as failed when
+     * it may have gone through is the one mistake that must never be made.
+     */
+    @Test
+    void aTimeoutWhileRetryingAfterA401IsStillATimeout() {
+        expectToken();
+        server.expect(requestTo(BASE + "/merchant/pay/get")).andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+        expectToken();
+        server.expect(requestTo(BASE + "/merchant/pay/get")).andRespond(request -> {
+            throw new SocketTimeoutException("read timed out");
+        });
+
+        assertThatThrownBy(() -> provider.getCharge("51827"))
+                .isInstanceOf(ProviderTimeoutException.class)
+                .hasMessageContaining("pay/get");
+        server.verify();
+    }
+
+    /** A gateway error page in place of JSON says nothing about whether the money moved. */
+    @Test
+    void anAnswerThatIsNotJsonIsAsUnknownAsNoAnswer() {
+        expectToken();
+        server.expect(requestTo(BASE + "/merchant/pay/apply"))
+                .andRespond(withSuccess("<html><body>502 Bad Gateway</body></html>", MediaType.TEXT_HTML));
+
+        assertThatThrownBy(() -> provider.confirmCharge(List.of("111111"), null))
+                .isInstanceOf(ProviderTimeoutException.class)
+                .hasMessageContaining("could not read");
+    }
+
     // ---- the provider check ----
 
     @Test
@@ -378,7 +579,7 @@ class AtmosPaymentProviderTest {
         assertThat(provider.check().environment()).isEqualTo("production");
 
         server.reset();
-        server.expect(requestTo(BASE + "/token")).andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+        server.expect(requestTo(TOKEN_URL)).andRespond(withStatus(HttpStatus.UNAUTHORIZED));
         ProviderCheck failed = provider.check();
         assertThat(failed.ok()).isFalse();
         assertThat(failed.environment()).isEqualTo("production");
@@ -386,7 +587,7 @@ class AtmosPaymentProviderTest {
 
     @Test
     void aRefusedTokenIsAFailedCheckCarryingTheCode() {
-        server.expect(requestTo(BASE + "/token")).andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+        server.expect(requestTo(TOKEN_URL)).andRespond(withStatus(HttpStatus.UNAUTHORIZED));
 
         ProviderCheck check = provider.check();
 
@@ -398,11 +599,11 @@ class AtmosPaymentProviderTest {
 
     @Test
     void anAnswerWithNoTokenAndNoAnswerAtAllEachHaveTheirOwnCode() {
-        server.expect(requestTo(BASE + "/token")).andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(TOKEN_URL)).andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
         assertThat(provider.check().errorCode()).isEqualTo("TOKEN");
 
         server.reset();
-        server.expect(requestTo(BASE + "/token")).andRespond(request -> {
+        server.expect(requestTo(TOKEN_URL)).andRespond(request -> {
             throw new SocketTimeoutException("read timed out");
         });
         assertThat(provider.check().errorCode()).isEqualTo("TIMEOUT");
@@ -490,7 +691,7 @@ class AtmosPaymentProviderTest {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer paddedServer = MockRestServiceServer.bindTo(builder).build();
         AtmosPaymentProvider trimmed = new AtmosPaymentProvider(padded, builder, clock);
-        paddedServer.expect(once(), requestTo(BASE + "/token"))
+        paddedServer.expect(once(), requestTo(TOKEN_URL))
                 .andExpect(header("Authorization", "Basic a2V5OnNlY3JldA=="))
                 .andRespond(withSuccess(TOKEN_ANSWER, MediaType.APPLICATION_JSON));
         paddedServer.expect(requestTo(BASE + "/partner/remove-card"))

@@ -86,6 +86,24 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   it once. `ofd_items` are sent only when `ATMOS_OFD_CODE_RENTAL` and
   `ATMOS_OFD_CODE_SERVICE` are both set; `ofd_url` is saved on the payment. It never
   logs a request or response body — only operation names, ids and result codes.
+- **One recipient is a single payment, several are a multi-transaction.** The ATMOS docs
+  describe the two as separate flows, and an ordinary booking pays one recipient (the owner;
+  the platform takes nothing from a booking), so it goes through `merchant/pay/create` →
+  `pre-apply` → `apply`, and only a team game's two or more splits use `merchant/bulk/...`.
+  `confirmCharge` follows the same rule from the number of transaction ids, so a restart
+  between creating and confirming changes nothing. The apply answer is read whichever shape
+  it has: `store_transaction` is an object in a single payment and an array in a bulk one,
+  and the receipt URL is top-level in the first and per transaction in the second.
+- **`pay/get` believes the transaction, not the code.** The docs' own example answers
+  `STPIMS-ERR-092` ("transaction closed") while carrying a confirmed transaction with its
+  `success_trans_id`: taking the code at face value would report a payment that went through
+  as given back, and `PaymentReconcileJob` would eventually fail a booking the player had
+  paid for. "Closed" is read as a give-back only when the answer carries no transaction.
+- **What we cannot read, we never call a failure.** A timeout is a `ProviderTimeoutException`
+  (the payment stays `processing`), and so is an answer that is not JSON — a gateway error
+  page says nothing about whether the money moved. That includes the one retry after a 401:
+  it is made outside the `catch` block, because an exception thrown inside a `catch` is not
+  caught by its own `try` and used to escape as a transport error.
 - **`FakePaymentProvider`** is the default in dev and tests (`app.payments.provider=fake`),
   and on the staging server. It is never created under `atmos` — including `staging,atmos`,
   so the two are never wired in together — and the application refuses to start with it
