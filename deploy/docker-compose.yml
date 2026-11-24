@@ -150,6 +150,12 @@ services:
       # not a 401 to debug. ATMOS answers only calls from an IP it has allowed, which is
       # this server: the same values on a laptop reach nothing.
       ATMOS_BASE_URL: ${ATMOS_BASE_URL:-}
+      # sandbox or production. The sandbox answers on the SAME host as production with
+      # credentials that look the same, so nothing can tell them apart and this says which
+      # it is; the admin panel shows it beside the provider. Empty means sandbox, which is
+      # what this server is for. Only the prod profile, which this file never runs, demands
+      # "production" (and refuses to start without it).
+      ATMOS_ENVIRONMENT: ${ATMOS_ENVIRONMENT:-sandbox}
       ATMOS_CONSUMER_KEY: ${ATMOS_CONSUMER_KEY:-}
       ATMOS_CONSUMER_SECRET: ${ATMOS_CONSUMER_SECRET:-}
       ATMOS_STORE_ID: ${ATMOS_STORE_ID:-}

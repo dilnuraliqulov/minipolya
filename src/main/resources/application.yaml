@@ -123,6 +123,10 @@ app:
   # ATMOS also answers only calls from an IP it has allowed, so these work on the server only.
   atmos:
     base-url: ${ATMOS_BASE_URL:}
+    # sandbox or production: which side of ATMOS the credentials belong to. The host is the
+    # same for both, so it cannot be told from base-url. Empty means sandbox; the prod
+    # profile refuses to start unless it is production.
+    environment: ${ATMOS_ENVIRONMENT:}
     consumer-key: ${ATMOS_CONSUMER_KEY:}
     consumer-secret: ${ATMOS_CONSUMER_SECRET:}
     store-id: ${ATMOS_STORE_ID:}

@@ -33,6 +33,13 @@ public class ProviderCheckResponse {
     /** The host of the provider's base URL, e.g. {@code apigw.atmos.uz}; absent for {@code fake}. */
     private String host;
 
+    /**
+     * Which side of ATMOS the credentials belong to: {@code sandbox} or {@code production}.
+     * The sandbox answers on the same host as production, so this is configured
+     * (ATMOS_ENVIRONMENT), not derived. Absent for {@code fake}, which is neither.
+     */
+    private String environment;
+
     /** The provider's own code for the failure, e.g. {@code HTTP_401}; absent when ok. */
     private String errorCode;
 }

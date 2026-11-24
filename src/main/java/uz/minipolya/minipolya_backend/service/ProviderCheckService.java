@@ -27,6 +27,7 @@ public class ProviderCheckService {
                 .status(check.ok() ? ProviderCheckResponse.OK : ProviderCheckResponse.FAILED)
                 .provider(check.provider())
                 .host(check.host())
+                .environment(check.environment())
                 .errorCode(check.errorCode())
                 .build();
     }

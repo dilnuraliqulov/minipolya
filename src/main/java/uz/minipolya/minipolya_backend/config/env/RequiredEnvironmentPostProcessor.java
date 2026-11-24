@@ -72,6 +72,14 @@ public class RequiredEnvironmentPostProcessor implements EnvironmentPostProcesso
             // values. ATMOS_PLATFORM_RECIPIENT_ID is deliberately NOT here: a sandbox is
             // given one later than the rest, and without it only the platform's own split
             // of a team game fails (AtmosPaymentProvider.recipientOf), nothing else.
+            // Production must say which side of ATMOS it is on; AtmosEnvironmentGuard then
+            // refuses to start it on anything but "production". Not asked for anywhere else:
+            // an unset value means the sandbox, which is the safe end of that mistake.
+            "prod", List.of(
+                    new Setting("ATMOS_ENVIRONMENT", "exactly \"production\" on a production server. "
+                            + "The ATMOS sandbox answers on the same host with credentials that look the "
+                            + "same, so nothing else can tell them apart: left unset this server would "
+                            + "quietly take nobody's money.")),
             "atmos", List.of(
                     new Setting("ATMOS_BASE_URL", "the ATMOS API root, e.g. https://apigw.atmos.uz — no "
                             + "trailing slash. ATMOS answers only calls from an IP it has allowed, so this "

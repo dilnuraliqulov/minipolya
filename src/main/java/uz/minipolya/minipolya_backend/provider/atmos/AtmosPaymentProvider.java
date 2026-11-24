@@ -147,7 +147,8 @@ public class AtmosPaymentProvider implements PaymentProvider {
             log.warn("ATMOS_PLATFORM_RECIPIENT_ID is not set: a team game's platform fee cannot be collected "
                     + "until it is. Ordinary bookings are unaffected.");
         }
-        log.info("AtmosPaymentProvider is active: storeId={} receipts={}", config.getStoreId(), receiptsOn());
+        log.info("AtmosPaymentProvider is active: environment={} storeId={} receipts={}",
+                AtmosEnvironment.of(config.getEnvironment()).value(), config.getStoreId(), receiptsOn());
     }
 
     private boolean platformRecipientMissing() {
@@ -166,18 +167,21 @@ public class AtmosPaymentProvider implements PaymentProvider {
     @Override
     public ProviderCheck check() {
         String host = ProviderCheck.hostOf(config.getBaseUrl());
+        // Which side of ATMOS these credentials are for. The sandbox answers on the same
+        // host as production, so this is configured, not guessed (AtmosEnvironment).
+        String environment = AtmosEnvironment.of(config.getEnvironment()).value();
         try {
             token(true);
-            return ProviderCheck.ok(ProviderCheck.ATMOS, host);
+            return ProviderCheck.ok(ProviderCheck.ATMOS, host, environment);
         } catch (PaymentProviderException ex) {
             log.warn("ATMOS provider check failed: code={}", ex.getCode());
-            return ProviderCheck.failed(ProviderCheck.ATMOS, host, ex.getCode());
+            return ProviderCheck.failed(ProviderCheck.ATMOS, host, environment, ex.getCode());
         } catch (ProviderTimeoutException ex) {
             log.warn("ATMOS provider check timed out");
-            return ProviderCheck.failed(ProviderCheck.ATMOS, host, ProviderCheck.TIMEOUT);
+            return ProviderCheck.failed(ProviderCheck.ATMOS, host, environment, ProviderCheck.TIMEOUT);
         } catch (RuntimeException ex) {
             log.warn("ATMOS provider check could not be made: {}", ex.getClass().getSimpleName());
-            return ProviderCheck.failed(ProviderCheck.ATMOS, host, ProviderCheck.UNREACHABLE);
+            return ProviderCheck.failed(ProviderCheck.ATMOS, host, environment, ProviderCheck.UNREACHABLE);
         }
     }
 

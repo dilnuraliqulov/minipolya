@@ -25,8 +25,8 @@ What is worth knowing without reading all of it:
 - **`SPRING_PROFILES_ACTIVE`**, from the server's `.env`, `staging` when it is not set —
   see "Profiles". Fake payments, bot polling, no dev sign-in, real secrets required.
   `staging,atmos` points the same server at the real ATMOS sandbox instead: fill in the
-  `ATMOS_*` values (the first four are required to start) and the fake provider is not
-  created. ATMOS only answers calls from an IP it has allowed, which is this server's —
+  `ATMOS_*` values (the first four are required to start; `ATMOS_ENVIRONMENT` stays empty,
+  which means the sandbox) and the fake provider is not created. ATMOS only answers calls from an IP it has allowed, which is this server's —
   never a laptop. Never add `dev`.
 - **Only Caddy publishes ports**, 80 and 443. Neither the backend nor PostgreSQL has a
   `ports:` entry, so from outside the server they do not exist. Do not add one: Docker
@@ -104,7 +104,9 @@ forwarded headers — and then every admin shares one 20-attempt budget.
   `prod`, and the `atmos` profile wires `AtmosPaymentProvider`, which refuses to start
   without `ATMOS_BASE_URL`, `ATMOS_CONSUMER_KEY`, `ATMOS_CONSUMER_SECRET` and
   `ATMOS_STORE_ID` (`ATMOS_PLATFORM_RECIPIENT_ID` is needed before a team-game fee can be
-  paid out, not to start). Set `CARD_TOKEN_KEY` (`openssl rand -base64 32`)
+  paid out, not to start). **`prod` also requires `ATMOS_ENVIRONMENT=production`** and
+  refuses to start on the sandbox — which answers on the same host, so nothing else can
+  tell them apart. Set `CARD_TOKEN_KEY` (`openssl rand -base64 32`)
   and keep it: losing it makes every saved card unusable. Each stadium owner's signed
   contract and ATMOS recipient id are entered by an admin
   (`PUT /api/admin/users/{id}/legal-details`) — a stadium cannot be approved before

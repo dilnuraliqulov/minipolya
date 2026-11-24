@@ -345,6 +345,8 @@ class AtmosPaymentProviderTest {
         assertThat(check.ok()).isTrue();
         assertThat(check.provider()).isEqualTo("atmos");
         assertThat(check.host()).isEqualTo("apigw.test");
+        // Nothing is configured, and an unset ATMOS_ENVIRONMENT means the sandbox.
+        assertThat(check.environment()).isEqualTo("sandbox");
         assertThat(check.errorCode()).isNull();
         server.verify();
     }
@@ -362,6 +364,24 @@ class AtmosPaymentProviderTest {
 
         assertThat(provider.check().ok()).isTrue();
         server.verify();
+    }
+
+    /**
+     * The sandbox answers on the same host as production, so the host says nothing about
+     * which one this is: the check reports what ATMOS_ENVIRONMENT says, failure included.
+     */
+    @Test
+    void theCheckReportsWhichSideOfAtmosTheCredentialsAreFor() {
+        properties.getAtmos().setEnvironment(" Production ");
+        expectToken();
+
+        assertThat(provider.check().environment()).isEqualTo("production");
+
+        server.reset();
+        server.expect(requestTo(BASE + "/token")).andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+        ProviderCheck failed = provider.check();
+        assertThat(failed.ok()).isFalse();
+        assertThat(failed.environment()).isEqualTo("production");
     }
 
     @Test
@@ -396,7 +416,7 @@ class AtmosPaymentProviderTest {
         ProviderCheck check = provider.check();
 
         assertThat(check.toString()).doesNotContain("tok-abc", "key", "secret")
-                .contains("atmos", "apigw.test");
+                .contains("atmos", "apigw.test", "sandbox");
         assertThat(check.host()).isEqualTo("apigw.test").isNotEqualTo(BASE);
     }
 

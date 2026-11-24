@@ -187,6 +187,14 @@ public class AppProperties {
     public static class Atmos {
         /** ATMOS_BASE_URL, e.g. https://apigw.atmos.uz */
         private String baseUrl;
+        /**
+         * ATMOS_ENVIRONMENT: {@code sandbox} or {@code production} — which side of ATMOS these
+         * credentials belong to. The host does not tell us (the sandbox answers on the same
+         * one), so it is said here, and the admin panel shows it beside the provider. Empty
+         * means {@code sandbox}; the {@code prod} profile refuses to start unless it is
+         * {@code production} (AtmosEnvironmentGuard).
+         */
+        private String environment;
         /** ATMOS_CONSUMER_KEY */
         private String consumerKey;
         /** ATMOS_CONSUMER_SECRET */
@@ -215,6 +223,10 @@ public class AppProperties {
 
         public void setBaseUrl(String baseUrl) {
             this.baseUrl = trimmed(baseUrl);
+        }
+
+        public void setEnvironment(String environment) {
+            this.environment = trimmed(environment);
         }
 
         public void setConsumerKey(String consumerKey) {

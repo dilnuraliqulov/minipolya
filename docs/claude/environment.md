@@ -28,6 +28,7 @@ UPLOADS_DIR=./uploads # optional: where uploaded stadium photos are stored (back
 # these reach nothing from a laptop: local development stays on the fake provider.
 # The first four are required to start; whitespace around any value is trimmed.
 ATMOS_BASE_URL=https://apigw.atmos.uz
+ATMOS_ENVIRONMENT=    # sandbox (the default, and what staging wants) or production
 ATMOS_CONSUMER_KEY=...
 ATMOS_CONSUMER_SECRET=...
 ATMOS_STORE_ID=...
@@ -95,6 +96,15 @@ database. `atmos` additionally requires `ATMOS_BASE_URL`, `ATMOS_CONSUMER_KEY`,
 without. Several profiles add up: `staging,atmos` asks for all of it in one message.
 Nothing is checked under `dev` or in the tests, which take their values from `.env`
 or from test properties.
+
+`prod` additionally requires `ATMOS_ENVIRONMENT=production`. The ATMOS **sandbox answers on
+the same host** as production, with credentials that look the same, so nothing else can tell
+them apart — and the two mistakes are not small: a production server on the sandbox takes
+nobody's money while appearing to work, and a test server on production takes real money from
+real cards. An empty value therefore means `sandbox` everywhere else, `AtmosEnvironmentGuard`
+refuses to start `prod` on anything but `production` (and refuses a value that is neither,
+under any profile), and `GET /api/admin/payments/provider-check` reports it so the admin
+panel can show which side a server is on.
 
 `ATMOS_PLATFORM_RECIPIENT_ID` is deliberately **not** required to start: a sandbox is
 usually given it last, and without it only the platform's own split of a team-game fee
@@ -176,6 +186,8 @@ is one line and a restart.
   `CARD_TOKEN_KEY`, the https `MINIAPP_URL`, no dev sign-in, a test bot on polling.
 - `FakePaymentProvider` is not created at all (`@Profile("!atmos")`), whatever
   `app.payments.provider` says, so the two can never both be wired in.
+- `ATMOS_ENVIRONMENT` is empty or `sandbox` here, which is what the Sozlamalar page shows
+  (`Toʻlov tizimi: ATMOS (sandbox)`). Only `prod` demands `production`.
 - The four `ATMOS_*` credentials are required, as above. **ATMOS only answers calls from an
   IP address it has allowed**, which is this server's — the same credentials reach nothing
   from a developer's machine, which is why local development keeps the fake provider.

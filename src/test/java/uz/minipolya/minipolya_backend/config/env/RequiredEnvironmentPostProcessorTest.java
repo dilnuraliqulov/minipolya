@@ -29,7 +29,8 @@ class RequiredEnvironmentPostProcessorTest {
             Map.entry("ATMOS_BASE_URL", "https://apigw.atmos.uz"),
             Map.entry("ATMOS_CONSUMER_KEY", "a-consumer-key"),
             Map.entry("ATMOS_CONSUMER_SECRET", "a-consumer-secret"),
-            Map.entry("ATMOS_STORE_ID", "777"));
+            Map.entry("ATMOS_STORE_ID", "777"),
+            Map.entry("ATMOS_ENVIRONMENT", "production"));
 
     /** The four the atmos profile adds; the fifth variable, the recipient id, is not one. */
     private static final String[] ATMOS_SETTINGS =
@@ -120,6 +121,21 @@ class RequiredEnvironmentPostProcessorTest {
         assertThat(RequiredEnvironmentPostProcessor.EXTRA_PER_PROFILE.get("atmos"))
                 .extracting(RequiredEnvironmentPostProcessor.Setting::name)
                 .doesNotContain("ATMOS_PLATFORM_RECIPIENT_ID");
+    }
+
+    /**
+     * Only production is asked which side of ATMOS it is on. Everywhere else an unset value
+     * means the sandbox, and AtmosEnvironmentGuard is what refuses prod on anything else.
+     */
+    @Test
+    void theAtmosEnvironmentIsRequiredOnProdOnly() {
+        assertThatThrownBy(() -> check(without("ATMOS_ENVIRONMENT"), "prod"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("ATMOS_ENVIRONMENT")
+                .hasMessageContaining("nobody's money");
+        assertThatCode(() -> check(without("ATMOS_ENVIRONMENT"), "staging")).doesNotThrowAnyException();
+        assertThatCode(() -> check(without("ATMOS_ENVIRONMENT"), "staging", "atmos"))
+                .doesNotThrowAnyException();
     }
 
     @Test

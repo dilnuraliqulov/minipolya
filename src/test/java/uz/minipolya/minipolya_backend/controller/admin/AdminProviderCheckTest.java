@@ -47,8 +47,10 @@ class AdminProviderCheckTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.status").value("ok"))
                 .andExpect(jsonPath("$.data.provider").value("fake"))
-                // It reaches nothing, so there is no host, and nothing failed.
+                // It reaches nothing, so there is no host and no sandbox-or-production to
+                // be on, and nothing failed.
                 .andExpect(jsonPath("$.data.host").doesNotExist())
+                .andExpect(jsonPath("$.data.environment").doesNotExist())
                 .andExpect(jsonPath("$.data.errorCode").doesNotExist());
     }
 

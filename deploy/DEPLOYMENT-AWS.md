@@ -799,7 +799,7 @@ nano .env
 | `VITE_TELEGRAM_BOT_USERNAME` | `minipolya_test_bot` | same bot, public name |
 | `VITE_TELEGRAM_APP_NAME` | `minipolya` | the Mini App short name, §9.2 |
 | `VITE_TELEGRAM_SUPPORT_USERNAME` | your username or empty | no `@` |
-| `ATMOS_*` (five) | leave them empty | nothing reads them under `staging`. §6.4 |
+| `ATMOS_*` (six) | leave them empty | nothing reads them under `staging`. §6.4 |
 
 If you do not have the bot token yet, do §9.1 now and come back — the backend will not start
 without `BOT_TOKEN`.
@@ -835,11 +835,16 @@ In `.env`:
 ```
 SPRING_PROFILES_ACTIVE=staging,atmos
 ATMOS_BASE_URL=...
+ATMOS_ENVIRONMENT=                  # empty means sandbox, which is what this server wants
 ATMOS_CONSUMER_KEY=...
 ATMOS_CONSUMER_SECRET=...
 ATMOS_STORE_ID=...
 ATMOS_PLATFORM_RECIPIENT_ID=...     # only needed before a team-game fee is paid out
 ```
+
+The sandbox answers on the same host as production, so `ATMOS_ENVIRONMENT` is the only thing
+that says which side these credentials are for. It is what the admin panel shows in
+Sozlamalar (`Toʻlov tizimi: ATMOS (sandbox)`), and leaving it empty means sandbox.
 
 Then `docker compose up -d backend`. The first four are required: with any of them missing
 the backend stops at startup and names them (see "The backend will not start" below). The log then

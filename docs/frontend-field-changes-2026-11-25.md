@@ -11,7 +11,12 @@ else.
 ```json
 {
   "success": true,
-  "data": { "status": "ok", "provider": "atmos", "host": "apigw.atmos.uz" },
+  "data": {
+    "status": "ok",
+    "provider": "atmos",
+    "host": "apigw.atmos.uz",
+    "environment": "sandbox"
+  },
   "message": null
 }
 ```
@@ -21,6 +26,7 @@ else.
 | `status` | yes | `"ok"` or `"failed"` |
 | `provider` | yes | `"atmos"` (the real card provider) or `"fake"` (the stand-in, which reaches nothing) |
 | `host` | no | the host of the provider's base URL, e.g. `apigw.atmos.uz`. **Absent under `fake`** — there is nothing to reach |
+| `environment` | no | `"sandbox"` or `"production"`, from `ATMOS_ENVIRONMENT`. **Absent under `fake`.** The sandbox answers on the **same host** as production, so this is the only thing that says which side a server is on — don't try to tell them apart by the host |
 | `errorCode` | no | the provider's own code for the failure. **Absent when `status` is `"ok"`** |
 
 - Under the real provider it asks ATMOS for a **fresh access token**, which is the smallest

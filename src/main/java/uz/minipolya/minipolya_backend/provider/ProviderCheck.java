@@ -8,18 +8,22 @@ import java.net.URISyntaxException;
  * {@link PaymentProvider#check()} answers it.
  *
  * <p>It carries only what an admin may be shown: which provider is wired in
- * ({@value #ATMOS} or {@value #FAKE}), the <b>host</b> of its base URL and, when the check
- * failed, the provider's own error code. Deliberately nothing else — never an access token,
- * never a consumer key or secret, never a request or response body, and never the base URL
- * in full (a URL can carry user info; {@link #hostOf} keeps the host alone).
+ * ({@value #ATMOS} or {@value #FAKE}), the <b>host</b> of its base URL, which side of the
+ * provider the credentials belong to, and, when the check failed, the provider's own error
+ * code. Deliberately nothing else — never an access token, never a consumer key or secret,
+ * never a request or response body, and never the base URL in full (a URL can carry user
+ * info; {@link #hostOf} keeps the host alone).
  *
  * @param provider which provider answered: {@value #ATMOS} or {@value #FAKE}
  * @param ok       true when the provider answered as expected
  * @param host     the host of the provider's base URL, null when it makes no calls (the fake
  *                 provider) or the URL has no host
+ * @param environment {@code sandbox} or {@code production} for ATMOS (the host is the same
+ *                 for both, so it has to be configured); null for the fake provider, which
+ *                 is neither
  * @param errorCode the provider's code for the failure, null when {@code ok}
  */
-public record ProviderCheck(String provider, boolean ok, String host, String errorCode) {
+public record ProviderCheck(String provider, boolean ok, String host, String environment, String errorCode) {
 
     /** The real card provider. */
     public static final String ATMOS = "atmos";
@@ -30,12 +34,12 @@ public record ProviderCheck(String provider, boolean ok, String host, String err
     /** The call never got as far as an answer we could read a code from. */
     public static final String UNREACHABLE = "UNREACHABLE";
 
-    public static ProviderCheck ok(String provider, String host) {
-        return new ProviderCheck(provider, true, host, null);
+    public static ProviderCheck ok(String provider, String host, String environment) {
+        return new ProviderCheck(provider, true, host, environment, null);
     }
 
-    public static ProviderCheck failed(String provider, String host, String errorCode) {
-        return new ProviderCheck(provider, false, host, errorCode);
+    public static ProviderCheck failed(String provider, String host, String environment, String errorCode) {
+        return new ProviderCheck(provider, false, host, environment, errorCode);
     }
 
     /**
