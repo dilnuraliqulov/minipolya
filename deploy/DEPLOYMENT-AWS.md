@@ -862,6 +862,68 @@ instead. If the sandbox pays the wrong account, try `ATMOS_RECIPIENT_FIELD=termi
 To go back to fake payments, empty `SPRING_PROFILES_ACTIVE` again and restart the backend.
 The `ATMOS_*` values can stay in `.env`; nothing reads them under plain `staging`.
 
+### 6.5 Proving it: one real transaction, end to end
+
+`deploy/atmos-smoke.sh` does by hand what no test can do from a laptop — ATMOS answers only
+calls from an IP address it has allowed, and this server is it:
+
+```bash
+cd ~/minipolya/minipolyaBackend/deploy
+./atmos-smoke.sh
+```
+
+It asks for a test card and its expiry (**not echoed**), ATMOS texts you an SMS code, you
+type that (**not echoed**), and it walks the whole flow, printing one line per step with
+ATMOS's own result code:
+
+```
+ATMOS smoke test
+  environment : sandbox
+  profiles    : staging,atmos
+  amount      : 50000 tiyin (500 so'm), reversed at the end
+
+  The card is read without echo and goes straight into the container. Nothing is stored.
+  Card number :
+  Expiry MM/YY:
+
+  token                  -                  OK   valid 2525 s
+  bind-card/init         OK                 OK   SMS sent to ********9999
+
+  SMS code    :
+
+  token                  -                  OK   valid 2525 s
+  bind-card/confirm      OK                 OK   card bound
+  pay/create             OK                 OK   50000 tiyin, transaction 111111
+  pay/pre-apply          OK                 OK
+  pay/apply              OK                 OK   confirmed=true, success_trans_id 2730590
+  pay/get                OK                 OK   confirmed=true, amount 50000 tiyin
+  pay/reverse            OK                 OK   50000 tiyin back
+  remove-card            OK                 OK
+
+ALL STEPS OK. The payment was taken and given back in full.
+```
+
+Worth knowing before you run it:
+
+- **The curl calls run inside the backend container**, which is where the ATMOS credentials
+  already are. The host never sees them, and you need no access to `.env` to run this.
+- **Nothing secret is printed or stored**: not the card number, the expiry, the SMS code,
+  the card token, the access token or any response body. The card and the code go in on
+  standard input, so they are not in `ps` or in your shell history either. The card token
+  never leaves the container — every step that needs it happens in one call inside it.
+- **It takes real money and gives it back.** 500 so'm by default, to `ATMOS_STORE_ID` (our
+  own store, never a stadium owner), reversed at the last step. Change it with
+  `ATMOS_SMOKE_AMOUNT=100000 ./atmos-smoke.sh` (tiyin).
+- **It refuses to run on production** (`ATMOS_ENVIRONMENT=production`) unless you say
+  `ATMOS_SMOKE_ALLOW_PRODUCTION=yes`, because there the card is somebody's real card.
+- **A failed step stops it** and says which one and what ATMOS answered. If `pay/apply` or
+  `pay/reverse` is the one that failed, look the transaction up in the ATMOS cabinet before
+  running it again — money may be sitting on the card.
+- It needs `SPRING_PROFILES_ACTIVE` to include `atmos` (§6.4); on plain `staging` there is no
+  ATMOS client and it says so instead of running.
+- Test card numbers for the sandbox are in the ATMOS docs under "Песочница", not in
+  this repository.
+
 ---
 
 ## 7. Start it

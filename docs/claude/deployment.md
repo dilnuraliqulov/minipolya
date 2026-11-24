@@ -17,6 +17,7 @@ the **only** copy; the frontend repository points at it rather than duplicating 
 | `deploy/Caddyfile` | routing, automatic HTTPS, caching, the security headers and CSP |
 | `deploy/.env.example` | every variable, with the `openssl` command for each secret |
 | `deploy/backup.sh` | the nightly `pg_dump`, 14 days, run from cron |
+| `deploy/atmos-smoke.sh` | one real ATMOS transaction end to end, run by hand on the server |
 | `deploy/DEPLOYMENT-AWS.md` | the walkthrough |
 | `Dockerfile` (repo root) | Maven on JDK 21 → JRE 21, non-root, container memory flags |
 
@@ -42,6 +43,12 @@ What is worth knowing without reading all of it:
   header it cannot send.
 - **`/actuator/health`** is the container health check and the only actuator endpoint
   exposed (`show-details: never`).
+- **`deploy/atmos-smoke.sh`** proves the ATMOS sandbox from the server: token → bind a card
+  → a 500 so'm payment → `pay/get` → reverse → unbind, one line per step with ATMOS's own
+  result code. The card, the SMS code and the card token never leave the backend container
+  and are never printed; the money goes to our own store and comes back. It refuses to run
+  against `ATMOS_ENVIRONMENT=production` unless told to in so many words. ATMOS answers only
+  calls from an IP it has allowed, so there is no way to do this from a laptop.
 
 ## Deployment checklist
 
