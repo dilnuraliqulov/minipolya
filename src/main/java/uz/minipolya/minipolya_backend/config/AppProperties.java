@@ -175,8 +175,12 @@ public class AppProperties {
 
     /**
      * The ATMOS client, read from the environment (see .env.example). Only used under the
-     * {@code atmos} profile, where AtmosPaymentProvider refuses to start unless every
-     * required value is set.
+     * {@code atmos} profile, which the application refuses to start under unless
+     * {@code ATMOS_BASE_URL}, {@code ATMOS_CONSUMER_KEY}, {@code ATMOS_CONSUMER_SECRET} and
+     * {@code ATMOS_STORE_ID} are set (RequiredEnvironmentPostProcessor, then
+     * AtmosPaymentProvider.requireConfiguration).
+     *
+     * <p>Every value here is trimmed as it is bound: see {@link #trimmed(String)}.
      */
     @Getter
     @Setter
@@ -197,6 +201,45 @@ public class AppProperties {
         private String ofdCodeService;
         /** How long to wait for ATMOS before treating a call as timed out. */
         private int timeoutSeconds = 30;
+
+        /**
+         * Every {@code ATMOS_*} value is trimmed as it is bound. A trailing space pasted into
+         * the server's {@code .env} would otherwise travel into the Basic auth header, a URL
+         * or a store id and come back as an unexplained 401 or "store not found"; and a value
+         * that is nothing but whitespace becomes empty, so the startup checks (which test with
+         * {@code isBlank}) treat it as the missing value it is.
+         */
+        private static String trimmed(String value) {
+            return value == null ? null : value.trim();
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = trimmed(baseUrl);
+        }
+
+        public void setConsumerKey(String consumerKey) {
+            this.consumerKey = trimmed(consumerKey);
+        }
+
+        public void setConsumerSecret(String consumerSecret) {
+            this.consumerSecret = trimmed(consumerSecret);
+        }
+
+        public void setStoreId(String storeId) {
+            this.storeId = trimmed(storeId);
+        }
+
+        public void setPlatformRecipientId(String platformRecipientId) {
+            this.platformRecipientId = trimmed(platformRecipientId);
+        }
+
+        public void setOfdCodeRental(String ofdCodeRental) {
+            this.ofdCodeRental = trimmed(ofdCodeRental);
+        }
+
+        public void setOfdCodeService(String ofdCodeService) {
+            this.ofdCodeService = trimmed(ofdCodeService);
+        }
 
         /** Never render the credentials. */
         @Override

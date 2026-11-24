@@ -29,6 +29,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.ExpectedCount.once;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
@@ -343,9 +344,86 @@ class AtmosPaymentProviderTest {
         assertThatThrownBy(unconfigured::requireConfiguration)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("ATMOS_CONSUMER_KEY")
+                .hasMessageContaining("ATMOS_CONSUMER_SECRET")
                 .hasMessageContaining("ATMOS_STORE_ID")
-                .hasMessageContaining("ATMOS_PLATFORM_RECIPIENT_ID")
                 .hasMessageNotContaining("ATMOS_BASE_URL");
+    }
+
+    /** Whitespace is trimmed on load, so a value that is only whitespace is a missing one. */
+    @Test
+    void aValueOfNothingButWhitespaceCountsAsMissing() {
+        AppProperties padded = new AppProperties();
+        padded.getAtmos().setBaseUrl(BASE);
+        padded.getAtmos().setConsumerKey("  ");
+        padded.getAtmos().setConsumerSecret("   ");
+        padded.getAtmos().setStoreId("777");
+
+        assertThat(padded.getAtmos().getConsumerKey()).isEmpty();
+        assertThatThrownBy(() -> new AtmosPaymentProvider(padded, RestClient.builder(), clock)
+                .requireConfiguration())
+                .hasMessageContaining("ATMOS_CONSUMER_KEY")
+                .hasMessageContaining("ATMOS_CONSUMER_SECRET")
+                .hasMessageNotContaining("ATMOS_STORE_ID");
+    }
+
+    /**
+     * A value pasted into the server's .env with a space around it is trimmed on load: the
+     * base URL stays a URL and the credentials still make the same Basic auth header, rather
+     * than coming back as an unexplained 401.
+     */
+    @Test
+    void everyAtmosValueIsTrimmedOnLoad() {
+        AppProperties padded = new AppProperties();
+        AppProperties.Atmos atmos = padded.getAtmos();
+        atmos.setBaseUrl("  " + BASE + "  ");
+        atmos.setConsumerKey(" key ");
+        atmos.setConsumerSecret("  secret  ");
+        atmos.setStoreId(" 777 ");
+        atmos.setPlatformRecipientId(" 900 ");
+        atmos.setOfdCodeRental(" 10112001 ");
+        atmos.setOfdCodeService(" 10112002 ");
+
+        assertThat(atmos.getBaseUrl()).isEqualTo(BASE);
+        assertThat(atmos.getStoreId()).isEqualTo("777");
+        assertThat(atmos.getPlatformRecipientId()).isEqualTo("900");
+        assertThat(atmos.getOfdCodeRental()).isEqualTo("10112001");
+        assertThat(atmos.getOfdCodeService()).isEqualTo("10112002");
+
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer paddedServer = MockRestServiceServer.bindTo(builder).build();
+        AtmosPaymentProvider trimmed = new AtmosPaymentProvider(padded, builder, clock);
+        paddedServer.expect(once(), requestTo(BASE + "/token"))
+                .andExpect(header("Authorization", "Basic a2V5OnNlY3JldA=="))
+                .andRespond(withSuccess(TOKEN_ANSWER, MediaType.APPLICATION_JSON));
+        paddedServer.expect(requestTo(BASE + "/partner/remove-card"))
+                .andRespond(withSuccess("{" + OK + "}", MediaType.APPLICATION_JSON));
+
+        trimmed.removeCard("1666711", "t1");
+
+        paddedServer.verify();
+    }
+
+    /**
+     * ATMOS_PLATFORM_RECIPIENT_ID is the one value a sandbox is given last, so it does not
+     * stop the start-up: only the platform's own split of a team-game fee fails, and it says
+     * which variable is missing. An ordinary booking takes nothing for the platform.
+     */
+    @Test
+    void withoutThePlatformRecipientItStartsAndOnlyThePlatformSplitFails() {
+        AppProperties noRecipient = new AppProperties();
+        AppProperties.Atmos atmos = noRecipient.getAtmos();
+        atmos.setBaseUrl(BASE);
+        atmos.setConsumerKey("key");
+        atmos.setConsumerSecret("secret");
+        atmos.setStoreId("777");
+        AtmosPaymentProvider provider = new AtmosPaymentProvider(noRecipient, RestClient.builder(), clock);
+
+        assertThatCode(provider::requireConfiguration).doesNotThrowAnyException();
+
+        // Refused while the request is still being built, so nothing is ever sent.
+        assertThatThrownBy(() -> provider.charge(charge()))
+                .isInstanceOf(PaymentProviderException.class)
+                .hasMessageContaining("ATMOS_PLATFORM_RECIPIENT_ID");
     }
 
     @Test

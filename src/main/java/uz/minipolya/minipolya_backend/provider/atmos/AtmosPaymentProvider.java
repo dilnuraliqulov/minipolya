@@ -113,7 +113,20 @@ public class AtmosPaymentProvider implements PaymentProvider {
         this.clock = clock;
     }
 
-    /** Fails the startup, naming every missing variable, rather than the first payment. */
+    /**
+     * Fails the startup, naming every missing variable, rather than the first payment.
+     *
+     * <p>These four are what no ATMOS call can be made without, so the profile cannot run
+     * without them. {@code ATMOS_PLATFORM_RECIPIENT_ID} is not one of them: it is the one
+     * value a sandbox is usually given last, and without it only the platform's own split
+     * of a team-game fee fails ({@link #recipientOf}) — every ordinary booking, which the
+     * platform takes nothing from, is paid and refunded as usual. It is logged as missing
+     * here, loudly, so it is not a surprise later.
+     *
+     * <p>{@code RequiredEnvironmentPostProcessor} checks the same four from the environment
+     * before any bean exists, which is where a deployed server normally meets this; this
+     * runs on the bound {@code app.atmos.*} values, however they were set.
+     */
     @PostConstruct
     public void requireConfiguration() {
         Map<String, String> required = new LinkedHashMap<>();
@@ -121,7 +134,6 @@ public class AtmosPaymentProvider implements PaymentProvider {
         required.put("ATMOS_CONSUMER_KEY", config.getConsumerKey());
         required.put("ATMOS_CONSUMER_SECRET", config.getConsumerSecret());
         required.put("ATMOS_STORE_ID", config.getStoreId());
-        required.put("ATMOS_PLATFORM_RECIPIENT_ID", config.getPlatformRecipientId());
         List<String> missing = required.entrySet().stream()
                 .filter(e -> e.getValue() == null || e.getValue().isBlank())
                 .map(Map.Entry::getKey)
@@ -130,7 +142,15 @@ public class AtmosPaymentProvider implements PaymentProvider {
             throw new IllegalStateException("The atmos profile is on but these environment variables are not set: "
                     + String.join(", ", missing));
         }
+        if (platformRecipientMissing()) {
+            log.warn("ATMOS_PLATFORM_RECIPIENT_ID is not set: a team game's platform fee cannot be collected "
+                    + "until it is. Ordinary bookings are unaffected.");
+        }
         log.info("AtmosPaymentProvider is active: storeId={} receipts={}", config.getStoreId(), receiptsOn());
+    }
+
+    private boolean platformRecipientMissing() {
+        return config.getPlatformRecipientId() == null || config.getPlatformRecipientId().isBlank();
     }
 
     // ---- Cards ----
@@ -474,12 +494,18 @@ public class AtmosPaymentProvider implements PaymentProvider {
     }
 
     private String recipientOf(Split split) {
-        String id = split.platform() ? config.getPlatformRecipientId() : split.recipientId();
-        if (id == null || id.isBlank()) {
+        if (split.platform()) {
+            if (platformRecipientMissing()) {
+                throw new PaymentProviderException("RECIPIENT_MISSING",
+                        "ATMOS_PLATFORM_RECIPIENT_ID is not set; the platform's split cannot be paid out");
+            }
+            return config.getPlatformRecipientId();
+        }
+        if (split.recipientId() == null || split.recipientId().isBlank()) {
             throw new PaymentProviderException("RECIPIENT_MISSING",
                     "The stadium owner has no ATMOS recipient yet; card payments cannot be split to them");
         }
-        return id;
+        return split.recipientId();
     }
 
     private boolean receiptsOn() {

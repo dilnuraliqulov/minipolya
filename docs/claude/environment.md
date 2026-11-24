@@ -23,7 +23,10 @@ CORS_ALLOWED_ORIGINS= # optional: browser origins allowed cross-origin, comma-se
 DEV_LOGIN_KEY=        # dev profile only: 16+ chars, sent as X-Dev-Login-Key to /api/auth/dev/*
 UPLOADS_DIR=./uploads # optional: where uploaded stadium photos are stored (back it up with the DB)
 
-# ATMOS — used only with SPRING_PROFILES_ACTIVE=atmos
+# ATMOS — read only with the atmos profile (staging,atmos on the test server,
+# prod,atmos in production). ATMOS answers only calls from an IP it has allowed, so
+# these reach nothing from a laptop: local development stays on the fake provider.
+# The first four are required to start; whitespace around any value is trimmed.
 ATMOS_BASE_URL=https://apigw.atmos.uz
 ATMOS_CONSUMER_KEY=...
 ATMOS_CONSUMER_SECRET=...
@@ -87,8 +90,20 @@ Required everywhere: `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` (after the derivatio
 above), `JWT_SECRET`, `BOT_TOKEN`, `CARD_TOKEN_KEY`. `staging` additionally
 requires `UPLOADS_DIR`, because the default `./uploads` is inside the container and
 every redeploy would take the photos with it while their rows stayed in the
-database. Nothing is checked under `dev` or in the tests, which take their values
-from `.env` or from test properties.
+database. `atmos` additionally requires `ATMOS_BASE_URL`, `ATMOS_CONSUMER_KEY`,
+`ATMOS_CONSUMER_SECRET` and `ATMOS_STORE_ID` — the four no ATMOS call can be made
+without. Several profiles add up: `staging,atmos` asks for all of it in one message.
+Nothing is checked under `dev` or in the tests, which take their values from `.env`
+or from test properties.
+
+`ATMOS_PLATFORM_RECIPIENT_ID` is deliberately **not** required to start: a sandbox is
+usually given it last, and without it only the platform's own split of a team-game fee
+fails (`AtmosPaymentProvider.recipientOf`, `RECIPIENT_MISSING`) — ordinary bookings, which
+the platform takes nothing from, are paid and refunded as usual. It is logged as missing
+at startup instead. `AtmosPaymentProvider.requireConfiguration` checks the same four again
+on the bound `app.atmos.*` values, so a context built any other way is covered too, and
+every `ATMOS_*` value is trimmed as it is bound (`AppProperties.Atmos`): a space pasted
+into `.env` is not a 401 to debug, and a value that is only whitespace counts as missing.
 
 Without this the first missing value surfaced as `Could not resolve placeholder
 'DB_URL'` inside a long stack trace, one variable per restart, and a missing
@@ -107,7 +122,7 @@ active profiles at startup.
 | `dev` | a developer's machine | **yes** (`DEV_LOGIN_KEY`, 16+) | `fake` | webhook or **polling** | dev fallbacks allowed |
 | `staging` | a deployed **test** server | no | **`fake` allowed** | webhook or **polling** | **required** |
 | `prod` | production | no | `fake` **refused** | webhook only | **required** |
-| `atmos` | the real card provider, next to `prod` | no | `fake` never created | — | **required**, plus every `ATMOS_*` |
+| `atmos` | the real card provider, next to `prod` **or** `staging` | no | `fake` never created | — | **required**, plus the four `ATMOS_*` credentials |
 
 ## The `staging` profile
 
@@ -149,4 +164,21 @@ Loosened, on purpose:
 **`prod` keeps every refusal it has today.** None of the above relaxes it: under
 `prod` the mode can only be `webhook`, so requiring the webhook secret in webhook
 mode is the same rule as before.
+
+## `staging,atmos`: the test server on the real ATMOS sandbox
+
+`SPRING_PROFILES_ACTIVE=staging,atmos` is the same staging server with the real ATMOS
+sandbox behind it instead of the fake provider. It is set in the server's `.env`
+(`deploy/docker-compose.yml` reads `${SPRING_PROFILES_ACTIVE:-staging}`), so switching back
+is one line and a restart.
+
+- Everything `staging` does still applies: the forwarded client IP, the real
+  `CARD_TOKEN_KEY`, the https `MINIAPP_URL`, no dev sign-in, a test bot on polling.
+- `FakePaymentProvider` is not created at all (`@Profile("!atmos")`), whatever
+  `app.payments.provider` says, so the two can never both be wired in.
+- The four `ATMOS_*` credentials are required, as above. **ATMOS only answers calls from an
+  IP address it has allowed**, which is this server's — the same credentials reach nothing
+  from a developer's machine, which is why local development keeps the fake provider.
+- `dev` is still refused next to it, as next to `prod` and `staging` (`DevProfileGuard`).
+- Use the ATMOS **sandbox's** credentials and its test cards, never production's.
 

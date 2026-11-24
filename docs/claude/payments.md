@@ -74,16 +74,22 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   `CARD_NOT_SUPPORTED` "Faqat Uzcard va Humo kartalari qabul qilinadi", `CARD_EXPIRY_INVALID`,
   `CARD_EXPIRED`, `SMS_CODE_WRONG`, `SMS_CODE_EXPIRED`, `SMS_RESEND_TOO_EARLY`,
   `SMS_RESEND_UNAVAILABLE`, `BINDING_NOT_FOUND`, `CARD_BINDING_FAILED`; unreachable → 502.
-- **`AtmosPaymentProvider`** is active only under the `atmos` profile and refuses to
-  start unless `ATMOS_BASE_URL`, `ATMOS_CONSUMER_KEY`, `ATMOS_CONSUMER_SECRET`,
-  `ATMOS_STORE_ID` and `ATMOS_PLATFORM_RECIPIENT_ID` are set. Token from `POST /token`
+- **`AtmosPaymentProvider`** is active only under the `atmos` profile — `staging,atmos` on
+  the test server (the sandbox), `prod,atmos` in production — and refuses to start unless
+  `ATMOS_BASE_URL`, `ATMOS_CONSUMER_KEY`, `ATMOS_CONSUMER_SECRET` and `ATMOS_STORE_ID` are
+  set. `ATMOS_PLATFORM_RECIPIENT_ID` does not stop the start-up (a sandbox is given it
+  last); without it only a platform split is refused, with `RECIPIENT_MISSING`, and it is
+  logged as missing at startup. Every `ATMOS_*` value is trimmed as it is bound.
+  ATMOS answers only calls from an IP it has allowed, so the credentials work on the
+  deployed server and nowhere else. Token from `POST /token`
   (Basic auth, `client_credentials`), cached until `expires_in` − 5 min; a 401 refreshes
   it once. `ofd_items` are sent only when `ATMOS_OFD_CODE_RENTAL` and
   `ATMOS_OFD_CODE_SERVICE` are both set; `ofd_url` is saved on the payment. It never
   logs a request or response body — only operation names, ids and result codes.
-- **`FakePaymentProvider`** is the default in dev and tests (`app.payments.provider=fake`).
-  It is never created under `atmos` and the application refuses to start with it under
-  `prod` (`FakeProviderGuardTest`). It answers like ATMOS, with ATMOS's codes, behind the
+- **`FakePaymentProvider`** is the default in dev and tests (`app.payments.provider=fake`),
+  and on the staging server. It is never created under `atmos` — including `staging,atmos`,
+  so the two are never wired in together — and the application refuses to start with it
+  under `prod` (`FakeProviderGuardTest`). It answers like ATMOS, with ATMOS's codes, behind the
   same interface — switching to `AtmosPaymentProvider` changes nothing above it. Its state
   (bindings, cards with balances, charges and holds with their splits, reverses) is in the
   `fake_payment_*` tables (changeset 044, `JdbcFakeProviderStore`, plain JDBC — no
