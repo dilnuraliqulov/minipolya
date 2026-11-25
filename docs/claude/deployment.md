@@ -17,13 +17,18 @@ the **only** copy; the frontend repository points at it rather than duplicating 
 | `deploy/Caddyfile` | routing, automatic HTTPS, caching, the security headers and CSP |
 | `deploy/.env.example` | every variable, with the `openssl` command for each secret |
 | `deploy/backup.sh` | the nightly `pg_dump`, 14 days, run from cron |
+| `deploy/atmos-smoke.sh` | one real ATMOS transaction end to end, run by hand on the server |
 | `deploy/DEPLOYMENT-AWS.md` | the walkthrough |
 | `Dockerfile` (repo root) | Maven on JDK 21 → JRE 21, non-root, container memory flags |
 
 What is worth knowing without reading all of it:
 
-- **`SPRING_PROFILES_ACTIVE=staging`** — see "Profiles". Fake payments, bot polling,
-  no dev sign-in, real secrets required.
+- **`SPRING_PROFILES_ACTIVE`**, from the server's `.env`, `staging` when it is not set —
+  see "Profiles". Fake payments, bot polling, no dev sign-in, real secrets required.
+  `staging,atmos` points the same server at the real ATMOS sandbox instead: fill in the
+  `ATMOS_*` values (the first four are required to start; `ATMOS_ENVIRONMENT` stays empty,
+  which means the sandbox) and the fake provider is not created. ATMOS only answers calls from an IP it has allowed, which is this server's —
+  never a laptop. Never add `dev`.
 - **Only Caddy publishes ports**, 80 and 443. Neither the backend nor PostgreSQL has a
   `ports:` entry, so from outside the server they do not exist. Do not add one: Docker
   writes its own iptables rules and `ufw` would not stop it. That isolation is also
@@ -38,6 +43,12 @@ What is worth knowing without reading all of it:
   header it cannot send.
 - **`/actuator/health`** is the container health check and the only actuator endpoint
   exposed (`show-details: never`).
+- **`deploy/atmos-smoke.sh`** proves the ATMOS sandbox from the server: token → bind a card
+  → a 500 so'm payment → `pay/get` → reverse → unbind, one line per step with ATMOS's own
+  result code. The card, the SMS code and the card token never leave the backend container
+  and are never printed; the money goes to our own store and comes back. It refuses to run
+  against `ATMOS_ENVIRONMENT=production` unless told to in so many words. ATMOS answers only
+  calls from an IP it has allowed, so there is no way to do this from a laptop.
 
 ## Deployment checklist
 
@@ -98,7 +109,11 @@ forwarded headers — and then every admin shares one 20-attempt budget.
   `TELEGRAM_BOT_MODE` stays `webhook` (polling refuses to start outside `dev`).
 - `SPRING_PROFILES_ACTIVE=prod,atmos`. `FakePaymentProvider` refuses to start under
   `prod`, and the `atmos` profile wires `AtmosPaymentProvider`, which refuses to start
-  without every `ATMOS_*` variable. Set `CARD_TOKEN_KEY` (`openssl rand -base64 32`)
+  without `ATMOS_BASE_URL`, `ATMOS_CONSUMER_KEY`, `ATMOS_CONSUMER_SECRET` and
+  `ATMOS_STORE_ID` (`ATMOS_PLATFORM_RECIPIENT_ID` is needed before a team-game fee can be
+  paid out, not to start). **`prod` also requires `ATMOS_ENVIRONMENT=production`** and
+  refuses to start on the sandbox — which answers on the same host, so nothing else can
+  tell them apart. Set `CARD_TOKEN_KEY` (`openssl rand -base64 32`)
   and keep it: losing it makes every saved card unusable. Each stadium owner's signed
   contract and ATMOS recipient id are entered by an admin
   (`PUT /api/admin/users/{id}/legal-details`) — a stadium cannot be approved before

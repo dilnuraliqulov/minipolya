@@ -74,16 +74,53 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   `CARD_NOT_SUPPORTED` "Faqat Uzcard va Humo kartalari qabul qilinadi", `CARD_EXPIRY_INVALID`,
   `CARD_EXPIRED`, `SMS_CODE_WRONG`, `SMS_CODE_EXPIRED`, `SMS_RESEND_TOO_EARLY`,
   `SMS_RESEND_UNAVAILABLE`, `BINDING_NOT_FOUND`, `CARD_BINDING_FAILED`; unreachable → 502.
-- **`AtmosPaymentProvider`** is active only under the `atmos` profile and refuses to
-  start unless `ATMOS_BASE_URL`, `ATMOS_CONSUMER_KEY`, `ATMOS_CONSUMER_SECRET`,
-  `ATMOS_STORE_ID` and `ATMOS_PLATFORM_RECIPIENT_ID` are set. Token from `POST /token`
+- **`AtmosPaymentProvider`** is active only under the `atmos` profile — `staging,atmos` on
+  the test server (the sandbox), `prod,atmos` in production — and refuses to start unless
+  `ATMOS_BASE_URL`, `ATMOS_CONSUMER_KEY`, `ATMOS_CONSUMER_SECRET` and `ATMOS_STORE_ID` are
+  set. `ATMOS_PLATFORM_RECIPIENT_ID` does not stop the start-up (a sandbox is given it
+  last); without it only a platform split is refused, with `RECIPIENT_MISSING`, and it is
+  logged as missing at startup. Every `ATMOS_*` value is trimmed as it is bound.
+  ATMOS answers only calls from an IP it has allowed, so the credentials work on the
+  deployed server and nowhere else. Token from `POST /token`
   (Basic auth, `client_credentials`), cached until `expires_in` − 5 min; a 401 refreshes
   it once. `ofd_items` are sent only when `ATMOS_OFD_CODE_RENTAL` and
   `ATMOS_OFD_CODE_SERVICE` are both set; `ofd_url` is saved on the payment. It never
   logs a request or response body — only operation names, ids and result codes.
-- **`FakePaymentProvider`** is the default in dev and tests (`app.payments.provider=fake`).
-  It is never created under `atmos` and the application refuses to start with it under
-  `prod` (`FakeProviderGuardTest`). It answers like ATMOS, with ATMOS's codes, behind the
+- **Who a split is paid to.** The owner's split carries the recipient id an admin entered on
+  the owner's legal details (`owner_legal_details.atmos_recipient_id`, required once the
+  contract is `signed`), and the platform's split carries none — the provider fills in
+  `ATMOS_PLATFORM_RECIPIENT_ID`. Which **field** names it on the wire is
+  `ATMOS_RECIPIENT_FIELD`: `store_id` (the default, as the request examples show) or
+  `terminal_id`, in which case `store_id` stays our own merchant store. It is a setting
+  because the ATMOS docs contradict themselves, so a wrong payout is a restart, not a release.
+- **A recipient we do not know yet.** Under `staging` only, a payment or hold whose recipient
+  has no ATMOS id is collapsed into **one payment of the same total to `ATMOS_STORE_ID`**,
+  with a warning naming it — that is how the test server walks a real sandbox payment end to
+  end before any owner's contract is signed. Nobody is paid out by it. Under `prod` it is
+  refused (`RECIPIENT_MISSING`) and no combination of profiles turns the fallback on there:
+  money that cannot reach the person it is owed to must not be taken.
+- **One recipient is a single payment, several are a multi-transaction.** The ATMOS docs
+  describe the two as separate flows, and an ordinary booking pays one recipient (the owner;
+  the platform takes nothing from a booking), so it goes through `merchant/pay/create` →
+  `pre-apply` → `apply`, and only a team game's two or more splits use `merchant/bulk/...`.
+  `confirmCharge` follows the same rule from the number of transaction ids, so a restart
+  between creating and confirming changes nothing. The apply answer is read whichever shape
+  it has: `store_transaction` is an object in a single payment and an array in a bulk one,
+  and the receipt URL is top-level in the first and per transaction in the second.
+- **`pay/get` believes the transaction, not the code.** The docs' own example answers
+  `STPIMS-ERR-092` ("transaction closed") while carrying a confirmed transaction with its
+  `success_trans_id`: taking the code at face value would report a payment that went through
+  as given back, and `PaymentReconcileJob` would eventually fail a booking the player had
+  paid for. "Closed" is read as a give-back only when the answer carries no transaction.
+- **What we cannot read, we never call a failure.** A timeout is a `ProviderTimeoutException`
+  (the payment stays `processing`), and so is an answer that is not JSON — a gateway error
+  page says nothing about whether the money moved. That includes the one retry after a 401:
+  it is made outside the `catch` block, because an exception thrown inside a `catch` is not
+  caught by its own `try` and used to escape as a transport error.
+- **`FakePaymentProvider`** is the default in dev and tests (`app.payments.provider=fake`),
+  and on the staging server. It is never created under `atmos` — including `staging,atmos`,
+  so the two are never wired in together — and the application refuses to start with it
+  under `prod` (`FakeProviderGuardTest`). It answers like ATMOS, with ATMOS's codes, behind the
   same interface — switching to `AtmosPaymentProvider` changes nothing above it. Its state
   (bindings, cards with balances, charges and holds with their splits, reverses) is in the
   `fake_payment_*` tables (changeset 044, `JdbcFakeProviderStore`, plain JDBC — no
@@ -96,6 +133,17 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   `otp-ttl-seconds` (180), `resend-cooldown-seconds` (60), `starting-balance` (10 000 000
   so'm), `min-amount` (500 so'm), `refund-window-months` (3), `delay-min-ms` /
   `delay-max-ms` (300 / 800; `@DatabaseTest` sets 0).
+- **Is the provider there?** `PaymentProvider.check()` answers a `ProviderCheck`
+  (`provider`, `ok`, `host`, `environment`, `errorCode`) and never throws. `AtmosPaymentProvider` asks for a
+  **fresh** access token — the smallest call that proves the network, the base URL, the
+  consumer key and the secret — and turns a refusal into its code (`HTTP_401`, `TOKEN`,
+  `TIMEOUT`, `UNREACHABLE`); `FakePaymentProvider` is always ok with no host and no
+  environment, because there is nothing to reach and it is neither. `environment` is
+  `ATMOS_ENVIRONMENT` (`sandbox` / `production`) — the sandbox answers on the same host as
+  production, so it is configured, not derived (see "Environment variables and profiles"). It carries the base URL's **host**, never the URL, the token or a
+  credential. `ProviderCheckService` behind `GET /api/admin/payments/provider-check` is what
+  the admin panel's Sozlamalar page shows (see "Admin panel API"). Nothing is charged or
+  stored and nothing is audited, but every call is a real round trip — don't poll it.
 - `GET /api/dev/fake-payments?limit=` (dev profile + `X-Dev-Login-Key`, no JWT; 404
   otherwise): the latest fake cards (masked, balance, scenario), charges and holds (status,
   splits, commission, what each recipient receives) and reverses. No token anywhere.

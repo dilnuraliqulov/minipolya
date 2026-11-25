@@ -33,6 +33,21 @@ class StagingProfileTest {
         });
     }
 
+    /**
+     * {@code staging,atmos} is the same test server with the real ATMOS sandbox behind it
+     * instead of the fake provider: a staging server in every other way, so everything
+     * {@code application-staging.yaml} sets still applies. {@code dev} is the combination
+     * that may never exist (DevProfileGuardTest).
+     */
+    @Test
+    void stagingWithAtmosIsStillAStagingServer() {
+        runner.withPropertyValues("spring.profiles.active=staging,atmos").run(context -> {
+            assertThat(context.getEnvironment().getActiveProfiles()).containsExactly("staging", "atmos");
+            assertThat(context.getEnvironment().getProperty("server.forward-headers-strategy"))
+                    .isEqualTo("native");
+        });
+    }
+
     @Test
     void otherProfilesDoNotTrustForwardedHeaders() {
         // Only a server behind a known proxy may believe X-Forwarded-For.

@@ -784,6 +784,7 @@ nano .env
 
 | Variable | What to put | Where it comes from |
 |---|---|---|
+| `SPRING_PROFILES_ACTIVE` | leave it empty | empty means `staging`, which is what this server normally runs. §6.4 if you are pointing it at the real ATMOS sandbox. Never put `dev` in it. |
 | `SITE_HOST` | `3-120-45-67.sslip.io` | your Elastic IP with dashes, §2.9. **No `https://`, no trailing slash.** |
 | `ACME_EMAIL` | your email | optional; Let's Encrypt expiry warnings |
 | `POSTGRES_DB` | `minipolya` | leave it |
@@ -798,6 +799,7 @@ nano .env
 | `VITE_TELEGRAM_BOT_USERNAME` | `minipolya_test_bot` | same bot, public name |
 | `VITE_TELEGRAM_APP_NAME` | `minipolya` | the Mini App short name, §9.2 |
 | `VITE_TELEGRAM_SUPPORT_USERNAME` | your username or empty | no `@` |
+| `ATMOS_*` (seven) | leave them empty | nothing reads them under `staging`. §6.4 |
 
 If you do not have the bot token yet, do §9.1 now and come back — the backend will not start
 without `BOT_TOKEN`.
@@ -821,6 +823,106 @@ And confirm the values look right without printing the secrets:
 ```bash
 grep -E '^(SITE_HOST|POSTGRES_DB|POSTGRES_USER|BOT_USERNAME|VITE_)' .env
 ```
+
+### 6.4 Optional: the real ATMOS sandbox instead of fake payments
+
+Skip this until ATMOS has given you sandbox credentials **and** allowed this server's
+Elastic IP. ATMOS answers only calls from an address it knows, which is why payments are
+developed against the fake provider and tried for real only here.
+
+In `.env`:
+
+```
+SPRING_PROFILES_ACTIVE=staging,atmos
+ATMOS_BASE_URL=...
+ATMOS_ENVIRONMENT=                  # empty means sandbox, which is what this server wants
+ATMOS_CONSUMER_KEY=...
+ATMOS_CONSUMER_SECRET=...
+ATMOS_STORE_ID=...
+ATMOS_PLATFORM_RECIPIENT_ID=...     # only needed before a team-game fee is paid out
+ATMOS_RECIPIENT_FIELD=              # empty means store_id
+```
+
+The sandbox answers on the same host as production, so `ATMOS_ENVIRONMENT` is the only thing
+that says which side these credentials are for. It is what the admin panel shows in
+Sozlamalar (`Toʻlov tizimi: ATMOS (sandbox)`), and leaving it empty means sandbox.
+
+Then `docker compose up -d backend`. The first four are required: with any of them missing
+the backend stops at startup and names them (see "The backend will not start" below). The log then
+says `AtmosPaymentProvider is active: storeId=…` instead of the fake provider's warning, and
+`FakePaymentProvider` is not created at all — the two can never run side by side. Use the
+**sandbox's** credentials and its test cards, never production's.
+
+Until an admin has entered a stadium owner's ATMOS recipient id (and until the sandbox has
+given you a platform one), a card payment has nowhere to be paid out to. On this server it is
+then paid to `ATMOS_STORE_ID` as one payment, with a warning in the log, so the flow can be
+tried end to end; nobody is paid out by that, and a production server refuses the payment
+instead. If the sandbox pays the wrong account, try `ATMOS_RECIPIENT_FIELD=terminal_id`.
+
+To go back to fake payments, empty `SPRING_PROFILES_ACTIVE` again and restart the backend.
+The `ATMOS_*` values can stay in `.env`; nothing reads them under plain `staging`.
+
+### 6.5 Proving it: one real transaction, end to end
+
+`deploy/atmos-smoke.sh` does by hand what no test can do from a laptop — ATMOS answers only
+calls from an IP address it has allowed, and this server is it:
+
+```bash
+cd ~/minipolya/minipolyaBackend/deploy
+./atmos-smoke.sh
+```
+
+It asks for a test card and its expiry (**not echoed**), ATMOS texts you an SMS code, you
+type that (**not echoed**), and it walks the whole flow, printing one line per step with
+ATMOS's own result code:
+
+```
+ATMOS smoke test
+  environment : sandbox
+  profiles    : staging,atmos
+  amount      : 50000 tiyin (500 so'm), reversed at the end
+
+  The card is read without echo and goes straight into the container. Nothing is stored.
+  Card number :
+  Expiry MM/YY:
+
+  token                  -                  OK   valid 2525 s
+  bind-card/init         OK                 OK   SMS sent to ********9999
+
+  SMS code    :
+
+  token                  -                  OK   valid 2525 s
+  bind-card/confirm      OK                 OK   card bound
+  pay/create             OK                 OK   50000 tiyin, transaction 111111
+  pay/pre-apply          OK                 OK
+  pay/apply              OK                 OK   confirmed=true, success_trans_id 2730590
+  pay/get                OK                 OK   confirmed=true, amount 50000 tiyin
+  pay/reverse            OK                 OK   50000 tiyin back
+  remove-card            OK                 OK
+
+ALL STEPS OK. The payment was taken and given back in full.
+```
+
+Worth knowing before you run it:
+
+- **The curl calls run inside the backend container**, which is where the ATMOS credentials
+  already are. The host never sees them, and you need no access to `.env` to run this.
+- **Nothing secret is printed or stored**: not the card number, the expiry, the SMS code,
+  the card token, the access token or any response body. The card and the code go in on
+  standard input, so they are not in `ps` or in your shell history either. The card token
+  never leaves the container — every step that needs it happens in one call inside it.
+- **It takes real money and gives it back.** 500 so'm by default, to `ATMOS_STORE_ID` (our
+  own store, never a stadium owner), reversed at the last step. Change it with
+  `ATMOS_SMOKE_AMOUNT=100000 ./atmos-smoke.sh` (tiyin).
+- **It refuses to run on production** (`ATMOS_ENVIRONMENT=production`) unless you say
+  `ATMOS_SMOKE_ALLOW_PRODUCTION=yes`, because there the card is somebody's real card.
+- **A failed step stops it** and says which one and what ATMOS answered. If `pay/apply` or
+  `pay/reverse` is the one that failed, look the transaction up in the ATMOS cabinet before
+  running it again — money may be sitting on the card.
+- It needs `SPRING_PROFILES_ACTIVE` to include `atmos` (§6.4); on plain `staging` there is no
+  ATMOS client and it says so instead of running.
+- Test card numbers for the sandbox are in the ATMOS docs under "Песочница", not in
+  this repository.
 
 ---
 
@@ -950,7 +1052,7 @@ docker compose exec caddy sh -c 'grep -rl "X-Dev-Login-Key" /srv | wc -l'
 docker compose exec caddy sh -c 'grep -rl "api/auth/dev" /srv | wc -l'
 
 # And the backend must not have the dev profile active.
-docker compose exec backend sh -c 'echo $SPRING_PROFILES_ACTIVE'     # → staging
+docker compose exec backend sh -c 'echo $SPRING_PROFILES_ACTIVE'     # → staging[,atmos]
 docker compose exec backend printenv | grep -c DEV_LOGIN_KEY         # → 0
 ```
 
@@ -1701,7 +1803,8 @@ docker compose logs backend | head -40
 | `CARD_TOKEN_KEY must be base64` | the value was edited or truncated — generate a new one |
 | `WeakKeyException` / signing key size | `JWT_SECRET` is present but shorter than 32 bytes |
 | `MINIAPP_URL must be an https URL` | `SITE_HOST` is empty, or has `https://` or a trailing slash in it |
-| `TELEGRAM_BOT_MODE=polling … needs the dev profile or the staging profile` | `SPRING_PROFILES_ACTIVE` was overridden; it should be `staging` and nothing else |
+| `TELEGRAM_BOT_MODE=polling … needs the dev profile or the staging profile` | `SPRING_PROFILES_ACTIVE` was overridden; on this server it is `staging`, or `staging,atmos` (§6.4), and nothing else |
+| `The atmos profile is on but these environment variables are not set: …` | `staging,atmos` without the four ATMOS credentials — §6.4 |
 | `The staging profile must not be active together with dev` | likewise — `dev` must never be active on this server |
 | `Connection to postgres:5432 refused` | postgres is not healthy yet, or `POSTGRES_*` disagree between the two services. `docker compose logs postgres` |
 | `liquibase … checksum` | a changeset that already ran was edited. Never edit an applied changeset; add a new one. |

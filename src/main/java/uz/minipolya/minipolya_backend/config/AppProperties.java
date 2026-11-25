@@ -175,14 +175,26 @@ public class AppProperties {
 
     /**
      * The ATMOS client, read from the environment (see .env.example). Only used under the
-     * {@code atmos} profile, where AtmosPaymentProvider refuses to start unless every
-     * required value is set.
+     * {@code atmos} profile, which the application refuses to start under unless
+     * {@code ATMOS_BASE_URL}, {@code ATMOS_CONSUMER_KEY}, {@code ATMOS_CONSUMER_SECRET} and
+     * {@code ATMOS_STORE_ID} are set (RequiredEnvironmentPostProcessor, then
+     * AtmosPaymentProvider.requireConfiguration).
+     *
+     * <p>Every value here is trimmed as it is bound: see {@link #trimmed(String)}.
      */
     @Getter
     @Setter
     public static class Atmos {
         /** ATMOS_BASE_URL, e.g. https://apigw.atmos.uz */
         private String baseUrl;
+        /**
+         * ATMOS_ENVIRONMENT: {@code sandbox} or {@code production} — which side of ATMOS these
+         * credentials belong to. The host does not tell us (the sandbox answers on the same
+         * one), so it is said here, and the admin panel shows it beside the provider. Empty
+         * means {@code sandbox}; the {@code prod} profile refuses to start unless it is
+         * {@code production} (AtmosEnvironmentGuard).
+         */
+        private String environment;
         /** ATMOS_CONSUMER_KEY */
         private String consumerKey;
         /** ATMOS_CONSUMER_SECRET */
@@ -191,12 +203,66 @@ public class AppProperties {
         private String storeId;
         /** ATMOS_PLATFORM_RECIPIENT_ID: where the platform's split of every payment goes. */
         private String platformRecipientId;
+        /**
+         * ATMOS_RECIPIENT_FIELD: {@code store_id} (the default) or {@code terminal_id} — which
+         * field of a split names the account the money lands in. A setting because the ATMOS
+         * docs do not agree with themselves; see
+         * {@link uz.minipolya.minipolya_backend.provider.atmos.AtmosRecipientField}.
+         */
+        private String recipientField;
         /** ATMOS_OFD_CODE_RENTAL (optional): IKPU code for the pitch-rental receipt line. */
         private String ofdCodeRental;
         /** ATMOS_OFD_CODE_SERVICE (optional): IKPU code for the platform-service receipt line. */
         private String ofdCodeService;
         /** How long to wait for ATMOS before treating a call as timed out. */
         private int timeoutSeconds = 30;
+
+        /**
+         * Every {@code ATMOS_*} value is trimmed as it is bound. A trailing space pasted into
+         * the server's {@code .env} would otherwise travel into the Basic auth header, a URL
+         * or a store id and come back as an unexplained 401 or "store not found"; and a value
+         * that is nothing but whitespace becomes empty, so the startup checks (which test with
+         * {@code isBlank}) treat it as the missing value it is.
+         */
+        private static String trimmed(String value) {
+            return value == null ? null : value.trim();
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = trimmed(baseUrl);
+        }
+
+        public void setEnvironment(String environment) {
+            this.environment = trimmed(environment);
+        }
+
+        public void setRecipientField(String recipientField) {
+            this.recipientField = trimmed(recipientField);
+        }
+
+        public void setConsumerKey(String consumerKey) {
+            this.consumerKey = trimmed(consumerKey);
+        }
+
+        public void setConsumerSecret(String consumerSecret) {
+            this.consumerSecret = trimmed(consumerSecret);
+        }
+
+        public void setStoreId(String storeId) {
+            this.storeId = trimmed(storeId);
+        }
+
+        public void setPlatformRecipientId(String platformRecipientId) {
+            this.platformRecipientId = trimmed(platformRecipientId);
+        }
+
+        public void setOfdCodeRental(String ofdCodeRental) {
+            this.ofdCodeRental = trimmed(ofdCodeRental);
+        }
+
+        public void setOfdCodeService(String ofdCodeService) {
+            this.ofdCodeService = trimmed(ofdCodeService);
+        }
 
         /** Never render the credentials. */
         @Override

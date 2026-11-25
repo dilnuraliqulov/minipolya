@@ -17,14 +17,24 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** A deployed server says what is missing, at startup, all of it at once. */
 class RequiredEnvironmentPostProcessorTest {
 
-    private static final Map<String, String> COMPLETE = Map.of(
-            "DB_URL", "jdbc:postgresql://db.internal:5432/railway",
-            "DB_USERNAME", "postgres",
-            "DB_PASSWORD", "s3cret",
-            "JWT_SECRET", "a-jwt-secret-of-at-least-32-bytes-012345",
-            "BOT_TOKEN", "123:abc",
-            "CARD_TOKEN_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-            "UPLOADS_DIR", "/data/uploads");
+    /** Everything any deployed profile asks for, so a test removes only what it is about. */
+    private static final Map<String, String> COMPLETE = Map.ofEntries(
+            Map.entry("DB_URL", "jdbc:postgresql://db.internal:5432/railway"),
+            Map.entry("DB_USERNAME", "postgres"),
+            Map.entry("DB_PASSWORD", "s3cret"),
+            Map.entry("JWT_SECRET", "a-jwt-secret-of-at-least-32-bytes-012345"),
+            Map.entry("BOT_TOKEN", "123:abc"),
+            Map.entry("CARD_TOKEN_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+            Map.entry("UPLOADS_DIR", "/data/uploads"),
+            Map.entry("ATMOS_BASE_URL", "https://apigw.atmos.uz"),
+            Map.entry("ATMOS_CONSUMER_KEY", "a-consumer-key"),
+            Map.entry("ATMOS_CONSUMER_SECRET", "a-consumer-secret"),
+            Map.entry("ATMOS_STORE_ID", "777"),
+            Map.entry("ATMOS_ENVIRONMENT", "production"));
+
+    /** The four the atmos profile adds; the fifth variable, the recipient id, is not one. */
+    private static final String[] ATMOS_SETTINGS =
+            {"ATMOS_BASE_URL", "ATMOS_CONSUMER_KEY", "ATMOS_CONSUMER_SECRET", "ATMOS_STORE_ID"};
 
     private static void check(Map<String, String> environment, String... profiles) {
         RequiredEnvironmentPostProcessor.check(profiles, environment::get);
@@ -72,6 +82,62 @@ class RequiredEnvironmentPostProcessorTest {
         assertThatThrownBy(() -> check(blank, "staging")).hasMessageContaining("JWT_SECRET");
     }
 
+    /** The real sandbox on the test server: both profiles' requirements, one working server. */
+    @Test
+    void aCompleteStagingAtmosEnvironmentStarts() {
+        assertThatCode(() -> check(COMPLETE, "staging", "atmos")).doesNotThrowAnyException();
+    }
+
+    @Test
+    void theAtmosCredentialsAreRequiredWhereverAtmosIsActive() {
+        for (String[] profiles : new String[][] {{"atmos"}, {"staging", "atmos"}, {"prod", "atmos"}}) {
+            assertThatThrownBy(() -> check(without(ATMOS_SETTINGS), profiles))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("needs 4 settings that are not set")
+                    .hasMessageContaining("ATMOS_BASE_URL")
+                    .hasMessageContaining("ATMOS_CONSUMER_KEY")
+                    .hasMessageContaining("ATMOS_CONSUMER_SECRET")
+                    .hasMessageContaining("ATMOS_STORE_ID")
+                    // Each line says what the value is and where it comes from.
+                    .hasMessageContaining("https://apigw.atmos.uz")
+                    .hasMessageContaining("ATMOS cabinet");
+        }
+    }
+
+    /** Without the atmos profile nothing reads them, so nothing asks for them. */
+    @Test
+    void theAtmosCredentialsAreNotAskedForWithoutTheAtmosProfile() {
+        assertThatCode(() -> check(without(ATMOS_SETTINGS), "staging")).doesNotThrowAnyException();
+        assertThatCode(() -> check(without(ATMOS_SETTINGS), "prod")).doesNotThrowAnyException();
+    }
+
+    /**
+     * The recipient id is the one ATMOS value a sandbox is given last. Missing, it fails only
+     * the platform's own split of a team-game fee (AtmosPaymentProvider), never the start-up.
+     */
+    @Test
+    void thePlatformRecipientIdNeverStopsTheStartup() {
+        assertThatCode(() -> check(COMPLETE, "staging", "atmos")).doesNotThrowAnyException();
+        assertThat(RequiredEnvironmentPostProcessor.EXTRA_PER_PROFILE.get("atmos"))
+                .extracting(RequiredEnvironmentPostProcessor.Setting::name)
+                .doesNotContain("ATMOS_PLATFORM_RECIPIENT_ID");
+    }
+
+    /**
+     * Only production is asked which side of ATMOS it is on. Everywhere else an unset value
+     * means the sandbox, and AtmosEnvironmentGuard is what refuses prod on anything else.
+     */
+    @Test
+    void theAtmosEnvironmentIsRequiredOnProdOnly() {
+        assertThatThrownBy(() -> check(without("ATMOS_ENVIRONMENT"), "prod"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("ATMOS_ENVIRONMENT")
+                .hasMessageContaining("nobody's money");
+        assertThatCode(() -> check(without("ATMOS_ENVIRONMENT"), "staging")).doesNotThrowAnyException();
+        assertThatCode(() -> check(without("ATMOS_ENVIRONMENT"), "staging", "atmos"))
+                .doesNotThrowAnyException();
+    }
+
     @Test
     void uploadsDirIsRequiredOnStagingOnly() {
         // Staging is new, so requiring it there changes nothing that worked before; prod and
@@ -90,9 +156,13 @@ class RequiredEnvironmentPostProcessorTest {
 
     @Test
     void severalProfilesAreAllNamedAndTheirRequirementsAddUp() {
-        assertThatThrownBy(() -> check(without("CARD_TOKEN_KEY", "UPLOADS_DIR"), "atmos", "staging"))
-                .hasMessageContaining("The atmos,staging profile needs 2 settings")
-                .hasMessageContaining("UPLOADS_DIR");
+        assertThatThrownBy(() -> check(without("CARD_TOKEN_KEY", "UPLOADS_DIR", "ATMOS_STORE_ID"),
+                "atmos", "staging"))
+                .hasMessageContaining("The atmos,staging profile needs 3 settings")
+                .hasMessageContaining("CARD_TOKEN_KEY")
+                // staging's own extra and atmos's own extra, in the one message.
+                .hasMessageContaining("UPLOADS_DIR")
+                .hasMessageContaining("ATMOS_STORE_ID");
     }
 
     @Test

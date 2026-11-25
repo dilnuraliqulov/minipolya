@@ -65,6 +65,21 @@ class FakeProviderGuardTest {
                 });
     }
 
+    /**
+     * The test server pointed at the real ATMOS sandbox: {@code staging,atmos} is allowed,
+     * and the leftover {@code app.payments.provider=fake} does not bring the fake provider
+     * along beside the real one — the atmos profile alone decides.
+     */
+    @Test
+    void underStagingWithAtmosItIsNotCreatedEither() {
+        withProfiles("staging", "atmos").withPropertyValues("app.payments.provider=fake")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(FakePaymentProvider.class);
+                    assertThat(context).doesNotHaveBean(FakePaymentsView.class);
+                });
+    }
+
     @Test
     void anyOtherProviderValueLeavesItOut() {
         withProfiles("dev").withPropertyValues("app.payments.provider=atmos")

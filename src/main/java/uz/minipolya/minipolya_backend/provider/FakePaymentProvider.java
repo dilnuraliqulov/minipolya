@@ -144,6 +144,16 @@ public class FakePaymentProvider implements PaymentProvider {
         log.warn("FakePaymentProvider is active (app.payments.provider=fake): no real money will move");
     }
 
+    /**
+     * Always ok, with no host and no environment: there is nothing to reach, and it is
+     * neither a sandbox nor production. It is the admin panel's way of saying "no real
+     * provider is wired in here", not a claim that one answered.
+     */
+    @Override
+    public ProviderCheck check() {
+        return ProviderCheck.ok(ProviderCheck.FAKE, null, null);
+    }
+
     // ---- Cards ----
 
     @Override

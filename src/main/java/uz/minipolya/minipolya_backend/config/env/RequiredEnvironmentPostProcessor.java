@@ -28,6 +28,10 @@ import java.util.function.UnaryOperator;
  * changes: those read their values from {@code .env} or set them as test properties, and a
  * check here would just get in the way.
  *
+ * <p>Several may be active at once — {@code staging,atmos} is the test server talking to the
+ * real ATMOS sandbox, {@code prod,atmos} is production — and then their requirements add up
+ * and one message names every missing setting of all of them.
+ *
  * <p>It runs after {@link HostDatabaseEnvironmentPostProcessor}, so a {@code DB_URL} derived
  * from {@code DATABASE_URL} or the {@code PG*} variables counts as set.
  */
@@ -61,7 +65,32 @@ public class RequiredEnvironmentPostProcessor implements EnvironmentPostProcesso
             "staging", List.of(
                     new Setting("UPLOADS_DIR", "an absolute path on a mounted volume, e.g. /data/uploads. "
                             + "The default ./uploads lives inside the container, so every redeploy would take "
-                            + "the stadium photos with it while their rows stayed in the database.")));
+                            + "the stadium photos with it while their rows stayed in the database.")),
+            // The four the real ATMOS client cannot make a single call without. They are
+            // checked here, before any bean exists, as well as in
+            // AtmosPaymentProvider.requireConfiguration, which sees the bound app.atmos.*
+            // values. ATMOS_PLATFORM_RECIPIENT_ID is deliberately NOT here: a sandbox is
+            // given one later than the rest, and without it only the platform's own split
+            // of a team game fails (AtmosPaymentProvider.recipientOf), nothing else.
+            // Production must say which side of ATMOS it is on; AtmosEnvironmentGuard then
+            // refuses to start it on anything but "production". Not asked for anywhere else:
+            // an unset value means the sandbox, which is the safe end of that mistake.
+            "prod", List.of(
+                    new Setting("ATMOS_ENVIRONMENT", "exactly \"production\" on a production server. "
+                            + "The ATMOS sandbox answers on the same host with credentials that look the "
+                            + "same, so nothing else can tell them apart: left unset this server would "
+                            + "quietly take nobody's money.")),
+            "atmos", List.of(
+                    new Setting("ATMOS_BASE_URL", "the ATMOS API root, e.g. https://apigw.atmos.uz — no "
+                            + "trailing slash. ATMOS answers only calls from an IP it has allowed, so this "
+                            + "works from the deployed server and not from a laptop."),
+                    new Setting("ATMOS_CONSUMER_KEY", "the consumer key of the ATMOS application, from the "
+                            + "ATMOS cabinet. With the secret it buys the access token (Basic auth, "
+                            + "client_credentials)."),
+                    new Setting("ATMOS_CONSUMER_SECRET", "that application's consumer secret. Never commit it, "
+                            + "never log it, and use the sandbox's own pair on a test server."),
+                    new Setting("ATMOS_STORE_ID", "the merchant store id payments are created, pre-applied, "
+                            + "applied and looked up under.")));
 
     @Override
     public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {

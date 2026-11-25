@@ -26,6 +26,16 @@ import java.util.List;
  */
 public interface PaymentProvider {
 
+    /**
+     * Can we reach the provider right now, with the credentials we have? The real client
+     * asks for a fresh access token; the fake one has nothing to reach. It never throws:
+     * a refusal, a timeout or an unreachable host is a {@link ProviderCheck} that is not
+     * {@code ok}, carrying the provider's code — and never a token or a credential.
+     *
+     * <p>Read-only and safe to call at any time: no money moves and nothing is stored.
+     */
+    ProviderCheck check();
+
     /** Starts binding a card. The number and expiry are passed through, never kept. */
     CardBindingStart bindCardInit(String cardNumber, String expiry);
 
