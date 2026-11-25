@@ -80,6 +80,13 @@ number is not logged either; their name is part of the booking label.
 | Player | `BOOKING_CREATED`, `BOOKING_CANCELLED_BY_USER`, `BOOKING_REMAINDER_PAID`, `BOOKING_PAYMENT_RETRIED`, `BOOKING_SERIES_CREATED` / `_CANCELLED`, `GAME_CREATED`, `GAME_JOINED`, `GAME_LEFT`, `GAME_CANCELLED`, `GAME_OPPONENT_LEFT`, `GAME_REMAINDER_PAID`, `TEAM_LEVEL_CHANGED` (the leader changed how seriously the team plays; entity type `team`, label its name, `level` old → new — and nothing at all when the level is unchanged), `PROFILE_UPDATED` (also a language picked in the bot), `PHONE_SHARED_VIA_BOT` (`phoneChanged`, never the number) |
 | System | `BOOKING_CONFIRMED` (a payment confirmed it), `BOOKING_EXPIRED`, `BOOKING_COMPLETED`, `BOOKING_CANCELLED_BY_OWNER` (by a stadium block), `GAME_CONFIRMED`, `GAME_AUTO_CANCELLED`, `PAYMENT_COMPLETED`, `PAYMENT_RELEASED`, `REFUND_CREATED`, `REFUND_FAILED` (ATMOS declined; the reason is its error), `PROMOTION_EXPIRED` |
 
+`BOOKING_CREATED` records both prices: `price` is the **owner's** price for the hour and
+`cardPrice` is what the player's card is actually charged (`PriceCalculator.playerAmount`
+of it, and what the booking's own `card_price` column holds). An admin reading the entry
+needs the charged figure; `price` alone was read as the amount paid, which on a card
+booking it never was. `MANUAL_BOOKING_CREATED` has only `price`: a walk-in is cash, and
+cash carries no card fee.
+
 Codes are **stable**: they are stored and filtered on, so never rename one — add a
 new constant. Legacy rows may carry older codes (e.g. `PLATFORM_SETTINGS_UPDATED`,
 `GAME_CANCELLED` written by the system); the action filter still accepts them.

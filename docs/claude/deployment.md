@@ -49,6 +49,11 @@ What is worth knowing without reading all of it:
   and are never printed; the money goes to our own store and comes back. It refuses to run
   against `ATMOS_ENVIRONMENT=production` unless told to in so many words. ATMOS answers only
   calls from an IP it has allowed, so there is no way to do this from a laptop.
+  `./atmos-smoke.sh --bisect` binds the card once and then takes the payment again per
+  difference between this script's request and the app's (the store `pay/create` names, a
+  UUID `account`, `ofd_items`), reversing each: the first failing variant names why
+  `pay/apply` answers `STPIMS-ERR-041` in the app. See "A confirmation ATMOS could not
+  answer" in [payments.md](payments.md).
 
 ## Deployment checklist
 

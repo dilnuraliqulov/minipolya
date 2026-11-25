@@ -92,6 +92,15 @@ app:
     provider: ${PAYMENTS_PROVIDER:fake}
     # The longest a team game's hold may last (30 days); a game needing longer cannot be created.
     hold-max-minutes: 43200
+    # A payment left `processing` — the apply answered "connection problem" (STPIMS-ERR-041)
+    # or did not answer — is asked about straight away, so the player sees the outcome in
+    # seconds instead of waiting for PaymentReconcileJob. attempts: 0 turns it off.
+    # budget is the hard limit on how long one request may be held up, whatever the
+    # attempts would add up to: one ATMOS call alone may take app.atmos.timeout-seconds.
+    settle-now:
+      attempts: 6
+      delay: 3s
+      budget: 20s
     # FakePaymentProvider only (dev and tests): see "To simulate X in dev" in CLAUDE.md.
     fake:
       otp-length: 6

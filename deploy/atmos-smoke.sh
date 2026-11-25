@@ -41,6 +41,45 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# ---------------------------------------------------------------------------------------
+# --bisect: WHY pay/apply answers STPIMS-ERR-041 in the app but OK here.
+#
+# The app's apply request is this script's apply request, field for field: the same single
+# /merchant/pay/apply (an ordinary booking pays one recipient — the owner — so it never
+# takes the bulk path), the same transaction_id as a number, the same otp "111111", sent
+# straight after pre-apply. What differs is what pay/CREATE named three calls earlier:
+#
+#   * store_id    — the app names the OWNER's ATMOS recipient there (ATMOS_RECIPIENT_FIELD=
+#                   store_id, the default) while this script names our own ATMOS_STORE_ID.
+#                   With ATMOS_RECIPIENT_FIELD=terminal_id the app names ours, like here.
+#   * account     — the app sends the payment's UUID (36 characters); this script sends
+#                   "smoke-<epoch>". The ATMOS parameter table says account "takes a numeric
+#                   value" while every example in the docs is text.
+#   * ofd_items   — the app sends fiscal lines when ATMOS_OFD_CODE_RENTAL and
+#                   ATMOS_OFD_CODE_SERVICE are both set; this script never does.
+#
+# --bisect binds the card ONCE and then takes the payment several times over, adding one of
+# those differences each time and reversing every one in full. The first variant whose
+# pay/apply fails names the cause, and the backend log line "ATMOS single payment:" says
+# which shape that server actually sends.
+#
+#     ./atmos-smoke.sh --bisect
+#     ATMOS_SMOKE_RECIPIENT_ID=<an owner's atmos_recipient_id> ./atmos-smoke.sh --bisect
+#
+# The recipient variant is skipped unless ATMOS_SMOKE_RECIPIENT_ID is set (take it from
+# owner_legal_details.atmos_recipient_id — the one the failing booking's owner has), and the
+# receipts variant unless both OFD codes are configured in the backend.
+# ---------------------------------------------------------------------------------------
+
+bisect=no
+for arg in "$@"; do
+  case "$arg" in
+    --bisect) bisect=yes ;;
+    -h|--help) sed -n '2,38p;45,75p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) printf 'Unknown option: %s (try --bisect or --help)\n' "$arg" >&2; exit 2 ;;
+  esac
+done
+
 say() { printf '%s\n' "$*"; }
 die() { printf '\n%s\n' "$*" >&2; exit 1; }
 
@@ -69,10 +108,18 @@ fi
 amount=${ATMOS_SMOKE_AMOUNT:-50000}
 case "$amount" in ''|*[!0-9]*) die "ATMOS_SMOKE_AMOUNT must be a whole number of tiyin." ;; esac
 
-say "ATMOS smoke test"
+# What the backend itself would send, printed so the run can be read against the app's.
+recipient_field=$(docker compose exec -T backend printenv ATMOS_RECIPIENT_FIELD 2>/dev/null | tr -d '\r' || true)
+recipient_field=${recipient_field:-store_id}
+
+say "ATMOS smoke test${bisect:+}"
 say "  environment : $environment"
 say "  profiles    : $profiles"
 say "  amount      : $amount tiyin ($((amount / 100)) so'm), reversed at the end"
+say "  app sends   : ATMOS_RECIPIENT_FIELD=$recipient_field"
+if [ "$bisect" = yes ]; then
+  say "  mode        : --bisect, one payment per difference from the app's request"
+fi
 say ""
 
 # ---------------------------------------------------------------------------------------
@@ -157,11 +204,14 @@ PAY=$(cat <<'EOS'
 read -r binding
 read -r otp
 read -r amount
-account="smoke-$(date +%s)"
+read -r mode
+read -r recipient_id
 
-# The examples send it as a number; quote it if this one is not.
-store=$ATMOS_STORE_ID
-case "$store" in '' | *[!0-9]*) store="\"$ATMOS_STORE_ID\"" ;; esac
+# The examples send ids as numbers; quote one that is not.
+id_json() {
+  case "$1" in '' | *[!0-9]*) printf '"%s"' "$1" ;; *) printf '%s' "$1" ;; esac
+}
+store=$(id_json "$ATMOS_STORE_ID")
 
 get_token || exit 1
 
@@ -177,53 +227,137 @@ card_token=$(field card_token "$body")
 card_id=$(field card_id "$body")
 step bind-card/confirm "$code" OK "card bound"
 
-# ---- a small payment to our own store ----
-body=$(post /merchant/pay/create "{\"store_id\":$store,\"account\":\"$account\",\"amount\":$amount}") \
-  || { step pay/create - FAILED "no answer"; exit 1; }
-code=$(code_of "$body")
-txn=$(field transaction_id "$body")
-if [ "$code" != "OK" ] || [ -z "$txn" ]; then
-  step pay/create "$code" FAILED "$(description_of "$body")"
-  exit 1
-fi
-step pay/create "$code" OK "$amount tiyin, transaction $txn"
+# ---- one whole payment: create, pre-apply, apply, get, reverse ----
+#
+# pay_once <label> <create-store-json> <terminal-id|''> <account> <ofd yes|no>
+#
+# Everything the app can differ by is an argument, so one run can take the payment several
+# times over with one difference each (--bisect). Whatever happens to the apply it asks
+# pay/get afterwards — an apply that answers "connection problem" for money ATMOS has
+# already taken is the whole reason this exists — and reverses anything that did move, so
+# no variant can leave money behind.
+pay_once() {
+  label=$1
+  create_store=$2
+  terminal=$3
+  account=$4
+  ofd=$5
 
-body=$(post /merchant/pay/pre-apply \
-  "{\"store_id\":$store,\"transaction_id\":$txn,\"card_token\":\"$card_token\"}") \
-  || { step pay/pre-apply - FAILED "no answer"; exit 1; }
-code=$(code_of "$body")
-if [ "$code" != "OK" ]; then
-  step pay/pre-apply "$code" FAILED "$(description_of "$body")"
-  exit 1
-fi
-step pay/pre-apply "$code" OK
+  create="{\"store_id\":$create_store,\"account\":\"$account\",\"amount\":$amount"
+  [ -n "$terminal" ] && create="$create,\"terminal_id\":\"$terminal\""
+  if [ "$ofd" = yes ]; then
+    create="$create,\"ofd_items\":[{\"ofd_code\":\"$ATMOS_OFD_CODE_RENTAL\",\"name\":\"Pitch rental\",\"amount\":$amount}]"
+  fi
+  create="$create}"
 
-# A card token needs no SMS code of its own: the docs' fixed 111111 is what confirms it.
-body=$(post /merchant/pay/apply "{\"store_id\":$store,\"transaction_id\":$txn,\"otp\":\"111111\"}") \
-  || { step pay/apply - FAILED "no answer, the payment may still have gone through"; exit 1; }
-code=$(code_of "$body")
-success=$(field success_trans_id "$body")
-if [ "$code" != "OK" ]; then
-  step pay/apply "$code" FAILED "$(description_of "$body")"
-  exit 1
-fi
-step pay/apply "$code" OK "confirmed=$(field confirmed "$body"), success_trans_id $success"
+  body=$(post /merchant/pay/create "$create") || { step "${label}pay/create" - FAILED "no answer"; return 1; }
+  code=$(code_of "$body")
+  txn=$(field transaction_id "$body")
+  if [ "$code" != "OK" ] || [ -z "$txn" ]; then
+    step "${label}pay/create" "$code" FAILED "$(description_of "$body")"
+    return 1
+  fi
+  step "${label}pay/create" "$code" OK "transaction $txn"
 
-# ---- what ATMOS says about it, the way the reconcile job asks ----
-body=$(post /merchant/pay/get "{\"store_id\":$store,\"transaction_id\":$txn}") \
-  || { step pay/get - FAILED "no answer"; exit 1; }
-code=$(code_of "$body")
-step pay/get "$code" OK "confirmed=$(field confirmed "$body"), amount $(field amount "$body") tiyin"
+  body=$(post /merchant/pay/pre-apply \
+    "{\"store_id\":$store,\"transaction_id\":$txn,\"card_token\":\"$card_token\"}") \
+    || { step "${label}pay/pre-apply" - FAILED "no answer"; return 1; }
+  code=$(code_of "$body")
+  if [ "$code" != "OK" ]; then
+    step "${label}pay/pre-apply" "$code" FAILED "$(description_of "$body")"
+    return 1
+  fi
+  step "${label}pay/pre-apply" "$code" OK
 
-# ---- and back in full. There is no partial reverse anywhere in this application. ----
-body=$(post /merchant/pay/reverse "{\"transaction_id\":$success,\"reason\":\"ATMOS smoke test\"}") \
-  || { step pay/reverse - FAILED "no answer: CHECK THE MONEY BY HAND"; exit 1; }
-code=$(code_of "$body")
-if [ "$code" != "OK" ]; then
-  step pay/reverse "$code" FAILED "$(description_of "$body") - CHECK THE MONEY BY HAND"
-  exit 1
+  # A card token needs no SMS code of its own: the docs' fixed 111111 is what confirms it.
+  body=$(post /merchant/pay/apply "{\"store_id\":$store,\"transaction_id\":$txn,\"otp\":\"111111\"}") \
+    || { step "${label}pay/apply" - FAILED "no answer, the payment may still have gone through"; body=''; }
+  apply_code=$(code_of "$body")
+  success=$(field success_trans_id "$body")
+  if [ "$apply_code" = "OK" ]; then
+    step "${label}pay/apply" "$apply_code" OK "confirmed=$(field confirmed "$body"), success_trans_id $success"
+  else
+    step "${label}pay/apply" "${apply_code:--}" FAILED "$(description_of "$body")"
+  fi
+
+  # ---- what ATMOS says about it, the way the reconcile job asks ----
+  body=$(post /merchant/pay/get "{\"store_id\":$store,\"transaction_id\":$txn}") || body=''
+  confirmed=$(field confirmed "$body")
+  [ -n "$success" ] || success=$(field success_trans_id "$body")
+  step "${label}pay/get" "$(code_of "$body")" OK "confirmed=${confirmed:-?}, amount $(field amount "$body") tiyin"
+
+  # ---- and back in full. There is no partial reverse anywhere in this application. ----
+  if [ -z "$success" ] || [ "$success" = "null" ]; then
+    step "${label}pay/reverse" - OK "nothing to give back"
+  else
+    body=$(post /merchant/pay/reverse "{\"transaction_id\":$success,\"reason\":\"ATMOS smoke test\"}") \
+      || { step "${label}pay/reverse" - FAILED "no answer: CHECK THE MONEY BY HAND"; return 1; }
+    code=$(code_of "$body")
+    if [ "$code" = "OK" ]; then
+      step "${label}pay/reverse" "$code" OK "$amount tiyin back"
+    else
+      step "${label}pay/reverse" "$code" FAILED "$(description_of "$body") - CHECK THE MONEY BY HAND"
+      return 1
+    fi
+  fi
+
+  [ "$apply_code" = "OK" ] || return 2
+  return 0
+}
+
+uuid_account() {
+  # The shape the app sends: its payment id, a UUID v7. Any 36-character one will do here.
+  printf '0190c3a1-0000-7000-8000-%012d' "$(date +%s)"
+}
+
+failures=''
+note_failure() { failures="$failures $1"; }
+
+if [ "$mode" = bisect ]; then
+  say_blank() { printf '\n'; }
+
+  say_blank
+  printf '  1. baseline: our own store_id, a short account, no ofd_items\n'
+  pay_once "  " "$store" '' "smoke-$(date +%s)" no || note_failure script
+
+  say_blank
+  printf '  2. the account the app sends: a 36-character UUID\n'
+  pay_once "  " "$store" '' "$(uuid_account)" no || note_failure account
+
+  if [ -n "$recipient_id" ]; then
+    say_blank
+    printf '  3. and pay/create naming the OWNER recipient in store_id, as the app does\n'
+    pay_once "  " "$(id_json "$recipient_id")" '' "$(uuid_account)" no || note_failure recipient-store_id
+
+    say_blank
+    printf '  4. and that recipient in terminal_id instead, our own store in store_id\n'
+    pay_once "  " "$store" "$recipient_id" "$(uuid_account)" no || note_failure recipient-terminal_id
+  else
+    say_blank
+    printf '  3. skipped: set ATMOS_SMOKE_RECIPIENT_ID to try an owner recipient id\n'
+  fi
+
+  if [ -n "${ATMOS_OFD_CODE_RENTAL:-}" ] && [ -n "${ATMOS_OFD_CODE_SERVICE:-}" ]; then
+    say_blank
+    printf '  5. and ofd_items, which the app sends when both OFD codes are set\n'
+    pay_once "  " "$store" '' "$(uuid_account)" yes || note_failure ofd_items
+  else
+    say_blank
+    printf '  5. skipped: no OFD codes are configured, so the app sends no ofd_items either\n'
+  fi
+
+  printf '\n'
+  if [ -n "$failures" ]; then
+    printf 'FAILED variants:%s\n' "$failures"
+    printf 'The first one named is the difference that breaks pay/apply; 1 failing means
+something other than the request shape is wrong.\n'
+    exit 1
+  fi
+  printf 'Every variant went through. The difference is not in the request shape:\n'
+  printf 'compare the backend log line "ATMOS single payment:" with the variants above.\n'
+else
+  pay_once '' "$store" '' "smoke-$(date +%s)" no || exit 1
 fi
-step pay/reverse "$code" OK "$amount tiyin back"
 
 # ---- tidy up: the test card does not stay bound ----
 body=$(post /partner/remove-card "{\"id\":$card_id,\"token\":\"$card_token\"}") || body=''
@@ -271,17 +405,30 @@ say ""
 # Half two: everything that touches the card token, in one call inside the container.
 # ---------------------------------------------------------------------------------------
 
-if printf '%s\n%s\n%s\n' "$binding" "$otp" "$amount" \
+mode=single
+[ "$bisect" = yes ] && mode=bisect
+
+if printf '%s\n%s\n%s\n%s\n%s\n' \
+     "$binding" "$otp" "$amount" "$mode" "${ATMOS_SMOKE_RECIPIENT_ID:-}" \
    | docker compose exec -T backend sh -c "$COMMON
 $PAY"; then
   unset otp
   say ""
-  say "ALL STEPS OK. The payment was taken and given back in full."
+  if [ "$mode" = bisect ]; then
+    say "ALL VARIANTS OK. Every payment was taken and given back in full."
+  else
+    say "ALL STEPS OK. The payment was taken and given back in full."
+  fi
 else
   unset otp
   say ""
-  say "FAILED. The step above says which one and what ATMOS answered."
-  say "Nothing is retried automatically; if pay/apply or pay/reverse is the one that failed,"
-  say "check the transaction in the ATMOS cabinet before running this again."
+  if [ "$mode" = bisect ]; then
+    say "A variant FAILED. The line above names the difference that breaks pay/apply;"
+    say "the backend log line \"ATMOS single payment:\" says which shape this server sends."
+  else
+    say "FAILED. The step above says which one and what ATMOS answered."
+    say "Nothing is retried automatically; if pay/apply or pay/reverse is the one that failed,"
+    say "check the transaction in the ATMOS cabinet before running this again."
+  fi
   exit 1
 fi

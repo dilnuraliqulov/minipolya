@@ -40,9 +40,22 @@ public enum DeclineReason {
      * The reason for a refusal the provider answered with {@code providerCode}. An unknown
      * code is a plain decline and is logged (the code only); no code at all — a payment that
      * failed without the provider refusing it — has no reason.
+     *
+     * <p>Nor has a code that means the provider or the bank behind it could not be reached
+     * ({@link AtmosCodes#isUnavailable}, e.g. {@code STPIMS-ERR-041} "Проблема соединения"):
+     * the card said nothing, so there is nothing to tell the player about their card. Showing
+     * such a payment as declined blamed the card for ATMOS's own connection, and sent the
+     * player off to try another one — while the money had usually already been taken. It has
+     * no reason instead, which the Mini App reads as {@code failed}: try again, not "your
+     * card was refused".
      */
     public static DeclineReason of(String providerCode) {
         if (providerCode == null || providerCode.isBlank()) {
+            return null;
+        }
+        if (AtmosCodes.isUnavailable(providerCode)) {
+            log.info("Not a decline but a provider connection problem, left without a reason: code={}",
+                    providerCode);
             return null;
         }
         if (INSUFFICIENT.contains(providerCode)) {

@@ -264,6 +264,9 @@ For paginated lists:
     cutoff. Money rules live in `platform_settings`, not here — only timing does.
   - `app.admin-login.*` holds the admin password sign-in limits (see "Admin accounts").
   - `app.payments.fake.*` shapes the fake provider (see "Payments → The provider").
+  - `app.payments.settle-now.*` is how long a request waits for a payment the provider gave
+    no clear answer about before leaving it to `PaymentReconcileJob` (see `payments.md`,
+    "A confirmation ATMOS could not answer").
 - Use constructor injection (Lombok `@RequiredArgsConstructor`), never `@Autowired` on fields
 - Log important actions: booking created, payment received, game confirmed, errors
 - Write unit tests for service layer, integration tests for controllers

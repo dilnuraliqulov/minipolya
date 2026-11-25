@@ -310,6 +310,13 @@ public class AtmosPaymentProvider implements PaymentProvider {
         if (receiptsOn()) {
             create.set("ofd_items", ofdItems(split));
         }
+        // The shape of the request, so a refusal further down the flow can be compared with
+        // deploy/atmos-smoke.sh without guessing: which store pay/create names (the recipient
+        // under store_id, our own under terminal_id), and whether fiscal lines went with it.
+        // Ids and flags only — never a body, a card or a token.
+        log.info("ATMOS single payment: account={} createStore={} recipientField={} receipts={} amount={}",
+                request.account(), create.path("store_id").asString("?"), recipientField.field(),
+                receiptsOn(), split.amount());
         JsonNode created = call("pay/create", HttpMethod.POST, "/merchant/pay/create", create);
         requireOk(created, "pay/create");
         String id = created.path("transaction_id").asString(null);
@@ -401,6 +408,15 @@ public class AtmosPaymentProvider implements PaymentProvider {
         if (DECLINES.contains(code)) {
             log.info("ATMOS charge declined: transactions={} code={}", transactionIds, code);
             return ChargeOutcome.failed(code);
+        }
+        if (AtmosCodes.isUnavailable(code)) {
+            // Observed in the sandbox: STPIMS-ERR-041 ("Проблема соединения") to an apply
+            // whose money ATMOS had in fact taken — pay/get says "paid" seconds later. So
+            // this is not a failure and the card is never charged again: the payment stays
+            // processing and PaymentSettler asks pay/get at once (the job later, if needed).
+            log.warn("ATMOS could not answer {}: store={} transactions={} code={}. The money may have "
+                    + "moved; the payment stays processing and is settled by asking pay/get.",
+                    operation, config.getStoreId(), transactionIds, code);
         }
         requireOk(answer, operation);
         return outcomeOf(answer);

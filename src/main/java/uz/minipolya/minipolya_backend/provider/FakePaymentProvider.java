@@ -89,6 +89,13 @@ public class FakePaymentProvider implements PaymentProvider {
     public static final String TIMEOUT_THEN_SUCCESS_SUFFIX = "0091";
     /** The money-taking step times out and nothing was taken: get-status says FAILED (a hold: RELEASED). */
     public static final String TIMEOUT_THEN_FAILED_SUFFIX = "0092";
+    /**
+     * The money-taking step times out and get-status keeps saying "no answer yet": the
+     * payment stays {@code processing} however often it is asked about. The one scenario
+     * where asking the provider straight away (PaymentSettler) cannot help, so the booking
+     * must keep its slot until the reconcile job gives up on it.
+     */
+    public static final String TIMEOUT_UNRESOLVED_SUFFIX = "0093";
     /** The provider is unavailable for every charge and hold ({@link AtmosCodes#SERVICE_UNAVAILABLE}). */
     public static final String UNAVAILABLE_SUFFIX = "0099";
     /** Charges work, every reverse is refused ({@link AtmosCodes#NOT_CANCELLED}). */
@@ -299,6 +306,12 @@ public class FakePaymentProvider implements PaymentProvider {
                 requireCode(otp);
             }
             String last4 = charge.getLast4();
+            if (last4.equals(TIMEOUT_UNRESOLVED_SUFFIX)) {
+                // Nothing is decided and nothing is written: the charge stays PENDING, so
+                // getCharge keeps answering "pending" too and the row stays processing.
+                log.info("[fake-provider] charge left unresolved: account={}", charge.getAccount());
+                return Result.thenThrow(new ProviderTimeoutException("pay/apply", null));
+            }
             boolean timesOut = last4.equals(TIMEOUT_THEN_SUCCESS_SUFFIX) || last4.equals(TIMEOUT_THEN_FAILED_SUFFIX);
             String decline = declineCodeFor(last4);
             if (decline == null && !debit(charge)) {

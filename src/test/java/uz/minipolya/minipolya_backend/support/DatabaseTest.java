@@ -31,6 +31,9 @@ import java.lang.annotation.Target;
         // The fake provider answers at once in tests.
         "app.payments.fake.delay-min-ms=0",
         "app.payments.fake.delay-max-ms=0",
+        // A payment left processing is asked after without waiting between the asks, so a
+        // test that produces one does not sit for the real twenty seconds.
+        "app.payments.settle-now.delay=0s",
         // Uploaded photos land under target/, never in the project's uploads/.
         "app.uploads.dir=target/test-uploads",
         "app.jwt.secret=${JWT_SECRET:test-secret-test-secret-test-secret-0123456789}",

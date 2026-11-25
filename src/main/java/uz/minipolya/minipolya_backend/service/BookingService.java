@@ -146,7 +146,12 @@ public class BookingService {
                 .created("status", saved.getStatus())
                 .created("startsAt", saved.getStartsAt())
                 .created("durationHours", saved.getDurationHours())
+                // The owner's price, and the one the card is actually charged. "price" alone
+                // read as the amount paid, which it never was on a card booking: the player
+                // pays cardPrice (PriceCalculator.playerAmount of the owner's price), and an
+                // admin looking at the entry needs the figure that was charged.
                 .created("price", saved.getPrice())
+                .created("cardPrice", saved.getCardPrice())
                 .created("paymentOption", request.getPaymentOption()));
         log.info("Booking created: id={} stadiumId={} userId={} {}-{} price={} cardPrice={} charging={}",
                 saved.getId(), stadium.getId(), userId, startsAt, endsAt, price, cardPrice, charge.playerAmount());

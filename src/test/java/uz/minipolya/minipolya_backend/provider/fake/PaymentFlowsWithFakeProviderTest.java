@@ -195,24 +195,41 @@ class PaymentFlowsWithFakeProviderTest extends FakeProviderFlowSupport {
                 .andExpect(jsonPath("$.message").value("To'lov tizimi vaqtincha ishlamayapti. Birozdan so'ng qayta urinib ko'ring"));
     }
 
+    /**
+     * A confirmation whose answer was lost is never assumed either way: the provider is
+     * asked. It is asked <b>during the request</b> now (PaymentSettler), so the player sees
+     * the outcome in the response instead of waiting for the five-minute job — which is the
+     * ATMOS {@code STPIMS-ERR-041} case: the apply says "connection problem" for money that
+     * has moved. Asking again afterwards is the reconcile job's own call and changes nothing.
+     */
     @Test
-    void aLostAnswerStaysProcessingAndTheReconcileJobSettlesIt() throws Exception {
+    void aLostAnswerIsSettledByAskingTheProvider() throws Exception {
         User player = data.user("Timeout Player");
         UUID wins = addCard(player, "8600123412340091");
         UUID loses = addCard(player, "8600123412340092");
 
-        UUID paidLater = bookingId(book(player, wins, "FULL", slot(5, 15)).andExpect(status().isOk()));
-        UUID neverPaid = bookingId(book(player, loses, "FULL", slot(5, 16)).andExpect(status().isOk()));
-        Payment first = onlyPayment(paidLater, Payment.PaymentType.BOOKING);
+        UUID paid = bookingId(book(player, wins, "FULL", slot(5, 15))
+                .andExpect(status().isOk())
+                // Settled while the player waited: no "processing" is ever shown for it.
+                .andExpect(jsonPath("$.data.paymentState").value("paid"))
+                .andExpect(jsonPath("$.data.status").value("confirmed")));
+        UUID neverPaid = bookingId(book(player, loses, "FULL", slot(5, 16))
+                .andExpect(status().isOk())
+                // The money never moved, and pay/get names the card's own refusal.
+                .andExpect(jsonPath("$.data.paymentState").value("declined"))
+                .andExpect(jsonPath("$.data.declineReason").value("CARD_DECLINED"))
+                .andExpect(jsonPath("$.data.status").value("pending")));
+        Payment first = onlyPayment(paid, Payment.PaymentType.BOOKING);
         Payment second = onlyPayment(neverPaid, Payment.PaymentType.BOOKING);
-        assertThat(first.getStatus()).isEqualTo(Payment.Status.PROCESSING);
-        assertThat(second.getStatus()).isEqualTo(Payment.Status.PROCESSING);
+        assertThat(first.getStatus()).isEqualTo(Payment.Status.PAID);
+        assertThat(second.getStatus()).isEqualTo(Payment.Status.FAILED);
 
+        // The job over the same rows: idempotent, nothing settled twice, no second charge.
         reconcileService.reconcile(first.getId());
         reconcileService.reconcile(second.getId());
 
         assertThat(payments.findById(first.getId()).orElseThrow().getStatus()).isEqualTo(Payment.Status.PAID);
-        assertThat(bookings.findById(paidLater).orElseThrow().getStatus()).isEqualTo("confirmed");
+        assertThat(bookings.findById(paid).orElseThrow().getStatus()).isEqualTo("confirmed");
         assertThat(payments.findById(second.getId()).orElseThrow().getStatus()).isEqualTo(Payment.Status.FAILED);
         assertThat(balance(loses)).isEqualTo(START);
     }

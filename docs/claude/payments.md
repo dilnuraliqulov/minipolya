@@ -28,8 +28,11 @@ unreachable) and shown as:
 - **`paymentState`** on `BookingResponse` (every view, always present), from the same
   latest card payment, so **`declined` ⇔ `declineReason` present**: `paid` (its money
   arrived, even if given back since), `processing` (no answer yet), `declined` (refused —
-  see the reason), `failed` (failed without a refusal, e.g. never acknowledged), `none`
-  (no card payment: cash, manual and game bookings). `BookingResponseFactory.paymentStateOf`;
+  see the reason), `failed` (failed without a refusal, e.g. never acknowledged, or the
+  provider could not be reached — see "A confirmation ATMOS could not answer"), `none`
+  (no card payment: cash, manual and game bookings). `BookingResponseFactory.paymentStateOf`.
+  The Mini App shows `processing` as "Toʻlov tekshirilmoqda", never as unpaid, and reads the
+  booking again every few seconds until it settles;
 - **`declineReason`** on `PaymentResponse` (`GET /api/payments/my`) and
   `AdminPaymentResponse`, on a refused row. Never the provider's own code or text.
 
@@ -162,8 +165,9 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
 | A declined card | card ending `0002` (`STPIMS-ERR-058`): booking stays `pending`, row `failed` |
 | Insufficient funds | ending `0051` (`-057`), or spend the 10 000 000 so'm balance (`-112`) |
 | An expired card at payment | ending `0054` (`-067`) |
-| A lost answer that did charge | ending `0091`: the payment stays `processing`; the reconcile job (or `getCharge`) finds it paid. On a hold it is the **capture** that times out (and went through): a join answers 202 and the job confirms the game |
-| A lost answer that did not | ending `0092`: `processing`, then `failed` on reconciliation. On a hold the capture times out and the hold is gone: the job undoes the join |
+| A lost answer that did charge | ending `0091`: `PaymentSettler` asks `getCharge` inside the request and the booking comes back `paid` — the ATMOS `STPIMS-ERR-041` case. On a hold it is the **capture** that times out (and went through): a join answers 202 and the job confirms the game |
+| A lost answer that did not | ending `0092`: asked at once too, and the booking comes back `declined` with the card's own code. On a hold the capture times out and the hold is gone: the job undoes the join |
+| An answer that never comes | ending `0093`: `getCharge` keeps saying "pending", so the payment really does stay `processing` — the booking keeps its slot past its hold, and no second charge is allowed, until `PaymentReconcileService` gives up on it |
 | The provider down | ending `0099`: every charge / hold → 502 |
 | A refund the provider refuses | ending `0098`: payments work, every reverse is refused (`-15`) → `refund_failed`, then admin retry / mark-refunded |
 | A team game whose capture fails | creator's card ending `0097`: the hold works, the capture is refused with an ordinary code (`STPIMS-ERR-058`) and the hold stays → the joiner is reversed, the hold released, the game ends |
@@ -234,6 +238,42 @@ the deadline, owner at any time, admin block) reverses every split's transaction
 full. Friends games never held money — each player pays as they go and the slot is
 booked once everyone has — so they pay by card (`POST /api/games/{id}/pay?cardId=`)
 and are reversed if the game is called off. Cash is never touched.
+
+### A confirmation ATMOS could not answer (`STPIMS-ERR-041`)
+
+ATMOS answers `pay/apply` with `STPIMS-ERR-041` ("Проблема соединения") for payments it has
+**in fact taken**: `pay/get` says `confirmed` moments later. It is in `AtmosCodes.UNAVAILABLE`,
+so nothing treats it as a decline:
+
+- `DeclineReason.of` gives **no reason** for any unavailable code. A connection problem is
+  not the card's fault, and showing it as `CARD_DECLINED` sent the player off to try another
+  card for a payment that had already gone through.
+- The charge was created, so whether the money moved is unknown: the row stays `processing`
+  and the card is never charged again (`refusedByProvider`, `created = true`).
+- `PaymentSettler` then asks `pay/get` **straight away**, from the controller, after the
+  charge's own transaction has committed — `app.payments.settle-now.attempts` times (6),
+  `…delay` apart (3 s), stopping as soon as the row moves and never holding the request up
+  for longer than `…budget` (20 s), because one ATMOS call alone may take
+  `app.atmos.timeout-seconds`. It does this by calling
+  `PaymentReconcileService.reconcile`, **the same call the job makes**: there is no second
+  path from money to a confirmed booking. A provider still not answering is not an error —
+  the row simply stays where it was. `attempts: 0` turns it off.
+- `BookingExpiryJob` never expires a booking whose card payment is `processing` or
+  `capture_pending` (`BookingRepository.findExpirablePending`), so the slot is still there
+  when the answer arrives. Nothing waits for ever: the charge is failed after
+  `ABANDONED_AFTER`, and the next run of the job expires the booking.
+- The Mini App shows `paymentState: processing` as "Toʻlov tekshirilmoqda" and polls the
+  booking until it settles.
+
+**Which difference causes it** is not settled: the app's `pay/apply` is `deploy/atmos-smoke.sh`'s
+`pay/apply` field for field (same single endpoint — an ordinary booking pays one recipient —
+same numeric `transaction_id`, same `otp` `111111`, sent straight after pre-apply), and what
+differs is what `pay/create` named three calls earlier: the owner's recipient in `store_id`
+(our own store with `ATMOS_RECIPIENT_FIELD=terminal_id`), a 36-character UUID `account`, and
+`ofd_items` when both OFD codes are set. `./atmos-smoke.sh --bisect` binds a card once and
+takes the payment again per difference, reversing each; the first failing variant names the
+cause. The log line `ATMOS single payment: account=… createStore=… recipientField=… receipts=…`
+says which shape a given server sends.
 
 ### Reconciliation
 

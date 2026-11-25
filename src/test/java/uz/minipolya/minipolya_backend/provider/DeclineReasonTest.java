@@ -43,4 +43,21 @@ class DeclineReasonTest {
         assertThat(DeclineReason.of(null)).isNull();
         assertThat(DeclineReason.of(" ")).isNull();
     }
+
+    /**
+     * The card said nothing, so there is nothing to tell the player about their card.
+     * {@code STPIMS-ERR-041} ("Проблема соединения") is the one the ATMOS sandbox answers
+     * {@code pay/apply} with for payments it has in fact taken: calling that a declined card
+     * blamed the card for ATMOS's own connection and sent the player to find another one.
+     */
+    @Test
+    void aProviderThatCouldNotBeReachedIsNoDeclineAtAll(CapturedOutput output) {
+        for (String code : new String[]{"STPIMS-ERR-041", "STPIMS-ERR-024", "STPIMS-ERR-026",
+                "STPIMS-ERR-094", "STPIMS-ERR-102", "HTTP_502", "HTTP_503"}) {
+            assertThat(DeclineReason.of(code)).as(code).isNull();
+        }
+        assertThat(output.getAll())
+                .contains("provider connection problem")
+                .doesNotContain("Unknown decline code");
+    }
 }
