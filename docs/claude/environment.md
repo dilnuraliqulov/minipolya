@@ -36,7 +36,15 @@ ATMOS_PLATFORM_RECIPIENT_ID=...
 ATMOS_RECIPIENT_FIELD=      # store_id (the default) or terminal_id — see payments.md
 ATMOS_OFD_CODE_RENTAL=      # optional: fiscal receipts are sent only when both are set
 ATMOS_OFD_CODE_SERVICE=
+ATMOS_HOLD_MAX_MINUTES=     # optional: longest team-game hold, default 10080 (7 days)
 ```
+
+- `ATMOS_HOLD_MAX_MINUTES` is the longest a team game's hold may last. A game further off
+  than that cannot be created yet — the hold is placed when the game is created or the game
+  is not created — and the creating team is told how many days ahead it may try. ATMOS has
+  never documented a maximum, so it is a setting rather than a constant: see
+  [payments.md](payments.md), "How far ahead a team game can be created", and
+  [atmos-endpoint-audit.md](atmos-endpoint-audit.md), open question 8.
 
 - Spring reads it itself: `application.yaml` has
   `spring.config.import: optional:file:.env[.properties]`, so `.env` is loaded

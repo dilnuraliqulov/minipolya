@@ -32,6 +32,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -65,6 +66,7 @@ class TeamGameWaitingEndTest {
     private GameTeamRepository gameTeamRepository;
     private PaymentService paymentService;
     private AuditService auditService;
+    private AppProperties appProperties;
     private TeamGameService service;
 
     private Stadium stadium;
@@ -82,11 +84,12 @@ class TeamGameWaitingEndTest {
         when(platformSettingsService.current()).thenReturn(
                 PlatformSettings.builder().teamGamePlatformFee(FEE).build());
 
+        appProperties = new AppProperties();
         service = new TeamGameService(gameRepository, gameTeamRepository,
                 mock(GameParticipantRepository.class), mock(BookingRepository.class),
                 paymentService, mock(SavedCardService.class), platformSettingsService,
                 mock(NotificationService.class), auditService,
-                new CancellationPolicy(), new AppProperties(),
+                new CancellationPolicy(), appProperties,
                 mock(TeamMemberRepository.class), mock(TeamRepository.class), mock(GameMessageService.class), org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         leaderA = User.builder().id(LEADER_A_ID).name("Leader A").build();
@@ -130,14 +133,39 @@ class TeamGameWaitingEndTest {
         assertThat(minutes).isEqualTo((int) untilCutoff + 120);
     }
 
+    /**
+     * ATMOS_HOLD_MAX_MINUTES is 10 080 (7 days) by default, and a game is created with the
+     * hold or not at all — so a game further off is refused, with the number of days in the
+     * message for the Mini App to show.
+     */
     @Test
     void aGameTooFarAheadForTheHoldCapCannotBeCreated() {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        Game game = waitingGame(Duration.ofDays(31));   // the default cap is 43 200 min = 30 days
+        Game game = waitingGame(Duration.ofDays(8));
 
         assertThatThrownBy(() -> service.holdMinutes(game, now))
                 .isInstanceOf(uz.minipolya.minipolya_backend.exception.BadRequestException.class)
-                .hasMessageContaining("days before it is played");
+                .hasMessageContaining("at most 7 days before kick-off");
+    }
+
+    /** Right at the horizon it still works: the number the player is told must be true. */
+    @Test
+    void aGameExactlyAtTheHoldHorizonCanStillBeCreated() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+
+        assertThat(service.holdHorizonDays()).isEqualTo(7);
+        assertThat(service.holdMinutes(waitingGame(Duration.ofDays(7)), now))
+                .isLessThanOrEqualTo(10_080);
+    }
+
+    /** Raising the cap moves the horizon with it, with no code change. */
+    @Test
+    void theHorizonFollowsTheSetting() {
+        appProperties.getPayments().setHoldMaxMinutes(43_200);
+
+        assertThat(service.holdHorizonDays()).isEqualTo(30);
+        assertThatCode(() -> service.holdMinutes(waitingGame(Duration.ofDays(20)),
+                OffsetDateTime.now(ZoneOffset.UTC))).doesNotThrowAnyException();
     }
 
     // ---- somebody books the pitch ----

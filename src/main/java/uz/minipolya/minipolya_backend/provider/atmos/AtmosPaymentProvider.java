@@ -7,8 +7,8 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -83,8 +83,10 @@ public class AtmosPaymentProvider implements PaymentProvider {
     static final String TRANSACTION_CLOSED = AtmosCodes.TRANSACTION_CLOSED;
     /** A second reverse of the same transaction: gone either way, so "closed" as well. */
     static final String ALREADY_REVERSED = AtmosCodes.ALREADY_REVERSED;
-    static final String HOLD_CANCELLED = "STPIMS-ERR-145";
-    static final String HOLD_EXPIRED = "STPIMS-ERR-144";
+    static final String HOLD_CANCELLED = AtmosCodes.HOLD_CANCELLED;
+    static final String HOLD_EXPIRED = AtmosCodes.HOLD_EXPIRED;
+    /** "холдирование не подтверждено": a hold that was created and never applied. */
+    static final String HOLD_NOT_CONFIRMED = AtmosCodes.HOLD_NOT_CONFIRMED;
     /** Codes that mean the card was declined: a FAILED outcome, not an error. */
     static final Set<String> DECLINES = Set.of(
             "STPIMS-ERR-057", // insufficient funds
@@ -99,6 +101,12 @@ public class AtmosPaymentProvider implements PaymentProvider {
      * made with a card token (no SMS is sent then). Confirm this is right for production.
      */
     static final String TOKEN_OTP = "111111";
+    /**
+     * Codes that are an answer rather than a problem, so that reading the log for a real
+     * refusal is not reading past every hold that was released as asked.
+     */
+    private static final Set<String> EXPECTED_CODES = Set.of(
+            TRANSACTION_CLOSED, ALREADY_REVERSED, HOLD_CANCELLED, HOLD_EXPIRED, HOLD_NOT_CONFIRMED);
     private static final long TOKEN_MARGIN_SECONDS = 300;
 
     private final AppProperties.Atmos config;
@@ -471,10 +479,23 @@ public class AtmosPaymentProvider implements PaymentProvider {
     // ---- Holds ----
 
     /**
-     * {@code hold/multiple/create}: one item per split. TODO(ATMOS): the example sends
-     * {@code amount} and {@code duration} as strings, so do we; whether capture and cancel
-     * take the {@code parent_id} or each item's {@code hold_id} is undocumented — the parent
-     * id is used throughout.
+     * {@code POST /hold/multiple/create}: one item per split, each
+     * {@code store_id} / {@code account} / {@code payment_details} / {@code amount} as the
+     * docs' example has it, under a top-level {@code card_token} and {@code duration}. The
+     * amount, the duration <b>and the store id</b> go as strings, which is what every hold
+     * example in the docs quotes — and what keeps a store id like {@code "0001"} from being
+     * sent as the number 1.
+     *
+     * <p>Every hold takes this path, a single split included: which id a <em>single</em>
+     * hold's follow-up calls would take is the same open question as below, and one shape
+     * through create → apply → capture → release is one shape to be sure of.
+     * {@code POST /hold/create} and {@code PUT /hold/apply/{id}} are therefore documented but
+     * not called here; {@code deploy/atmos-smoke.sh --hold} exercises both, so the sandbox can
+     * say whether they differ.
+     *
+     * <p>TODO(ATMOS): whether capture, cancel and get take the {@code parent_id} or each
+     * item's {@code hold_id} is undocumented — the parent id is used throughout, and the
+     * smoke test tries both.
      */
     @Override
     public HoldOutcome hold(HoldRequest request) {
@@ -483,9 +504,9 @@ public class AtmosPaymentProvider implements PaymentProvider {
                 .put("duration", String.valueOf(request.durationMinutes()));
         ArrayNode items = body.putArray("items");
         for (Split split : payable(request.splits(), "hold " + request.account())) {
-            recipient(items.addObject(), split)
+            holdRecipient(items.addObject(), split)
                     .put("account", request.account())
-                    .put("payment_details", split.platform() ? "MiniPolya service" : "Pitch rental")
+                    .put("payment_details", detailsOf(split))
                     .put("amount", String.valueOf(split.amount()));
         }
         JsonNode answer = call("hold/multiple/create", HttpMethod.POST, "/hold/multiple/create", body);
@@ -494,24 +515,48 @@ public class AtmosPaymentProvider implements PaymentProvider {
         return new HoldOutcome(answer.path("parent_id").asString(), ProviderStatus.PENDING, till, null, null);
     }
 
+    /**
+     * {@code PUT /hold/multiple/apply/{id}}, the OTP in the body — {@code 111111} for a card
+     * token, as the docs say, and the hold id in the path, never in the body.
+     *
+     * <p>The answer carries a {@code result} <b>per item</b> beside the top-level one, and the
+     * docs do not say whether one item can fail under an OK envelope. It is read as if it can:
+     * an item answering a decline code fails the whole hold, because half a team's money held
+     * is not the hold that was asked for, and any other item code is refused like a top-level
+     * one. The hold then lasts only as long as its <b>earliest</b> {@code hold_till} — the
+     * items get one each, milliseconds apart in the docs' own example, and believing the
+     * latest would be believing the money is still there after the first item let go of it.
+     */
     @Override
     public HoldOutcome confirmHold(String holdId, String otp) {
         ObjectNode body = json.createObjectNode().put("otp", otp == null ? TOKEN_OTP : otp);
         JsonNode answer = call("hold/multiple/apply", HttpMethod.PUT, "/hold/multiple/apply/" + holdId, body);
-        String code = codeOf(answer);
+        String code = firstNotOk(answer);
         if (DECLINES.contains(code)) {
             log.info("ATMOS hold declined: holdId={} code={}", holdId, code);
             return new HoldOutcome(holdId, ProviderStatus.FAILED, null, null, code);
         }
-        requireOk(answer, "hold/multiple/apply");
+        requireCode(code, "hold/multiple/apply");
         OffsetDateTime till = null;
         for (JsonNode item : answer.path("items")) {
-            till = parseTime(item.path("hold_till"));
+            OffsetDateTime itemTill = parseTime(item.path("hold_till"));
+            if (itemTill != null && (till == null || itemTill.isBefore(till))) {
+                till = itemTill;
+            }
         }
         return new HoldOutcome(holdId, ProviderStatus.HELD, till, null, null);
     }
 
-    /** Always the full held amount: no {@code amount} is sent. */
+    /**
+     * {@code POST /hold/{id}}: the money the hold reserved is taken. Always all of it — the
+     * docs allow an {@code amount} no larger than the one held, but there is no partial
+     * capture anywhere in this application, so none is sent.
+     *
+     * <p>No {@code ofd_items} either, although the capture — not the create — is where the
+     * docs put a hold's fiscal lines: a multiple hold's receipt would have to be split per
+     * item, and this method is given no amounts to split by. It is listed as an open
+     * question; a team game's receipt is the one thing holds do not produce.
+     */
     @Override
     public HoldOutcome captureHold(String holdId) {
         JsonNode answer = call("hold capture", HttpMethod.POST, "/hold/" + holdId, json.createObjectNode());
@@ -519,22 +564,48 @@ public class AtmosPaymentProvider implements PaymentProvider {
         return new HoldOutcome(holdId, ProviderStatus.CAPTURED, null, commissionOf(transactionsOf(answer)), null);
     }
 
-    /** {@code DELETE /hold/{id}} with {@code send_cancel_sms=true}. */
+    /**
+     * {@code DELETE /hold/{id}} with {@code send_cancel_sms=true}: the cardholder is told
+     * their money has been let go, which is what a player whose game fell through expects.
+     *
+     * <p><b>{@code STPIMS-ERR-145} is this call's success.</b> The docs' own sample answer to
+     * the cancellation is {@code result.code = "STPIMS-ERR-145"} ("холдирование
+     * отменено"), so reading this envelope the way every other call's is read turned
+     * every release that worked into a {@link HoldCancelledException} — and a release that
+     * throws is a release the caller has to decide about, for money that is already back.
+     * Here the code <em>is</em> the confirmation: {@code OK} and {@code -145} are both a hold
+     * that is gone, and so is {@code -144} (it had lapsed on its own). Only {@code -143}
+     * ("холдирование не отменено") and any other code are a release that did not happen.
+     */
     @Override
     public HoldOutcome releaseHold(String holdId) {
         ObjectNode body = json.createObjectNode().put("send_cancel_sms", true);
         JsonNode answer = call("hold release", HttpMethod.DELETE, "/hold/" + holdId, body);
+        String code = codeOf(answer);
+        if (OK.equals(code) || HOLD_CANCELLED.equals(code) || HOLD_EXPIRED.equals(code)) {
+            return new HoldOutcome(holdId, ProviderStatus.RELEASED, null, null, OK.equals(code) ? null : code);
+        }
         requireOk(answer, "hold release");
         return new HoldOutcome(holdId, ProviderStatus.RELEASED, null, null, null);
     }
 
-    /** TODO(ATMOS): hold statuses are not listed; an OK answer with confirmed=true is read as still held. */
+    /**
+     * {@code GET /hold/{id}}, with no body.
+     *
+     * <p>TODO(ATMOS): hold statuses are not listed; an OK answer with {@code confirmed=true}
+     * is read as still held. {@code -144} (lapsed) and {@code -145} (cancelled) are a hold
+     * that is gone; {@code -142} ("холдирование не подтверждено") is one that was
+     * created and never applied, which is {@code PENDING}, not an error.
+     */
     @Override
     public HoldOutcome getHold(String holdId) {
         JsonNode answer = call("hold get", HttpMethod.GET, "/hold/" + holdId, null);
         String code = codeOf(answer);
         if (HOLD_CANCELLED.equals(code) || HOLD_EXPIRED.equals(code)) {
             return new HoldOutcome(holdId, ProviderStatus.RELEASED, null, null, code);
+        }
+        if (HOLD_NOT_CONFIRMED.equals(code)) {
+            return new HoldOutcome(holdId, ProviderStatus.PENDING, null, null, code);
         }
         requireOk(answer, "hold get");
         boolean confirmed = answer.path("store_transaction").path("confirmed").asBoolean(false);
@@ -554,26 +625,52 @@ public class AtmosPaymentProvider implements PaymentProvider {
      */
     private JsonNode call(String operation, HttpMethod method, String path, JsonNode body) {
         try {
-            return send(method, path, body, false);
+            return answered(operation, method, path, send(method, path, body, false));
         } catch (RestClientResponseException ex) {
             if (ex.getStatusCode().value() != 401) {
-                throw httpError(operation, ex.getStatusCode());
+                throw httpError(operation, method, path, ex);
             }
-            log.info("ATMOS answered 401 to {}; refreshing the token once", operation);
+            log.info("ATMOS answered HTTP 401 to {} {}; refreshing the token once", method, path);
         } catch (ResourceAccessException ex) {
             throw timedOut(operation, ex);
         } catch (JacksonException ex) {
             throw unreadable(operation, ex);
         }
         try {
-            return send(method, path, body, true);
+            return answered(operation, method, path, send(method, path, body, true));
         } catch (RestClientResponseException again) {
-            throw httpError(operation, again.getStatusCode());
+            throw httpError(operation, method, path, again);
         } catch (ResourceAccessException again) {
             throw timedOut(operation, again);
         } catch (JacksonException again) {
             throw unreadable(operation, again);
         }
+    }
+
+    /**
+     * Every answer ATMOS does not call {@code OK}, written down in full: the method, the
+     * path, the HTTP status, ATMOS's own result code and description, and the body with each
+     * card field redacted ({@link AtmosSafeBody}). Codes that are an answer rather than a
+     * problem — a closed transaction, a hold that has already gone — and a declined card are
+     * the same line at INFO.
+     *
+     * <p>Until this existed the log said "ATMOS refused hold/multiple/create: code=HTTP_403"
+     * and nothing else, which does not say whether the path was wrong, the request was
+     * wrong, or the merchant account may not call that endpoint at all.
+     */
+    private JsonNode answered(String operation, HttpMethod method, String path, Answer answer) {
+        String code = codeOf(answer.body());
+        if (!OK.equals(code)) {
+            String line = "ATMOS answered {}: {} {} -> HTTP {} code={} description={} body={}";
+            if (EXPECTED_CODES.contains(code) || DECLINES.contains(code)) {
+                log.info(line, operation, method, path, answer.status(), code,
+                        descriptionOf(answer.body()), AtmosSafeBody.of(answer.raw()));
+            } else {
+                log.warn(line, operation, method, path, answer.status(), code,
+                        descriptionOf(answer.body()), AtmosSafeBody.of(answer.raw()));
+            }
+        }
+        return answer.body();
     }
 
     private ProviderTimeoutException timedOut(String operation, Throwable cause) {
@@ -592,7 +689,11 @@ public class AtmosPaymentProvider implements PaymentProvider {
         return new ProviderTimeoutException(operation, cause, "sent an answer we could not read");
     }
 
-    private JsonNode send(HttpMethod method, String path, JsonNode body, boolean freshToken) {
+    /** One answer: the HTTP status, the body as it came, and that body read as JSON. */
+    private record Answer(int status, String raw, JsonNode body) {
+    }
+
+    private Answer send(HttpMethod method, String path, JsonNode body, boolean freshToken) {
         String token = token(freshToken);
         RestClient.RequestBodySpec spec = http.method(method).uri(path)
                 .headers(h -> h.setBearerAuth(token))
@@ -601,8 +702,10 @@ public class AtmosPaymentProvider implements PaymentProvider {
         if (body != null) {
             spec.body(json.writeValueAsString(body));
         }
-        String raw = spec.retrieve().body(String.class);
-        return raw == null || raw.isBlank() ? json.createObjectNode() : json.readTree(raw);
+        ResponseEntity<String> response = spec.retrieve().toEntity(String.class);
+        String raw = response.getBody();
+        JsonNode read = raw == null || raw.isBlank() ? json.createObjectNode() : json.readTree(raw);
+        return new Answer(response.getStatusCode().value(), raw, read);
     }
 
     /** The cached token, or a new one when it is due (or {@code force}). */
@@ -624,7 +727,7 @@ public class AtmosPaymentProvider implements PaymentProvider {
                     .body(form)
                     .retrieve().body(String.class);
         } catch (RestClientResponseException ex) {
-            throw httpError("token", ex.getStatusCode());
+            throw httpError("token", HttpMethod.POST, "/token?grant_type=client_credentials", ex);
         } catch (ResourceAccessException ex) {
             throw new ProviderTimeoutException("token", ex);
         }
@@ -649,11 +752,18 @@ public class AtmosPaymentProvider implements PaymentProvider {
     // ---- Answers ----
 
     private void requireOk(JsonNode answer, String operation) {
-        String code = codeOf(answer);
+        requireCode(codeOf(answer), operation);
+    }
+
+    /**
+     * One result code as the exception it means. The code has already been logged with its
+     * method, path, HTTP status, description and body by {@link #answered}, so nothing is
+     * written twice here.
+     */
+    private void requireCode(String code, String operation) {
         if (OK.equals(code)) {
             return;
         }
-        log.warn("ATMOS refused {}: code={}", operation, code);
         throw switch (code) {
             case TRANSACTION_CLOSED, ALREADY_REVERSED -> new TransactionClosedException(code);
             case HOLD_CANCELLED -> new HoldCancelledException(code);
@@ -664,6 +774,33 @@ public class AtmosPaymentProvider implements PaymentProvider {
 
     private static String codeOf(JsonNode answer) {
         return answer.path("result").path("code").asString("MISSING_RESULT");
+    }
+
+    private static String descriptionOf(JsonNode answer) {
+        return answer.path("result").path("description").asString("");
+    }
+
+    /**
+     * The first code in an answer that is not OK: the envelope's own, or failing that the
+     * first item's. A multiple hold answers one {@code result} per item beside the
+     * envelope's, {@code null} at create time and a real one at apply time, so a missing or
+     * null item result is not a failure — only a code that is there and is not OK.
+     */
+    private static String firstNotOk(JsonNode answer) {
+        String code = codeOf(answer);
+        if (!OK.equals(code)) {
+            return code;
+        }
+        for (JsonNode item : answer.path("items")) {
+            JsonNode result = item.path("result");
+            if (result.isObject()) {
+                String itemCode = result.path("code").asString(null);
+                if (itemCode != null && !OK.equals(itemCode)) {
+                    return itemCode;
+                }
+            }
+        }
+        return OK;
     }
 
     /**
@@ -722,9 +859,20 @@ public class AtmosPaymentProvider implements PaymentProvider {
         return any ? total : null;
     }
 
-    private PaymentProviderException httpError(String operation, HttpStatusCode status) {
-        log.warn("ATMOS answered HTTP {} to {}", status.value(), operation);
-        return new PaymentProviderException("HTTP_" + status.value(), "ATMOS refused " + operation);
+    /**
+     * An HTTP status in place of an ATMOS answer, logged with the method, the path, the
+     * status and the (redacted) body. The body is the only thing that tells an API gateway
+     * refusing the resource ("no matching resource found", "resource forbidden") apart from
+     * ATMOS itself refusing the request: the difference between a path we got wrong and an
+     * endpoint this merchant account may not call. See
+     * {@code docs/claude/atmos-endpoint-audit.md}.
+     */
+    private PaymentProviderException httpError(String operation, HttpMethod method, String path,
+                                               RestClientResponseException ex) {
+        log.warn("ATMOS refused {}: {} {} -> HTTP {} body={}", operation, method, path,
+                ex.getStatusCode().value(), AtmosSafeBody.of(ex.getResponseBodyAsString()));
+        return new PaymentProviderException("HTTP_" + ex.getStatusCode().value(),
+                "ATMOS refused " + operation);
     }
 
     /**
@@ -743,6 +891,19 @@ public class AtmosPaymentProvider implements PaymentProvider {
             return node.put("terminal_id", id);
         }
         return withId(node, "store_id", id);
+    }
+
+    /**
+     * Names the recipient of one hold item. As {@link #recipient}, except that the ids go as
+     * <b>strings</b>: every hold example in the docs quotes {@code store_id}, and a store id
+     * written {@code "0001"} must not reach ATMOS as the number 1.
+     */
+    private ObjectNode holdRecipient(ObjectNode node, Split split) {
+        String id = recipientOf(split);
+        if (recipientField == AtmosRecipientField.TERMINAL_ID) {
+            return node.put("store_id", config.getStoreId()).put("terminal_id", id);
+        }
+        return node.put("store_id", id);
     }
 
     private String recipientOf(Split split) {

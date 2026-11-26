@@ -321,6 +321,7 @@ CLAUDE.md section to its new file.
 | `availability.md` | before touching the availability endpoint, slot statuses or the free-slot count |
 | `pricing.md` | before touching any amount a player sees, the card fee, rounding, the minimum amount, settings |
 | `payments.md` | before touching payments, the ATMOS or fake provider, declines, refunds, holds, cards, reconciliation |
+| `atmos-endpoint-audit.md` | before changing any ATMOS request or reading its answer, and before asking ATMOS a question — it may be open there already |
 | `teams.md` | before touching teams, members or invite links |
 | `games.md` | before touching the casual or open game flow, or a rule shared by all three flows |
 | `team-games.md` | before touching team games: holds, joins, the two deadlines, cancellation bands, remainders, the board |

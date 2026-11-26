@@ -42,6 +42,10 @@ public final class AtmosCodes {
     public static final String PAYMENT_CLOSED = "STPIMS-ERR-113";
     /** "Неправильный номер карты" — anything but Uzcard / Humo. */
     public static final String WRONG_CARD_NUMBER = "STPIMS-ERR-117";
+    /** "Холдирование не подтверждено" — created and never applied. */
+    public static final String HOLD_NOT_CONFIRMED = "STPIMS-ERR-142";
+    /** "Холдирование не отменено" — a release that did not happen. */
+    public static final String HOLD_NOT_REMOVED = "STPIMS-ERR-143";
     /** "Время холдирования истекло". */
     public static final String HOLD_EXPIRED = "STPIMS-ERR-144";
     /** "холдирование отменено" (in the cancel example, not in the table). */
@@ -62,18 +66,63 @@ public final class AtmosCodes {
     /** ATMOS documents no way to resend a binding's SMS code. */
     public static final String RESEND_UNSUPPORTED = "BIND_RESEND_UNSUPPORTED";
 
-    /** "Try again later": nothing happened at the provider, the caller may simply retry. */
-    private static final Set<String> UNAVAILABLE = Set.of(
+    /** The payment service itself could not be reached, or would not answer. */
+    private static final Set<String> UNREACHABLE = Set.of(
             "HTTP_500", "HTTP_502", SERVICE_UNAVAILABLE, "HTTP_504",
             "STPIMS-ERR-024", // Нет соединения с банком
             "STPIMS-ERR-026", // Попробуйте позже
             "STPIMS-ERR-041", // Проблема соединения
+            "STPIMS-ERR-093", // Ошибка в биллинговой системе провайдера
             "STPIMS-ERR-094", // Нет связи с ЕОПЦ
-            "STPIMS-ERR-102"  // СМС не отправилось
+            "STPIMS-ERR-102", // СМС не отправилось
+            "STPIMS-ERR-120"  // Платеж временно недоступен
     );
 
-    /** True when the code means the provider (or the bank behind it) could not be reached. */
+    /**
+     * Our own integration, our own credentials or our own store ids are wrong — never the
+     * player's card. Retrying will not help until somebody fixes the configuration, but the
+     * player must still be told the <b>service</b> failed and not that their card was
+     * refused: a 403 shown as "card declined" sends people off to try another card for a
+     * problem no card of theirs can fix, and hides the outage from us behind what look like
+     * ordinary declines.
+     *
+     * <p>HTTP 401 and 403 are here because both are the gateway refusing the call before
+     * ATMOS sees it — an expired or wrong consumer key, an IP that is not allowed, or an
+     * endpoint this merchant account may not call, which is what
+     * {@code POST /hold/multiple/create} answers today
+     * (see {@code docs/claude/atmos-endpoint-audit.md}).
+     */
+    private static final Set<String> MISCONFIGURED = Set.of(
+            "HTTP_401", "HTTP_403",
+            "STPIMS-ERR-001", // Внутренняя ошибка
+            "STPIMS-ERR-003", // Неверный партнер
+            "STPIMS-ERR-006", // Обязательные параметры не найдены
+            "STPIMS-ERR-007", // Неверный формат параметра
+            "STPIMS-ERR-009", // Неверные параметры
+            "STPIMS-ERR-017", // Неактивный партнер
+            "STPIMS-ERR-037", // Store ID не найден
+            "STPIMS-ERR-044", // Магазин с данным ID не найден
+            "STPIMS-ERR-056", // Проблема авторизации
+            "STPIMS-ERR-103"  // Терминал не найден
+    );
+
+    /**
+     * True when the refusal was the payment service's, not the card's: nothing happened to
+     * anybody's money, the player sees "the payment service failed, try again later" rather
+     * than a decline, and {@link uz.minipolya.minipolya_backend.provider.DeclineReason}
+     * gives the row no reason at all.
+     *
+     * <p>Deliberately <b>not</b> here: {@code STPIMS-ERR-118} ("Статус платежа
+     * неизвестен"). An unknown status is not "nothing happened" — the money may
+     * have moved — and this method is also what decides a payment may be rolled back and
+     * retried, which is the one thing that must never be assumed about a payment.
+     */
     public static boolean isUnavailable(String code) {
-        return code != null && UNAVAILABLE.contains(code);
+        return code != null && (UNREACHABLE.contains(code) || MISCONFIGURED.contains(code));
+    }
+
+    /** True for the subset that is our own integration rather than a passing outage. */
+    public static boolean isMisconfigured(String code) {
+        return code != null && MISCONFIGURED.contains(code);
     }
 }

@@ -48,9 +48,21 @@ public enum DeclineReason {
      * player off to try another one — while the money had usually already been taken. It has
      * no reason instead, which the Mini App reads as {@code failed}: try again, not "your
      * card was refused".
+     *
+     * <p>The same goes, more sharply, for a refusal that is <b>our own</b>
+     * ({@link AtmosCodes#isMisconfigured}: HTTP 401 or 403, an inactive partner, a store id
+     * ATMOS does not know). No card of the player's can fix it, so telling them their card
+     * was declined sends them looking for another one for nothing — and hides an integration
+     * that is down behind what look like ordinary declines. It is logged as an error, because
+     * it is one of ours.
      */
     public static DeclineReason of(String providerCode) {
         if (providerCode == null || providerCode.isBlank()) {
+            return null;
+        }
+        if (AtmosCodes.isMisconfigured(providerCode)) {
+            log.error("Not a decline but the payment service refusing our own call — nothing to tell the "
+                    + "player about their card, and something for us to fix: code={}", providerCode);
             return null;
         }
         if (AtmosCodes.isUnavailable(providerCode)) {

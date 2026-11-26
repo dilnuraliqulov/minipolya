@@ -1,47 +1,74 @@
 #!/usr/bin/env bash
 #
-# One real ATMOS transaction, end to end, from the SERVER.
+# Real ATMOS calls, end to end, from the SERVER.
 #
 #     cd ~/minipolya/minipolyaBackend/deploy
-#     ./atmos-smoke.sh
+#     ./atmos-smoke.sh              # one payment: create, pre-apply, apply, get, reverse
+#     ./atmos-smoke.sh --hold       # the holds: single, cancelled, multiple, partial capture
+#     ./atmos-smoke.sh --all        # both, on one card binding, everything given back
+#     ./atmos-smoke.sh --bisect     # one payment per difference from what the app sends
 #
-# It asks for a card, the SMS code ATMOS sends you, and then: buys an access token, binds
-# the card, takes a small payment, asks ATMOS what became of it, gives it back in full, and
-# unbinds the card. One line per step with ATMOS's own result code and OK or FAILED.
+# It asks for a card and the SMS code ATMOS sends you, then buys an access token, binds the
+# card, does the work, and gives back / releases everything it took. Every step prints its
+# METHOD, its PATH, the HTTP status, ATMOS's own result code and OK or FAILED.
 #
 # Why a script and not a test: ATMOS answers only calls from an IP address it has allowed,
 # which is this server. Nothing of this can be run from a laptop, and the sandbox is the
-# only place the real answers — a real SMS, a real decline, a real commission — can be seen.
+# only place the real answers — a real SMS, a real decline, a real commission, a real
+# HTTP 403 — can be seen.
 #
 # WHAT IT NEVER PRINTS: the card number, the expiry, the SMS code, the card token, the
-# access token, the consumer key or secret, or any response body. The card and the code are
-# read without echo and handed to the container on standard input, so they never appear in
-# `ps`, in your shell history or in a file. The card token never leaves the container at
-# all: everything that needs it happens in one call inside it.
+# access token, the consumer key or secret, or a cardholder's phone number (only its last
+# two digits). The card and the code are read without echo and handed to the container on
+# standard input, so they never appear in `ps`, in your shell history or in a file. The card
+# token never leaves the container at all: everything that needs it happens in one call
+# inside it. Response bodies are NOT printed — only the result code and its description.
 #
 # WHERE IT RUNS: the curl calls run INSIDE the backend container, which is where the ATMOS
 # credentials already are (docker-compose.yml passes them). The host never sees them, and
 # you need no .env access to run this.
 #
-# WHAT IT COSTS: one payment of ATMOS_SMOKE_AMOUNT tiyin (500 so'm by default), reversed in
-# full at the last step. The money goes to ATMOS_STORE_ID — our own store, never a stadium
-# owner — so nothing lands in anybody else's account even if the reverse fails.
+# WHAT IT COSTS: payments of ATMOS_SMOKE_AMOUNT tiyin (500 so'm by default), each reversed
+# in full, and holds of the same amount, each released or captured-and-reversed. The money
+# goes to ATMOS_STORE_ID — our own store, never a stadium owner — so nothing lands in
+# anybody else's account even if a give-back fails.
 #
-#     ATMOS_SMOKE_AMOUNT=100000 ./atmos-smoke.sh     # 1 000 so'm instead of 500
+#     ATMOS_SMOKE_AMOUNT=100000 ./atmos-smoke.sh          # 1 000 so'm instead of 500
+#     ATMOS_SMOKE_HOLD_MINUTES=30 ./atmos-smoke.sh --hold # hold for 30 minutes, not 10
 #
 # PRODUCTION: it refuses to run when the backend says ATMOS_ENVIRONMENT=production, because
-# that would take real money from a real card. If you really mean to (one real payment,
+# that would take real money from a real card. If you really mean to (real payments, all
 # reversed), run it as:
 #
 #     ATMOS_SMOKE_ALLOW_PRODUCTION=yes ./atmos-smoke.sh
 #
-# Test cards for the sandbox are in the ATMOS docs ("Песочница"), not here.
+# Test cards for the sandbox are in the ATMOS docs ("Песочница"), not here. The OTP for
+# every test card is 111111, and so is the OTP for any payment or hold made with a card
+# token — which is why the hold steps need no SMS of their own.
 
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
 # ---------------------------------------------------------------------------------------
+# --hold: the holding endpoints, which the app uses for a team game's creating team and
+# which answered HTTP 403 to every POST /hold/multiple/create while merchant/pay/* worked
+# with the same token. Three things it settles that the docs do not say:
+#
+#   * whether /hold/create and /hold/multiple/create are forbidden alike. If only the
+#     multiple one is, the endpoint is the problem and not the credentials.
+#   * whether capture and cancel take the multi-hold's parent_id or each item's hold_id
+#     (scenario c captures by item id, then falls back to the parent).
+#   * whether a captured hold can be given back, and with which id (merchant/pay/reverse
+#     with the capture's success_trans_id is the only documented candidate).
+#
+# Every step prints the HTTP status as well as the ATMOS code, because the two say
+# different things: an HTTP 403 never reaches ATMOS at all, so it carries no result code,
+# and a result code of STPIMS-ERR-037 under HTTP 200 is ATMOS answering about our store.
+#
+# --all is --hold plus the ordinary payment, on one card binding — the whole surface the
+# app uses, in one run, with nothing left held or taken at the end.
+#
 # --bisect: WHY pay/apply answers STPIMS-ERR-041 in the app but OK here.
 #
 # The app's apply request is this script's apply request, field for field: the same single
@@ -71,12 +98,39 @@ cd "$(dirname "$0")"
 # receipts variant unless both OFD codes are configured in the backend.
 # ---------------------------------------------------------------------------------------
 
-bisect=no
+mode=single
 for arg in "$@"; do
   case "$arg" in
-    --bisect) bisect=yes ;;
-    -h|--help) sed -n '2,38p;45,75p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) printf 'Unknown option: %s (try --bisect or --help)\n' "$arg" >&2; exit 2 ;;
+    --bisect) mode=bisect ;;
+    --hold)   mode=hold ;;
+    --all)    mode=all ;;
+    -h|--help)
+      cat <<'USAGE'
+atmos-smoke.sh — real ATMOS calls from this server.
+
+  ./atmos-smoke.sh            one payment: pay/create, pre-apply, apply, get, reverse
+  ./atmos-smoke.sh --hold     the holds:
+                                a) hold -> apply -> get -> capture in full -> reverse
+                                b) hold -> apply -> cancel (send_cancel_sms=false) -> get
+                                c) multiple hold, 2 items -> apply -> capture each -> reverse
+                                d) hold -> apply -> capture PART of it -> get -> reverse
+  ./atmos-smoke.sh --all      the payment and the holds, on one card binding
+  ./atmos-smoke.sh --bisect   one payment per difference from what the app sends
+
+Every step prints METHOD, PATH, the HTTP status, ATMOS's result code and OK/FAILED.
+
+Settings (all optional):
+  ATMOS_SMOKE_AMOUNT=50000           how much to pay / hold, in tiyin (500 so'm)
+  ATMOS_SMOKE_HOLD_MINUTES=10        how long to hold it for
+  ATMOS_SMOKE_RECIPIENT_ID=<id>      --bisect: also try an owner's recipient id
+  ATMOS_SMOKE_ALLOW_PRODUCTION=yes   allow a run against ATMOS production (real money)
+
+It never prints a card number, an expiry, an SMS code, a card token, an access token, a
+credential, a response body or a full phone number. It runs the calls inside the backend
+container, where the credentials already are; you need no .env access.
+USAGE
+      exit 0 ;;
+    *) printf 'Unknown option: %s (try --hold, --all, --bisect or --help)\n' "$arg" >&2; exit 2 ;;
   esac
 done
 
@@ -108,18 +162,25 @@ fi
 amount=${ATMOS_SMOKE_AMOUNT:-50000}
 case "$amount" in ''|*[!0-9]*) die "ATMOS_SMOKE_AMOUNT must be a whole number of tiyin." ;; esac
 
+hold_minutes=${ATMOS_SMOKE_HOLD_MINUTES:-10}
+case "$hold_minutes" in ''|*[!0-9]*) die "ATMOS_SMOKE_HOLD_MINUTES must be a whole number of minutes." ;; esac
+
 # What the backend itself would send, printed so the run can be read against the app's.
 recipient_field=$(docker compose exec -T backend printenv ATMOS_RECIPIENT_FIELD 2>/dev/null | tr -d '\r' || true)
 recipient_field=${recipient_field:-store_id}
+hold_cap=$(docker compose exec -T backend printenv ATMOS_HOLD_MAX_MINUTES 2>/dev/null | tr -d '\r' || true)
+if [ -z "$hold_cap" ]; then hold_cap="10080 (the default)"; fi
 
-say "ATMOS smoke test${bisect:+}"
+say "ATMOS smoke test"
 say "  environment : $environment"
 say "  profiles    : $profiles"
-say "  amount      : $amount tiyin ($((amount / 100)) so'm), reversed at the end"
-say "  app sends   : ATMOS_RECIPIENT_FIELD=$recipient_field"
-if [ "$bisect" = yes ]; then
-  say "  mode        : --bisect, one payment per difference from the app's request"
-fi
+say "  amount      : $amount tiyin ($((amount / 100)) so'm), reversed or released at the end"
+say "  app sends   : ATMOS_RECIPIENT_FIELD=$recipient_field, ATMOS_HOLD_MAX_MINUTES=$hold_cap"
+case "$mode" in
+  bisect) say "  mode        : --bisect, one payment per difference from the app's request" ;;
+  hold)   say "  mode        : --hold, $hold_minutes-minute holds of $amount tiyin" ;;
+  all)    say "  mode        : --all, the payment and the holds on one card binding" ;;
+esac
 say ""
 
 # ---------------------------------------------------------------------------------------
@@ -128,7 +189,7 @@ say ""
 # Both read their secrets from standard input, never from an argument, and print nothing
 # but a step line each. Neither uses jq (the image has none): the few fields that are read
 # are pulled out with sed, which is enough for scalars and is why this is a smoke test and
-# not a client.
+# not a client. The container's shell is sh, not bash — no arrays, no [[ ]], no local.
 # ---------------------------------------------------------------------------------------
 
 COMMON=$(cat <<'EOS'
@@ -140,6 +201,12 @@ field() {
     | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p' | head -1
 }
 
+# EVERY value of a repeated flat field, one per line (the hold_ids of a multiple hold).
+fields() {
+  printf '%s' "$2" | tr ',' '\n' \
+    | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p'
+}
+
 # ATMOS's own result code, out of "result":{"code":"..."}.
 code_of() {
   printf '%s' "$1" | sed -n 's/.*"result"[^{]*{[^}]*"code"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
@@ -149,30 +216,92 @@ description_of() {
   printf '%s' "$1" | sed -n 's/.*"result"[^{]*{[^}]*"description"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
 }
 
-# step <name> <code> <ok|failed> [note]
-step() {
-  printf '  %-22s %-18s %s%s\n' "$1" "${2:--}" "$3" "${4:+   $4}"
+# A phone number never leaves the container whole, not even the one ATMOS has masked.
+mask_phone() {
+  printf '%s' "$1" | sed -n 's/.*\(..\)$/*********\1/p'
 }
 
-post() { # post <path> <json> ; answers the body on stdout
-  curl -sS --max-time 40 -X POST "$base$1" \
-    -H "Authorization: Bearer $access" \
-    -H 'Content-Type: application/json' \
-    -H 'Accept: application/json' \
-    --data-binary "$2"
+# step <label> <method> <path> <http> <code> <verdict> [note]
+step() {
+  printf '  %-22s %-6s %-30s %-4s %-18s %-6s %s\n' "$1" "$2" "$3" "${4:-000}" "${5:--}" "$6" "${7:-}"
+}
+
+header() {
+  printf '  %-22s %-6s %-30s %-4s %-18s %-6s %s\n' STEP METHOD PATH HTTP 'ATMOS CODE' '' ''
+}
+
+# call <METHOD> <path> [json]
+# Sets method, path, http, body, code, desc. Returns 1 only when there was no answer at
+# all; an HTTP error or an ATMOS refusal is an answer and is left to the caller to judge.
+call() {
+  method=$1
+  path=$2
+  if [ "$#" -ge 3 ]; then
+    raw=$(curl -sS --max-time 40 -X "$method" "$base$path" \
+      -H "Authorization: Bearer $access" \
+      -H 'Content-Type: application/json' \
+      -H 'Accept: application/json' \
+      -w '%{http_code}' \
+      --data-binary "$3") || raw=''
+  else
+    raw=$(curl -sS --max-time 40 -X "$method" "$base$path" \
+      -H "Authorization: Bearer $access" \
+      -H 'Content-Type: application/json' \
+      -H 'Accept: application/json' \
+      -w '%{http_code}') || raw=''
+  fi
+  if [ -z "$raw" ]; then
+    http=000
+    body=''
+    code=''
+    desc='no answer'
+    return 1
+  fi
+  http=$(printf '%s' "$raw" | tail -c 3)
+  body=${raw%???}
+  code=$(code_of "$body")
+  desc=$(description_of "$body")
+  return 0
+}
+
+# expect <label> [note] — OK when the HTTP status is 2xx AND the result code is OK.
+expect() {
+  case "$http" in
+    2??) ;;
+    *) step "$1" "$method" "$path" "$http" "${code:--}" FAILED "${desc:-HTTP $http, no ATMOS answer}"
+       return 1 ;;
+  esac
+  if [ "$code" = "OK" ]; then
+    step "$1" "$method" "$path" "$http" "$code" OK "${2:-}"
+    return 0
+  fi
+  step "$1" "$method" "$path" "$http" "${code:--}" FAILED "$desc"
+  return 1
+}
+
+# told <label> <verdict> [note] — a step whose code is the answer, not a pass or a fail.
+told() {
+  step "$1" "$method" "$path" "$http" "${code:--}" "$2" "${3:-$desc}"
 }
 
 get_token() {
-  body=$(curl -sS --max-time 40 -X POST "$base/token?grant_type=client_credentials" \
+  raw=$(curl -sS --max-time 40 -X POST "$base/token?grant_type=client_credentials" \
     -u "$ATMOS_CONSUMER_KEY:$ATMOS_CONSUMER_SECRET" \
     -H 'Content-Type: application/x-www-form-urlencoded' \
-    -d 'grant_type=client_credentials') || { step token - FAILED "no answer"; return 1; }
-  access=$(field access_token "$body")
-  if [ -z "$access" ]; then
-    step token - FAILED "no access_token in the answer"
+    -w '%{http_code}' \
+    -d 'grant_type=client_credentials') || raw=''
+  if [ -z "$raw" ]; then
+    step token POST /token 000 - FAILED "no answer"
     return 1
   fi
-  step token - OK "valid $(field expires_in "$body") s"
+  http=$(printf '%s' "$raw" | tail -c 3)
+  body=${raw%???}
+  access=$(field access_token "$body")
+  if [ -z "$access" ]; then
+    step token POST /token "$http" - FAILED "no access_token in the answer"
+    return 1
+  fi
+  step token POST /token "$http" - OK "valid $(field expires_in "$body") s"
 }
 EOS
 )
@@ -185,18 +314,12 @@ mm=$(printf '%s' "$expiry" | tr -cd '0-9' | cut -c1-2)
 yy=$(printf '%s' "$expiry" | tr -cd '0-9' | cut -c3-4)
 card=$(printf '%s' "$card" | tr -cd '0-9')
 
+header
 get_token || exit 1
 
-body=$(post /partner/bind-card/init "{\"card_number\":\"$card\",\"expiry\":\"$yy$mm\"}") \
-  || { step bind-card/init - FAILED "no answer"; exit 1; }
-code=$(code_of "$body")
-if [ "$code" != "OK" ]; then
-  step bind-card/init "$code" FAILED "$(description_of "$body")"
-  exit 1
-fi
-binding=$(field transaction_id "$body")
-step bind-card/init "$code" OK "SMS sent to $(field phone "$body")"
-printf 'BINDING %s\n' "$binding"
+call POST /partner/bind-card/init "{\"card_number\":\"$card\",\"expiry\":\"$yy$mm\"}" || true
+expect bind-card/init "SMS sent to $(mask_phone "$(field phone "$body")")" || exit 1
+printf 'BINDING %s\n' "$(field transaction_id "$body")"
 EOS
 )
 
@@ -206,28 +329,33 @@ read -r otp
 read -r amount
 read -r mode
 read -r recipient_id
+read -r hold_minutes
 
-# The examples send ids as numbers; quote one that is not.
+# The payment examples send ids as numbers; quote one that is not. The HOLD examples quote
+# store_id every time, and so does the app (a store id written "0001" must not become 1),
+# so hold bodies use store_q and payment bodies use store.
 id_json() {
   case "$1" in '' | *[!0-9]*) printf '"%s"' "$1" ;; *) printf '%s' "$1" ;; esac
 }
 store=$(id_json "$ATMOS_STORE_ID")
+store_q="\"$ATMOS_STORE_ID\""
 
+header
 get_token || exit 1
 
 # ---- the card. Its token is used below and never printed or written anywhere. ----
-body=$(post /partner/bind-card/confirm "{\"transaction_id\":$binding,\"otp\":\"$otp\"}") \
-  || { step bind-card/confirm - FAILED "no answer"; exit 1; }
-code=$(code_of "$body")
-if [ "$code" != "OK" ]; then
-  step bind-card/confirm "$code" FAILED "$(description_of "$body")"
-  exit 1
-fi
+call POST /partner/bind-card/confirm "{\"transaction_id\":$binding,\"otp\":\"$otp\"}" || true
+expect bind-card/confirm "card bound" || exit 1
 card_token=$(field card_token "$body")
 card_id=$(field card_id "$body")
-step bind-card/confirm "$code" OK "card bound"
 
-# ---- one whole payment: create, pre-apply, apply, get, reverse ----
+failures=''
+note_failure() { failures="$failures $1"; }
+blank() { printf '\n'; }
+account_of() { printf 'smoke-%s-%s' "$1" "$(date +%s)"; }
+
+# ---------------------------------------------------------------------------------------
+# One whole payment: create, pre-apply, apply, get, reverse.
 #
 # pay_once <label> <create-store-json> <terminal-id|''> <account> <ofd yes|no>
 #
@@ -236,6 +364,7 @@ step bind-card/confirm "$code" OK "card bound"
 # pay/get afterwards — an apply that answers "connection problem" for money ATMOS has
 # already taken is the whole reason this exists — and reverses anything that did move, so
 # no variant can leave money behind.
+# ---------------------------------------------------------------------------------------
 pay_once() {
   label=$1
   create_store=$2
@@ -250,59 +379,47 @@ pay_once() {
   fi
   create="$create}"
 
-  body=$(post /merchant/pay/create "$create") || { step "${label}pay/create" - FAILED "no answer"; return 1; }
-  code=$(code_of "$body")
+  call POST /merchant/pay/create "$create" || true
   txn=$(field transaction_id "$body")
-  if [ "$code" != "OK" ] || [ -z "$txn" ]; then
-    step "${label}pay/create" "$code" FAILED "$(description_of "$body")"
+  if ! expect "${label}pay/create" "transaction $txn" || [ -z "$txn" ]; then
     return 1
   fi
-  step "${label}pay/create" "$code" OK "transaction $txn"
 
-  body=$(post /merchant/pay/pre-apply \
-    "{\"store_id\":$store,\"transaction_id\":$txn,\"card_token\":\"$card_token\"}") \
-    || { step "${label}pay/pre-apply" - FAILED "no answer"; return 1; }
-  code=$(code_of "$body")
-  if [ "$code" != "OK" ]; then
-    step "${label}pay/pre-apply" "$code" FAILED "$(description_of "$body")"
-    return 1
-  fi
-  step "${label}pay/pre-apply" "$code" OK
+  call POST /merchant/pay/pre-apply \
+    "{\"store_id\":$store,\"transaction_id\":$txn,\"card_token\":\"$card_token\"}" || true
+  expect "${label}pay/pre-apply" || return 1
 
   # A card token needs no SMS code of its own: the docs' fixed 111111 is what confirms it.
-  body=$(post /merchant/pay/apply "{\"store_id\":$store,\"transaction_id\":$txn,\"otp\":\"111111\"}") \
-    || { step "${label}pay/apply" - FAILED "no answer, the payment may still have gone through"; body=''; }
-  apply_code=$(code_of "$body")
+  call POST /merchant/pay/apply "{\"store_id\":$store,\"transaction_id\":$txn,\"otp\":\"111111\"}" || true
+  apply_code=$code
   success=$(field success_trans_id "$body")
-  if [ "$apply_code" = "OK" ]; then
-    step "${label}pay/apply" "$apply_code" OK "confirmed=$(field confirmed "$body"), success_trans_id $success"
-  else
-    step "${label}pay/apply" "${apply_code:--}" FAILED "$(description_of "$body")"
-  fi
+  expect "${label}pay/apply" "confirmed=$(field confirmed "$body"), success_trans_id $success" || true
 
   # ---- what ATMOS says about it, the way the reconcile job asks ----
-  body=$(post /merchant/pay/get "{\"store_id\":$store,\"transaction_id\":$txn}") || body=''
+  call POST /merchant/pay/get "{\"store_id\":$store,\"transaction_id\":$txn}" || true
   confirmed=$(field confirmed "$body")
   [ -n "$success" ] || success=$(field success_trans_id "$body")
-  step "${label}pay/get" "$(code_of "$body")" OK "confirmed=${confirmed:-?}, amount $(field amount "$body") tiyin"
+  told "${label}pay/get" OK "confirmed=${confirmed:-?}, amount $(field amount "$body") tiyin"
 
   # ---- and back in full. There is no partial reverse anywhere in this application. ----
-  if [ -z "$success" ] || [ "$success" = "null" ]; then
-    step "${label}pay/reverse" - OK "nothing to give back"
-  else
-    body=$(post /merchant/pay/reverse "{\"transaction_id\":$success,\"reason\":\"ATMOS smoke test\"}") \
-      || { step "${label}pay/reverse" - FAILED "no answer: CHECK THE MONEY BY HAND"; return 1; }
-    code=$(code_of "$body")
-    if [ "$code" = "OK" ]; then
-      step "${label}pay/reverse" "$code" OK "$amount tiyin back"
-    else
-      step "${label}pay/reverse" "$code" FAILED "$(description_of "$body") - CHECK THE MONEY BY HAND"
-      return 1
-    fi
-  fi
+  reverse "${label}pay/reverse" "$success" "$amount tiyin back" || return 1
 
   [ "$apply_code" = "OK" ] || return 2
   return 0
+}
+
+# reverse <label> <success_trans_id> <note>
+reverse() {
+  if [ -z "$2" ] || [ "$2" = "null" ]; then
+    step "$1" '-' '-' '-' '-' OK "nothing to give back"
+    return 0
+  fi
+  call POST /merchant/pay/reverse "{\"transaction_id\":$2,\"reason\":\"ATMOS smoke test\"}" || true
+  if expect "$1" "$3"; then
+    return 0
+  fi
+  printf '      ^ CHECK THE MONEY BY HAND: transaction %s was not given back\n' "$2"
+  return 1
 }
 
 uuid_account() {
@@ -310,62 +427,216 @@ uuid_account() {
   printf '0190c3a1-0000-7000-8000-%012d' "$(date +%s)"
 }
 
-failures=''
-note_failure() { failures="$failures $1"; }
+# ---------------------------------------------------------------------------------------
+# The holds. Each scenario leaves nothing held and nothing taken.
+# ---------------------------------------------------------------------------------------
 
-if [ "$mode" = bisect ]; then
-  say_blank() { printf '\n'; }
+# hold_create <account> <amount> -> sets hold_id
+hold_create() {
+  call POST /hold/create "{\"card_token\":\"$card_token\",\"store_id\":$store_q,\"account\":\"$1\",\"payment_details\":\"MiniPolya smoke\",\"amount\":\"$2\",\"duration\":\"$hold_minutes\"}" || true
+  hold_id=$(field hold_id "$body")
+  expect hold/create "hold_id $hold_id" || return 1
+  [ -n "$hold_id" ] || return 1
+  return 0
+}
 
-  say_blank
-  printf '  1. baseline: our own store_id, a short account, no ofd_items\n'
-  pay_once "  " "$store" '' "smoke-$(date +%s)" no || note_failure script
+hold_apply() {
+  call PUT "/hold/apply/$1" '{"otp":"111111"}' || true
+  expect hold/apply "hold_till $(field hold_till "$body")" || return 1
+  return 0
+}
 
-  say_blank
-  printf '  2. the account the app sends: a 36-character UUID\n'
-  pay_once "  " "$store" '' "$(uuid_account)" no || note_failure account
+hold_get() {
+  call GET "/hold/$1" || true
+  case "$code" in
+    OK) told hold/get OK "confirmed=$(field confirmed "$body"), amount $(field amount "$body") tiyin" ;;
+    STPIMS-ERR-142) told hold/get OK "created, not yet applied" ;;
+    STPIMS-ERR-144|STPIMS-ERR-145) told hold/get OK "gone: $desc" ;;
+    *) told hold/get FAILED; note_failure hold/get ;;
+  esac
+}
 
-  if [ -n "$recipient_id" ]; then
-    say_blank
-    printf '  3. and pay/create naming the OWNER recipient in store_id, as the app does\n'
-    pay_once "  " "$(id_json "$recipient_id")" '' "$(uuid_account)" no || note_failure recipient-store_id
-
-    say_blank
-    printf '  4. and that recipient in terminal_id instead, our own store in store_id\n'
-    pay_once "  " "$store" "$recipient_id" "$(uuid_account)" no || note_failure recipient-terminal_id
+# hold_capture <id> [amount] -> sets success
+hold_capture() {
+  if [ "$#" -ge 2 ]; then
+    call POST "/hold/$1" "{\"amount\":$2}" || true
   else
-    say_blank
-    printf '  3. skipped: set ATMOS_SMOKE_RECIPIENT_ID to try an owner recipient id\n'
+    call POST "/hold/$1" '{}' || true
   fi
+  success=$(field success_trans_id "$body")
+  expect hold/capture "success_trans_id $success, amount $(field amount "$body") tiyin" || return 1
+  return 0
+}
 
-  if [ -n "${ATMOS_OFD_CODE_RENTAL:-}" ] && [ -n "${ATMOS_OFD_CODE_SERVICE:-}" ]; then
-    say_blank
-    printf '  5. and ofd_items, which the app sends when both OFD codes are set\n'
-    pay_once "  " "$store" '' "$(uuid_account)" yes || note_failure ofd_items
+# hold_cancel <id> <send_cancel_sms true|false>
+hold_cancel() {
+  call DELETE "/hold/$1" "{\"send_cancel_sms\":$2}" || true
+  # The docs' own sample answer to the cancellation is STPIMS-ERR-145 ("холдирование
+  # отменено"), so that code IS the confirmation here — as it now is in the app.
+  case "$code" in
+    OK|STPIMS-ERR-145|STPIMS-ERR-144) told hold/cancel OK "released (send_cancel_sms=$2)"; return 0 ;;
+    *) told hold/cancel FAILED; return 1 ;;
+  esac
+}
+
+# a) a hold, applied, read, captured in full, given back
+hold_single() {
+  blank
+  printf '  a) one hold of %s tiyin for %s minutes, captured in full and reversed\n' "$amount" "$hold_minutes"
+  hold_create "$(account_of a)" "$amount" || { note_failure hold/create; return 1; }
+  hold_apply "$hold_id" || { note_failure hold/apply; hold_cancel "$hold_id" false || true; return 1; }
+  hold_get "$hold_id"
+  if hold_capture "$hold_id"; then
+    reverse hold/reverse "$success" "$amount tiyin back" \
+      || printf '      ^ ATMOS documents no reverse for a captured hold; this is the open question.\n'
   else
-    say_blank
-    printf '  5. skipped: no OFD codes are configured, so the app sends no ofd_items either\n'
+    note_failure hold/capture
+    hold_cancel "$hold_id" false || true
+    return 1
+  fi
+}
+
+# b) a hold, applied, then cancelled — and read back to see that it is gone
+hold_cancelled() {
+  blank
+  printf '  b) one hold, cancelled with send_cancel_sms=false, then read back\n'
+  hold_create "$(account_of b)" "$amount" || { note_failure hold/create; return 1; }
+  hold_apply "$hold_id" || { note_failure hold/apply; hold_cancel "$hold_id" false || true; return 1; }
+  hold_cancel "$hold_id" false || { note_failure hold/cancel; return 1; }
+  hold_get "$hold_id"
+}
+
+# c) a multiple hold of two items on our own store, each item captured by its own hold_id
+hold_multiple() {
+  blank
+  printf '  c) a multiple hold, 2 items of %s tiyin on our own store, captured item by item\n' "$amount"
+  account=$(account_of c)
+  item="{\"store_id\":$store_q,\"account\":\"$account\",\"payment_details\":\"MiniPolya smoke\",\"amount\":\"$amount\"}"
+  call POST /hold/multiple/create \
+    "{\"card_token\":\"$card_token\",\"duration\":\"$hold_minutes\",\"items\":[$item,$item]}" || true
+  parent=$(field parent_id "$body")
+  item_ids=$(fields hold_id "$body")
+  if ! expect hold/multiple/create "parent_id $parent, items $(printf '%s' "$item_ids" | tr '\n' ' ')"; then
+    note_failure hold/multiple/create
+    printf '      ^ THIS is the call that answers HTTP 403. The backend log now carries the body;\n'
+    printf '        `docker compose logs backend | grep "ATMOS refused"` has the gateway fault code.\n'
+    return 1
   fi
 
-  printf '\n'
-  if [ -n "$failures" ]; then
-    printf 'FAILED variants:%s\n' "$failures"
-    printf 'The first one named is the difference that breaks pay/apply; 1 failing means
-something other than the request shape is wrong.\n'
-    exit 1
+  call PUT "/hold/multiple/apply/$parent" '{"otp":"111111"}' || true
+  if ! expect hold/multiple/apply "items $(printf '%s' "$(fields hold_till "$body")" | tr '\n' ' ')"; then
+    note_failure hold/multiple/apply
+    hold_cancel "$parent" false || true
+    return 1
   fi
-  printf 'Every variant went through. The difference is not in the request shape:\n'
-  printf 'compare the backend log line "ATMOS single payment:" with the variants above.\n'
-else
-  pay_once '' "$store" '' "smoke-$(date +%s)" no || exit 1
-fi
+
+  # Which id the follow-up calls take is undocumented: try each item's own hold_id, and
+  # fall back to the parent id if ATMOS does not know them.
+  captured=''
+  for one in $item_ids; do
+    if hold_capture "$one"; then
+      captured="$captured $success"
+    else
+      printf '      ^ item %s could not be captured by its own hold_id\n' "$one"
+    fi
+  done
+  if [ -z "$captured" ]; then
+    printf '      falling back to the parent id, which is what the app sends today\n'
+    if hold_capture "$parent"; then
+      captured=$success
+    else
+      note_failure hold/multiple/capture
+      hold_cancel "$parent" false || true
+      return 1
+    fi
+  fi
+  for one in $captured; do
+    reverse hold/reverse "$one" "$amount tiyin back" || true
+  done
+  hold_get "$parent"
+}
+
+# d) a partial capture: the docs allow an amount no larger than the one held
+hold_partial() {
+  blank
+  part=$((amount / 2))
+  printf '  d) one hold of %s tiyin, capturing only %s of it\n' "$amount" "$part"
+  hold_create "$(account_of d)" "$amount" || { note_failure hold/create; return 1; }
+  hold_apply "$hold_id" || { note_failure hold/apply; hold_cancel "$hold_id" false || true; return 1; }
+  if hold_capture "$hold_id" "$part"; then
+    hold_get "$hold_id"
+    reverse hold/reverse "$success" "$part tiyin back" || true
+  else
+    printf '      ^ partial capture refused; the app never sends an amount, so this is information only\n'
+    hold_cancel "$hold_id" false || true
+  fi
+}
+
+hold_suite() {
+  hold_single || true
+  hold_cancelled || true
+  hold_multiple || true
+  hold_partial || true
+}
+
+# ---------------------------------------------------------------------------------------
+# What this run does.
+# ---------------------------------------------------------------------------------------
+
+case "$mode" in
+  bisect)
+    blank
+    printf '  1. baseline: our own store_id, a short account, no ofd_items\n'
+    pay_once "  " "$store" '' "smoke-$(date +%s)" no || note_failure script
+
+    blank
+    printf '  2. the account the app sends: a 36-character UUID\n'
+    pay_once "  " "$store" '' "$(uuid_account)" no || note_failure account
+
+    if [ -n "$recipient_id" ]; then
+      blank
+      printf '  3. and pay/create naming the OWNER recipient in store_id, as the app does\n'
+      pay_once "  " "$(id_json "$recipient_id")" '' "$(uuid_account)" no || note_failure recipient-store_id
+
+      blank
+      printf '  4. and that recipient in terminal_id instead, our own store in store_id\n'
+      pay_once "  " "$store" "$recipient_id" "$(uuid_account)" no || note_failure recipient-terminal_id
+    else
+      blank
+      printf '  3. skipped: set ATMOS_SMOKE_RECIPIENT_ID to try an owner recipient id\n'
+    fi
+
+    if [ -n "${ATMOS_OFD_CODE_RENTAL:-}" ] && [ -n "${ATMOS_OFD_CODE_SERVICE:-}" ]; then
+      blank
+      printf '  5. and ofd_items, which the app sends when both OFD codes are set\n'
+      pay_once "  " "$store" '' "$(uuid_account)" yes || note_failure ofd_items
+    else
+      blank
+      printf '  5. skipped: no OFD codes are configured, so the app sends no ofd_items either\n'
+    fi
+    ;;
+  hold)
+    hold_suite
+    ;;
+  all)
+    blank
+    printf '  the ordinary payment\n'
+    pay_once "  " "$store" '' "smoke-$(date +%s)" no || note_failure payment
+    hold_suite
+    ;;
+  *)
+    pay_once '' "$store" '' "smoke-$(date +%s)" no || note_failure payment
+    ;;
+esac
 
 # ---- tidy up: the test card does not stay bound ----
-body=$(post /partner/remove-card "{\"id\":$card_id,\"token\":\"$card_token\"}") || body=''
-code=$(code_of "$body")
-if [ "$code" = "OK" ]; then
-  step remove-card "$code" OK
-else
-  step remove-card "${code:--}" FAILED "the card stays bound; the payment itself was fine"
+blank
+call POST /partner/remove-card "{\"id\":$card_id,\"token\":\"$card_token\"}" || true
+expect remove-card || printf '      ^ the card stays bound; what it was used for above is unaffected\n'
+
+if [ -n "$failures" ]; then
+  printf '\nFAILED:%s\n' "$failures"
+  exit 1
 fi
 EOS
 )
@@ -405,30 +676,35 @@ say ""
 # Half two: everything that touches the card token, in one call inside the container.
 # ---------------------------------------------------------------------------------------
 
-mode=single
-[ "$bisect" = yes ] && mode=bisect
-
-if printf '%s\n%s\n%s\n%s\n%s\n' \
-     "$binding" "$otp" "$amount" "$mode" "${ATMOS_SMOKE_RECIPIENT_ID:-}" \
+if printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
+     "$binding" "$otp" "$amount" "$mode" "${ATMOS_SMOKE_RECIPIENT_ID:-}" "$hold_minutes" \
    | docker compose exec -T backend sh -c "$COMMON
 $PAY"; then
   unset otp
   say ""
-  if [ "$mode" = bisect ]; then
-    say "ALL VARIANTS OK. Every payment was taken and given back in full."
-  else
-    say "ALL STEPS OK. The payment was taken and given back in full."
-  fi
+  case "$mode" in
+    bisect) say "ALL VARIANTS OK. Every payment was taken and given back in full." ;;
+    hold)   say "ALL HOLD STEPS OK. Nothing is still held and nothing is still taken." ;;
+    all)    say "ALL STEPS OK. The payment and every hold were given back or released." ;;
+    *)      say "ALL STEPS OK. The payment was taken and given back in full." ;;
+  esac
 else
   unset otp
   say ""
-  if [ "$mode" = bisect ]; then
-    say "A variant FAILED. The line above names the difference that breaks pay/apply;"
-    say "the backend log line \"ATMOS single payment:\" says which shape this server sends."
-  else
-    say "FAILED. The step above says which one and what ATMOS answered."
-    say "Nothing is retried automatically; if pay/apply or pay/reverse is the one that failed,"
-    say "check the transaction in the ATMOS cabinet before running this again."
-  fi
+  case "$mode" in
+    bisect)
+      say "A variant FAILED. The line above names the difference that breaks pay/apply;"
+      say "the backend log line \"ATMOS single payment:\" says which shape this server sends." ;;
+    hold|all)
+      say "A step FAILED. The line above has its method, path, HTTP status and ATMOS code."
+      say "For an HTTP 403 or 401 there is no ATMOS code: the gateway refused the call before"
+      say "ATMOS saw it, and the reason is in the body, which the backend now logs:"
+      say "    docker compose logs backend | grep 'ATMOS refused'"
+      say "Check the ATMOS cabinet for anything still held before running this again." ;;
+    *)
+      say "FAILED. The step above says which one and what ATMOS answered."
+      say "Nothing is retried automatically; if pay/apply or pay/reverse is the one that failed,"
+      say "check the transaction in the ATMOS cabinet before running this again." ;;
+  esac
   exit 1
 fi

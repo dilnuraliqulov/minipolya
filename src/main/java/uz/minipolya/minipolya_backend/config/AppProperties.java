@@ -143,10 +143,18 @@ public class AppProperties {
         private String provider = "fake";
 
         /**
-         * The longest a team game's hold may last, in minutes (default 43 200 = 30 days).
-         * A game whose hold would need longer cannot be created.
+         * {@code ATMOS_HOLD_MAX_MINUTES}: the longest a team game's hold may last, in minutes
+         * (default 10 080 = 7 days). A game whose hold would need longer cannot be created
+         * yet — see {@code TeamGameService.holdMinutes} and, for what the player is told,
+         * {@code docs/claude/payments.md}.
+         *
+         * <p>It is a setting and not a constant because ATMOS has never documented how long a
+         * hold may last: the parameter table says only "hold duration in minutes". Seven days
+         * is what their own examples and support have been willing to confirm, so that is the
+         * default, and it can be raised the moment ATMOS says a longer one holds — a restart,
+         * not a release.
          */
-        private int holdMaxMinutes = 43_200;
+        private int holdMaxMinutes = 10_080;
 
         /**
          * How long a request waits for a payment whose confirmation the provider did not

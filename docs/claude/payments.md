@@ -50,11 +50,11 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
 | `confirmCharge(transactionIds, otp)` → successTransIds, commission, ofdUrl | `POST /merchant/bulk/pay/apply` |
 | `getCharge(transactionId)` — after a lost answer | `POST /merchant/pay/get` |
 | `reverse(successTransId, reason)` — the whole transaction | `POST /merchant/pay/reverse` |
-| `hold(splits, cardToken, account, durationMinutes)` → holdId | `POST /hold/multiple/create` |
+| `hold(splits, cardToken, account, durationMinutes)` → holdId | `POST /hold/multiple/create` (no `/merchant` prefix) |
 | `confirmHold(holdId, otp)` | `PUT /hold/multiple/apply/{id}` |
 | `captureHold(holdId)` — always the full amount | `POST /hold/{id}` |
-| `releaseHold(holdId)` | `DELETE /hold/{id}` (`send_cancel_sms=true`) |
-| `getHold(holdId)` | `GET /hold/{id}` |
+| `releaseHold(holdId)` | `DELETE /hold/{id}` (`send_cancel_sms=true`); `OK`, `-145` and `-144` all mean released |
+| `getHold(holdId)` | `GET /hold/{id}`; `-142` is "created, not applied" |
 
 - A split names the stadium owner's ATMOS recipient (`owner_legal_details.atmos_recipient_id`,
   the only place it is stored — see "Owner legal details") or the platform, whose
@@ -87,8 +87,15 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   deployed server and nowhere else. Token from `POST /token`
   (Basic auth, `client_credentials`), cached until `expires_in` − 5 min; a 401 refreshes
   it once. `ofd_items` are sent only when `ATMOS_OFD_CODE_RENTAL` and
-  `ATMOS_OFD_CODE_SERVICE` are both set; `ofd_url` is saved on the payment. It never
-  logs a request or response body — only operation names, ids and result codes.
+  `ATMOS_OFD_CODE_SERVICE` are both set; `ofd_url` is saved on the payment.
+- **What a refusal writes down.** A request body is never logged. A **response** body is,
+  but only when ATMOS did not say OK: the line carries the method, the path, the HTTP
+  status, the result code, its description and the body with every card field redacted by
+  name (`provider/atmos/AtmosSafeBody`, tested by `AtmosSafeBodyTest`). It was added
+  because an HTTP 403 carries no result code at all — the reason is in the body — and
+  "ATMOS answered HTTP 403" was the whole of what we knew for a week. Card numbers,
+  expiry dates, SMS codes, card tokens, credentials, access tokens and phone numbers are
+  still never logged. See [atmos-endpoint-audit.md](atmos-endpoint-audit.md).
 - **Who a split is paid to.** The owner's split carries the recipient id an admin entered on
   the owner's legal details (`owner_legal_details.atmos_recipient_id`, required once the
   contract is `signed`), and the platform's split carries none — the provider fills in
@@ -210,7 +217,7 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
 
 | Rule | The creating team (hold) | The other team (charged) |
 |---|---|---|
-| Creating a game | **hold** for (minutes to the 3-hour point) + 120, capped at `app.payments.hold-max-minutes` (43 200); longer → the game cannot be created | — |
+| Creating a game | **hold** for (minutes to the 3-hour point) + 120, capped at `ATMOS_HOLD_MAX_MINUTES` (10 080 = 7 days); longer → the game cannot be created yet, see below | — |
 | Waiting, slot taken by a booking | **release** | — |
 | Waiting, 3-hour point (`GameTimeoutJob`) | **release** (already released counts as done) | — |
 | Waiting, leader cancels before the deadline | **release** | — |
@@ -222,6 +229,30 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
 | Confirmed, a leader cancels past the 3-hour point | the leaver's money: kept | the team that stays: **reverse** |
 | Owner cancels the booking / admin blocks the stadium | **reverse** | **reverse** |
 | A team's remainder in the app | **charge**; reversed with the rest of that team's money when it is given back | |
+
+#### How far ahead a team game can be created
+
+A team game is created **with its hold or not at all**: the creating team's money is held the
+moment the game goes on the board, which is the promise the whole flow rests on. So the hold
+has to last until the 3-hour point — plus `TeamGameService.HOLD_SLACK_MINUTES` (120), so the
+timeout job can release it before it lapses — and a game too far off to be held that long
+**cannot be created yet**.
+
+- The cap is `ATMOS_HOLD_MAX_MINUTES`, default **10 080 minutes (7 days)**. ATMOS has never
+  documented a maximum hold duration (open question 8 in
+  [atmos-endpoint-audit.md](atmos-endpoint-audit.md)), so it is a setting: raise it with a
+  restart the moment they confirm a longer hold really holds.
+- `TeamGameService.holdHorizonDays()` turns the cap into the number a player is told — whole
+  days, rounded down, because a day we promise has to work. With the default it is **7**.
+- Past it, `POST /api/games` answers **400**: "A team game can be created at most 7 days
+  before kick-off: creating it holds your team's money on the card until the game is
+  confirmed, and a card payment cannot hold it for longer. Create the game nearer the date."
+  The Mini App shows this as the Uzbek sentence in
+  `docs/frontend-field-changes-2026-11-26.md`.
+- **The alternative was rejected**: create the game now and hold later, once it is inside the
+  window. That would put a game on the board with nobody's money behind it, so a team could
+  withdraw — or its card could be gone — at the one moment an opponent has just committed.
+  A game two weeks out asked for a 19 591-minute hold; that is what the cap refuses.
 
 Each row is tested in `TeamGameOperationMappingTest`. Joining (see "Joining" under
 team_vs_team, tested end to end in `TeamGameJoinPaymentTest`): (1) book the slot
@@ -320,6 +351,13 @@ credentials or access tokens. The request DTOs and provider records override
 
 ### Open ATMOS questions
 
+> The full list, with what we do meanwhile and the endpoint-by-endpoint comparison behind
+> it, is [atmos-endpoint-audit.md](atmos-endpoint-audit.md). What follows is the short form.
+
+- [ ] **`POST /hold/multiple/create` answers HTTP 403** from the server, with a token
+      `merchant/pay/create` accepts. Is the holding API on our sandbox subscription? The
+      backend now logs the gateway's fault body; `deploy/atmos-smoke.sh --hold` reproduces it.
+- [ ] How long may a hold last? Capped at `ATMOS_HOLD_MAX_MINUTES` (7 days) meanwhile.
 - [ ] `store_id` vs `terminal_id`: which identifies a split's recipient (the bulk and
       hold requests use `store_id`, the responses `terminal_id`).
 - [ ] Bulk `pay/create`: `store_id` per `params` item (the table) or one at the top (the
@@ -331,8 +369,9 @@ credentials or access tokens. The request DTOs and provider records override
 - [ ] How is a captured hold reversed — which transaction id? We send the hold id.
 - [ ] `pay/get` and `hold/{id}` status values are not listed; `confirmed: true` is read as
       success / held.
-- [ ] `hold_till`'s format; and whether `DELETE /hold/{id}` answering `STPIMS-ERR-145`
-      means "released" (its example) or an error.
+- [ ] `hold_till`'s format. Whether `DELETE /hold/{id}` answering `STPIMS-ERR-145` means
+      "released" is **settled by its own example**, which answers exactly that: we read
+      `OK`, `-145` and `-144` as released and only `-143` as not.
 - [ ] The token lifetime: the text says 3600 s, the example 2525.
 - [ ] `/token`: `grant_type` in the form body (the docs) or the query string?
 - [ ] Card binding: no way to resend the SMS code is documented (only `pay/retry-otp`, for

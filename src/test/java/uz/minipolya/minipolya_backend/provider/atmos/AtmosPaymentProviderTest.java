@@ -2,6 +2,9 @@ package uz.minipolya.minipolya_backend.provider.atmos;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -26,6 +29,7 @@ import java.net.SocketTimeoutException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -43,6 +47,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /** Against a mocked ATMOS: no real call is ever made. Answers are shaped like the docs' examples. */
+@ExtendWith(OutputCaptureExtension.class)
 class AtmosPaymentProviderTest {
 
     private static final String BASE = "https://apigw.test";
@@ -51,7 +56,8 @@ class AtmosPaymentProviderTest {
     private static final String TOKEN_ANSWER = """
             {"access_token":"tok-abc","scope":"am_application_scope default","token_type":"Bearer","expires_in":3600}
             """;
-    private static final String OK = "\"result\":{\"code\":\"OK\",\"description\":\"Нет ошибок\"}";
+    private static final String OK_INNER = "\"code\":\"OK\",\"description\":\"Нет ошибок\"";
+    private static final String OK = "\"result\":{" + OK_INNER + "}";
 
     private final MovableClock clock = new MovableClock();
     private MockRestServiceServer server;
@@ -335,19 +341,35 @@ class AtmosPaymentProviderTest {
 
     // ---- holds ----
 
+    /**
+     * Field for field the docs' {@code POST /hold/multiple/create} example: {@code card_token}
+     * and {@code duration} at the top, one item per split with {@code store_id},
+     * {@code account}, {@code payment_details} and {@code amount} — every one of them quoted,
+     * because every hold example in the docs quotes them.
+     */
     @Test
     void aHoldIsCreatedWithItsItemsAndAppliedWithTheTokenOtp() {
         expectToken();
         server.expect(requestTo(BASE + "/hold/multiple/create"))
+                .andExpect(method(HttpMethod.POST))
                 .andExpect(jsonPath("$.card_token").value("card-token"))
                 .andExpect(jsonPath("$.duration").value("600"))
-                .andExpect(jsonPath("$.items[0].store_id").value(501))
+                .andExpect(jsonPath("$.store_id").doesNotExist())      // not a field of this call
+                .andExpect(jsonPath("$.items.length()").value(2))
+                .andExpect(jsonPath("$.items[0].store_id").value("501"))
+                .andExpect(jsonPath("$.items[0].account").value("a"))
+                .andExpect(jsonPath("$.items[0].payment_details").value("Pitch rental"))
                 .andExpect(jsonPath("$.items[0].amount").value("5076143"))
-                .andRespond(withSuccess("{" + OK + ",\"parent_id\":3001,\"items\":[{\"hold_id\":3002,\"account\":\"a\"}]}",
+                .andExpect(jsonPath("$.items[1].store_id").value("900"))
+                .andExpect(jsonPath("$.items[1].payment_details").value("MiniPolya service"))
+                .andExpect(jsonPath("$.items[1].amount").value("2533857"))
+                .andRespond(withSuccess("{" + OK + ",\"parent_id\":3001,\"items\":[{\"result\":null,"
+                        + "\"hold_id\":3002,\"account\":\"a\"},{\"result\":null,\"hold_id\":3003}]}",
                         MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/hold/multiple/apply/3001"))
                 .andExpect(method(HttpMethod.PUT))
                 .andExpect(jsonPath("$.otp").value("111111"))
+                .andExpect(jsonPath("$.hold_id").doesNotExist())       // the id travels in the path
                 .andRespond(withSuccess("{" + OK + ",\"parent_id\":3001,\"items\":[{\"hold_id\":3002}]}",
                         MediaType.APPLICATION_JSON));
 
@@ -359,6 +381,72 @@ class AtmosPaymentProviderTest {
         assertThat(created.holdTill()).isEqualTo(clock.now().plusMinutes(600));
         assertThat(held.status()).isEqualTo(ProviderStatus.HELD);
         server.verify();
+    }
+
+    /** A store id is text: {@code "0001"} must not reach ATMOS as the number 1. */
+    @Test
+    void aStoreIdThatStartsWithAZeroKeepsIt() {
+        properties.getAtmos().setPlatformRecipientId("0002");
+        expectToken();
+        server.expect(requestTo(BASE + "/hold/multiple/create"))
+                .andExpect(jsonPath("$.items[0].store_id").value("0001"))
+                .andExpect(jsonPath("$.items[1].store_id").value("0002"))
+                .andRespond(withSuccess("{" + OK + ",\"parent_id\":3001}", MediaType.APPLICATION_JSON));
+
+        provider.hold(new HoldRequest(List.of(Split.owner("0001", 5_076_143L), Split.platform(2_533_857L)),
+                "card-token", "a", 600));
+
+        server.verify();
+    }
+
+    /**
+     * The items get a {@code hold_till} each, milliseconds apart in the docs' own example.
+     * The hold is only as good as the first one to let go.
+     */
+    @Test
+    void theHoldLastsUntilTheEarliestItemLetsGo() {
+        expectToken();
+        server.expect(requestTo(BASE + "/hold/multiple/apply/3001"))
+                .andRespond(withSuccess("{" + OK + ",\"parent_id\":3001,\"items\":["
+                        + "{\"hold_id\":3002,\"hold_till\":\"2026-09-28T16:46:23.118Z\"},"
+                        + "{\"hold_id\":3003,\"hold_till\":\"2026-09-28T16:46:22.762Z\"}]}",
+                        MediaType.APPLICATION_JSON));
+
+        HoldOutcome held = provider.confirmHold("3001", null);
+
+        assertThat(held.holdTill()).isEqualTo(OffsetDateTime.parse("2026-09-28T16:46:22.762Z"));
+    }
+
+    /**
+     * An item may carry its own refusal under an OK envelope. Half a team's money held is
+     * not the hold that was asked for, so the item's code decides the whole hold.
+     */
+    @Test
+    void anItemThatDeclinesFailsTheWholeHold() {
+        expectToken();
+        server.expect(requestTo(BASE + "/hold/multiple/apply/3001"))
+                .andRespond(withSuccess("{" + OK + ",\"parent_id\":3001,\"items\":[{\"result\":{" + OK_INNER
+                        + "},\"hold_id\":3002},{\"result\":{\"code\":\"STPIMS-ERR-057\","
+                        + "\"description\":\"Недостаточно средств\"},\"hold_id\":3003}]}",
+                        MediaType.APPLICATION_JSON));
+
+        HoldOutcome held = provider.confirmHold("3001", null);
+
+        assertThat(held.status()).isEqualTo(ProviderStatus.FAILED);
+        assertThat(held.errorCode()).isEqualTo("STPIMS-ERR-057");
+    }
+
+    @Test
+    void anItemRefusedForAnyOtherReasonIsARefusal() {
+        expectToken();
+        server.expect(requestTo(BASE + "/hold/multiple/apply/3001"))
+                .andRespond(withSuccess("{" + OK + ",\"items\":[{\"result\":{\"code\":\"STPIMS-ERR-037\","
+                        + "\"description\":\"Store ID не найден\"},\"hold_id\":3002}]}",
+                        MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> provider.confirmHold("3001", null))
+                .isInstanceOf(PaymentProviderException.class)
+                .extracting(e -> ((PaymentProviderException) e).getCode()).isEqualTo("STPIMS-ERR-037");
     }
 
     @Test
@@ -382,6 +470,125 @@ class AtmosPaymentProviderTest {
                 .andRespond(withSuccess("{" + OK + "}", MediaType.APPLICATION_JSON));
 
         assertThat(provider.releaseHold("3001").status()).isEqualTo(ProviderStatus.RELEASED);
+    }
+
+    /**
+     * The docs' own sample answer to {@code DELETE /hold/{id}} is {@code STPIMS-ERR-145}
+     * ("холдирование отменено") — the confirmation, not a failure. Reading it as a
+     * failure threw {@link HoldCancelledException} out of every release that worked.
+     */
+    @Test
+    void aReleaseIsADoneReleaseEvenWhenItAnswersHoldCancelled() {
+        expectToken();
+        server.expect(requestTo(BASE + "/hold/3001"))
+                .andExpect(method(HttpMethod.DELETE))
+                .andRespond(withSuccess("{\"result\":{\"code\":\"STPIMS-ERR-145\",\"description\":"
+                        + "\"холдирование отменено\"},\"status\":-242,\"processing\":\"UZCARD\"}",
+                        MediaType.APPLICATION_JSON));
+
+        HoldOutcome released = provider.releaseHold("3001");
+
+        assertThat(released.status()).isEqualTo(ProviderStatus.RELEASED);
+        assertThat(released.errorCode()).isEqualTo("STPIMS-ERR-145");
+    }
+
+    /** A hold that had already lapsed is also a hold that is gone. */
+    @Test
+    void aReleaseOfAHoldThatHadAlreadyExpiredIsDoneToo() {
+        expectToken();
+        server.expect(requestTo(BASE + "/hold/3001"))
+                .andRespond(withSuccess("{\"result\":{\"code\":\"STPIMS-ERR-144\",\"description\":"
+                        + "\"Время холдирования истекло\"}}", MediaType.APPLICATION_JSON));
+
+        assertThat(provider.releaseHold("3001").status()).isEqualTo(ProviderStatus.RELEASED);
+    }
+
+    /** {@code -143} is the one code that means the money is still held. */
+    @Test
+    void aReleaseThatDidNotHappenIsARefusal() {
+        expectToken();
+        server.expect(requestTo(BASE + "/hold/3001"))
+                .andRespond(withSuccess("{\"result\":{\"code\":\"STPIMS-ERR-143\",\"description\":"
+                        + "\"холдирование не отменено\"}}", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> provider.releaseHold("3001"))
+                .isInstanceOf(PaymentProviderException.class)
+                .extracting(e -> ((PaymentProviderException) e).getCode()).isEqualTo("STPIMS-ERR-143");
+    }
+
+    @Test
+    void aHoldReadBackIsHeldWhenItIsConfirmed() {
+        expectToken();
+        server.expect(requestTo(BASE + "/hold/3001"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("{" + OK + ",\"store_transaction\":{\"confirmed\":true,"
+                        + "\"amount\":5000000}}", MediaType.APPLICATION_JSON));
+
+        assertThat(provider.getHold("3001").status()).isEqualTo(ProviderStatus.HELD);
+    }
+
+    /** {@code -142} is a hold created and never applied: pending, not an error. */
+    @Test
+    void aHoldThatWasNeverAppliedReadsAsPending() {
+        expectToken();
+        server.expect(requestTo(BASE + "/hold/3001"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("{\"result\":{\"code\":\"STPIMS-ERR-142\",\"description\":"
+                        + "\"холдирование не подтверждено\"}}", MediaType.APPLICATION_JSON));
+
+        HoldOutcome read = provider.getHold("3001");
+
+        assertThat(read.status()).isEqualTo(ProviderStatus.PENDING);
+        assertThat(read.errorCode()).isEqualTo("STPIMS-ERR-142");
+    }
+
+    // ---- what a refusal says in the log ----
+
+    /**
+     * The 403 this audit started from. The log must name the method, the path, the status and
+     * the body — the body is the only place a gateway says whether it refused the path, the
+     * request or the merchant account — and it must still not name a card or a token.
+     */
+    @Test
+    void aForbiddenCallIsLoggedWithItsMethodPathStatusAndBody(CapturedOutput output) {
+        expectToken();
+        server.expect(requestTo(BASE + "/hold/multiple/create"))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"fault\":{\"code\":900908,\"message\":\"Resource forbidden\","
+                                + "\"card_token\":\"tok-should-not-be-logged\"}}"));
+
+        assertThatThrownBy(() -> provider.hold(new HoldRequest(
+                List.of(Split.owner("501", 5_076_143L), Split.platform(2_533_857L)), "card-token", "a", 600)))
+                .isInstanceOf(PaymentProviderException.class)
+                .extracting(e -> ((PaymentProviderException) e).getCode()).isEqualTo("HTTP_403");
+
+        assertThat(output.getAll())
+                .contains("hold/multiple/create")
+                .contains("POST")
+                .contains("HTTP 403")
+                .contains("Resource forbidden")
+                .contains("900908")
+                .doesNotContain("tok-should-not-be-logged");
+    }
+
+    /** A result code that is not OK is logged the same way, body and all. */
+    @Test
+    void aRefusedResultCodeIsLoggedWithItsBody(CapturedOutput output) {
+        expectToken();
+        server.expect(requestTo(BASE + "/hold/multiple/create"))
+                .andRespond(withSuccess("{\"result\":{\"code\":\"STPIMS-ERR-037\",\"description\":"
+                        + "\"Store ID not found\"},\"card_pan\":\"986009******1840\"}", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> provider.hold(new HoldRequest(
+                List.of(Split.owner("501", 5_076_143L), Split.platform(2_533_857L)), "card-token", "a", 600)))
+                .isInstanceOf(PaymentProviderException.class);
+
+        assertThat(output.getAll())
+                .contains("/hold/multiple/create")
+                .contains("code=STPIMS-ERR-037")
+                .contains("Store ID not found")
+                .doesNotContain("986009******1840");
     }
 
     // ---- one recipient: the single-payment flow ----
@@ -658,7 +865,7 @@ class AtmosPaymentProviderTest {
         expectTokenOn(server2);
         server2.expect(requestTo(BASE + "/hold/multiple/create"))
                 .andExpect(jsonPath("$.items.length()").value(1))
-                .andExpect(jsonPath("$.items[0].store_id").value(777))
+                .andExpect(jsonPath("$.items[0].store_id").value("777"))
                 .andExpect(jsonPath("$.items[0].amount").value("7609999"))
                 .andRespond(withSuccess("{" + OK + ",\"parent_id\":3001}", MediaType.APPLICATION_JSON));
 
