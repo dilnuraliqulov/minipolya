@@ -10,12 +10,14 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import uz.minipolya.minipolya_backend.dto.request.MarkRefundedRequest;
+import uz.minipolya.minipolya_backend.dto.request.ResolveReviewRequest;
 import uz.minipolya.minipolya_backend.dto.response.AdminPaymentResponse;
 import uz.minipolya.minipolya_backend.dto.response.AdminPaymentSummaryResponse;
 import uz.minipolya.minipolya_backend.dto.response.ApiResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.dto.response.ProviderCheckResponse;
 import uz.minipolya.minipolya_backend.service.AdminPaymentService;
+import uz.minipolya.minipolya_backend.service.PaymentReviewService;
 import uz.minipolya.minipolya_backend.service.ProviderCheckService;
 import uz.minipolya.minipolya_backend.service.RefundRecoveryService;
 
@@ -33,6 +35,7 @@ public class AdminPaymentController {
 
     private final AdminPaymentService adminPaymentService;
     private final RefundRecoveryService refundRecoveryService;
+    private final PaymentReviewService paymentReviewService;
     private final ProviderCheckService providerCheckService;
 
     @GetMapping("/api/admin/payments")
@@ -91,5 +94,18 @@ public class AdminPaymentController {
                                                           @RequestBody(required = false) MarkRefundedRequest request) {
         refundRecoveryService.markRefunded(id, request == null ? null : request.getReason(), adminUserId);
         return ApiResponse.ok(adminPaymentService.get(id), "Refund marked as refunded");
+    }
+
+    /**
+     * F6: a payment left {@code needs_review}, settled by hand once the admin has checked it at
+     * ATMOS: {@code captured}, {@code released} or {@code refunded}, with a reason (10–500).
+     */
+    @PostMapping("/api/admin/payments/{id}/resolve-review")
+    public ApiResponse<AdminPaymentResponse> resolveReview(@AuthenticationPrincipal UUID adminUserId,
+                                                           @PathVariable UUID id,
+                                                           @RequestBody(required = false) ResolveReviewRequest request) {
+        paymentReviewService.resolve(id, request == null ? null : request.getOutcome(),
+                request == null ? null : request.getReason(), adminUserId);
+        return ApiResponse.ok(adminPaymentService.get(id), "Payment resolved");
     }
 }

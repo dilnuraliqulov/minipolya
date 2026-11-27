@@ -11,7 +11,6 @@ import uz.minipolya.minipolya_backend.audit.AuditAction;
 import uz.minipolya.minipolya_backend.audit.AuditEntityType;
 import uz.minipolya.minipolya_backend.audit.AuditEntry;
 import uz.minipolya.minipolya_backend.audit.AuditLabels;
-import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.dto.response.PaymentResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.entity.Game;
@@ -35,7 +34,6 @@ import uz.minipolya.minipolya_backend.provider.HoldCancelledException;
 import uz.minipolya.minipolya_backend.provider.HoldExpiredException;
 import uz.minipolya.minipolya_backend.provider.HoldOutcome;
 import uz.minipolya.minipolya_backend.provider.HoldRequest;
-import uz.minipolya.minipolya_backend.provider.LegacyCheckoutProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProviderException;
 import uz.minipolya.minipolya_backend.provider.PendingCharge;
@@ -54,7 +52,6 @@ import uz.minipolya.minipolya_backend.util.CardFeeSplit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -73,11 +70,10 @@ import java.util.UUID;
 @Service
 public class PaymentService {
 
-    private static final Set<String> SUCCESS_TOKENS = Set.of("completed", "success", "paid", "ok", "1");
-
     /**
      * Statuses that mean money actually arrived and has not been given back.
-     * {@code COMPLETED} is only here for the legacy Payme/Click game rows.
+     * {@code COMPLETED} is only here for rows the removed Payme/Click checkout left behind;
+     * nothing writes it any more.
      */
     private static final Set<Payment.Status> REFUNDABLE_STATUSES =
             Set.of(Payment.Status.PAID, Payment.Status.CAPTURED, Payment.Status.COMPLETED);
@@ -99,7 +95,6 @@ public class PaymentService {
     private final GameRepository gameRepository;
     private final GameParticipantRepository gameParticipantRepository;
     private final PaymentMapper paymentMapper;
-    private final List<LegacyCheckoutProvider> paymentProviders;
     private final GameService gameService;
     private final NotificationService notificationService;
     private final AuditService auditService;
@@ -114,7 +109,6 @@ public class PaymentService {
                           GameRepository gameRepository,
                           GameParticipantRepository gameParticipantRepository,
                           PaymentMapper paymentMapper,
-                          List<LegacyCheckoutProvider> paymentProviders,
                           @Lazy GameService gameService,
                           NotificationService notificationService,
                           AuditService auditService,
@@ -128,7 +122,6 @@ public class PaymentService {
         this.gameRepository = gameRepository;
         this.gameParticipantRepository = gameParticipantRepository;
         this.paymentMapper = paymentMapper;
-        this.paymentProviders = paymentProviders;
         this.gameService = gameService;
         this.notificationService = notificationService;
         this.auditService = auditService;
@@ -254,6 +247,8 @@ public class PaymentService {
         REFUSED,
         /** The provider could not be reached; nothing exists there. */
         UNAVAILABLE,
+        /** The stadium owner cannot be paid yet (no signed contract with a recipient); nothing exists there. */
+        OWNER_NOT_CONNECTED,
         /** No answer: it may or may not have happened. The row says where it stands. */
         UNKNOWN
     }
@@ -293,7 +288,10 @@ public class PaymentService {
                 row.setDeclineReason(DeclineReason.of(ex.getCode()));
             }
             paymentRepository.save(row);
-            log.info("Charge for payment {} refused while being created: code={}", paymentId, ex.getCode());
+            logRefusal(paymentId, ex.getCode());
+            if (AtmosCodes.OWNER_NOT_CONNECTED.equals(ex.getCode())) {
+                return StepOutcome.OWNER_NOT_CONNECTED;
+            }
             return AtmosCodes.isUnavailable(ex.getCode()) ? StepOutcome.UNAVAILABLE : StepOutcome.REFUSED;
         }
     }
@@ -337,8 +335,36 @@ public class PaymentService {
             return false;
         }
         row.setStatus(Payment.Status.CAPTURE_PENDING);
+        captureAskedFor(row);
         paymentRepository.save(row);
         return true;
+    }
+
+    /** From now on a hold ATMOS reports as gone may have been taken: see {@link #markNeedsReview}. */
+    private static void captureAskedFor(Payment row) {
+        if (row.getCaptureRequestedAt() == null) {
+            row.setCaptureRequestedAt(java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC));
+        }
+    }
+
+    /**
+     * F6: a hold whose capture or give-back has no clear outcome. The provider says the hold is
+     * not held any more, but a capture was asked for and its answer lost, so the money may well
+     * have been taken: recording it released would mean money taken and never given back. It
+     * is left {@code needs_review} — the reconcile job does not touch it — with an ERROR, and an
+     * admin finds out at ATMOS and resolves it by hand ({@code PaymentReviewService}).
+     */
+    void markNeedsReview(Payment row, String why) {
+        Payment.Status before = row.getStatus();
+        row.setStatus(Payment.Status.NEEDS_REVIEW);
+        row.setFailureReason(why.length() > 500 ? why.substring(0, 500) : why);
+        paymentRepository.save(row);
+        auditService.record(AuditEntry.system(AuditAction.PAYMENT_NEEDS_REVIEW)
+                .entity(AuditEntityType.PAYMENT, row.getId(), AuditLabels.payment(row))
+                .change("status", before, row.getStatus())
+                .reason(row.getFailureReason()));
+        log.error("Payment {} needs an admin: {} (was {}, hold {}). Check it at ATMOS and resolve it in Toʻlovlar.",
+                row.getId(), why, before.getValue(), row.getProviderTxnId());
     }
 
     /**
@@ -440,6 +466,13 @@ public class PaymentService {
                 } catch (HoldCancelledException | HoldExpiredException ex) {
                     // already let go
                 }
+            } else if (row.getCaptureRequestedAt() != null) {
+                // Not held, and not reported captured — but a capture was asked for, so "gone"
+                // may mean taken. TODO(ATMOS): what GET /hold/{id} answers after a capture.
+                markNeedsReview(row, "Give-back unclear: ATMOS reports the hold as "
+                        + where.status().name().toLowerCase(java.util.Locale.ROOT)
+                        + " after a capture was asked for; it may have been taken");
+                return;
             }
             row.setStatus(Payment.Status.RELEASED);
             paymentRepository.save(row);
@@ -518,6 +551,7 @@ public class PaymentService {
     @Transactional
     public Payment captureHeld(Payment held) {
         held.setStatus(Payment.Status.CAPTURE_PENDING);
+        captureAskedFor(held);
         paymentRepository.save(held);
         HoldOutcome outcome;
         try {
@@ -829,6 +863,21 @@ public class PaymentService {
     static final String PROVIDER_UNAVAILABLE =
             "To'lov tizimi vaqtincha ishlamayapti. Birozdan so'ng qayta urinib ko'ring";
 
+    /** 502 when the stadium's owner cannot be paid yet: never shown as the player's card failing. */
+    public static final String OWNER_NOT_CONNECTED = "Maydon egasi toʻlov qabul qilishga hali ulanmagan";
+
+    /**
+     * Our own refusal (a recipient we do not have, a store id ATMOS does not know, a 401/403)
+     * is an ERROR — ours to fix, and it will not go away by itself; anything else is INFO.
+     */
+    private static void logRefusal(UUID paymentId, String code) {
+        if (AtmosCodes.isMisconfigured(code)) {
+            log.error("Payment {} refused by our own configuration, not the card: code={}", paymentId, code);
+        } else {
+            log.info("Payment {} refused while being created: code={}", paymentId, code);
+        }
+    }
+
     /**
      * The provider refused a charge or hold outright (not a decline, which is an outcome).
      * Refused while being created: nothing exists at the provider, so an unreachable provider
@@ -843,8 +892,16 @@ public class PaymentService {
                     payment.getId(), ex.getCode());
             return;
         }
+        if (AtmosCodes.OWNER_NOT_CONNECTED.equals(ex.getCode())) {
+            logRefusal(payment.getId(), ex.getCode());
+            throw new ProviderUnavailableException(OWNER_NOT_CONNECTED);
+        }
         if (AtmosCodes.isUnavailable(ex.getCode())) {
-            log.warn("Payment {} not attempted: provider unavailable, code={}", payment.getId(), ex.getCode());
+            if (AtmosCodes.isMisconfigured(ex.getCode())) {
+                logRefusal(payment.getId(), ex.getCode());
+            } else {
+                log.warn("Payment {} not attempted: provider unavailable, code={}", payment.getId(), ex.getCode());
+            }
             throw new ProviderUnavailableException(PROVIDER_UNAVAILABLE);
         }
         payment.setStatus(Payment.Status.FAILED);
@@ -953,11 +1010,15 @@ public class PaymentService {
     }
 
     /**
-     * The ATMOS recipient an owner's split is paid to — stored only on the owner's legal
-     * details, and only once the contract is signed. Null when there is none.
+     * The ATMOS recipient an owner's split is paid to — only when the owner can receive
+     * payouts ({@link OwnerLegalDetails#canReceivePayouts}: a signed contract with a
+     * recipient id). Null otherwise, and the provider decides what that means: a staging
+     * server pays our own store instead, production refuses with
+     * {@code AtmosCodes.OWNER_NOT_CONNECTED} (a 502, never a card decline).
      */
     private String recipientIdOf(User owner) {
         return owner == null ? null : ownerLegalDetailsRepository.findById(owner.getId())
+                .filter(OwnerLegalDetails::canReceivePayouts)
                 .map(OwnerLegalDetails::getAtmosRecipientId)
                 .orElse(null);
     }
@@ -1172,35 +1233,6 @@ public class PaymentService {
                 .refundOfPayment(original);
     }
 
-    @Transactional
-    public PaymentInitResponse initiateBookingPayment(UUID bookingId, String providerName, UUID userId) {
-        Payment.Provider provider = parseCheckoutProvider(providerName);
-
-        Booking booking = bookingRepository.findById(bookingId)
-                .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
-        if (booking.getUser() == null || !booking.getUser().getId().equals(userId)) {
-            throw new ForbiddenException("This booking does not belong to you");
-        }
-        if (!"pending".equals(booking.getStatus())) {
-            throw new BadRequestException("Booking is not awaiting payment");
-        }
-
-        Payment payment = Payment.builder()
-                .booking(booking)
-                .user(booking.getUser())
-                .amount(booking.getPrice())
-                .paymentType(Payment.PaymentType.BOOKING)
-                .provider(provider)
-                .status(Payment.Status.PENDING)
-                .build();
-        Payment saved = withMockTxnId(paymentRepository.saveAndFlush(payment));
-
-        String checkoutUrl = resolveProvider(provider).createCheckoutUrl(saved.getId());
-        log.info("Payment initiated: id={} bookingId={} userId={} provider={}",
-                saved.getId(), bookingId, userId, provider.getValue());
-        return initResponse(saved, provider, checkoutUrl);
-    }
-
     /**
      * A casual player's share charged to a saved card. On success the game hears of it as
      * it does from the legacy webhook; a lost answer leaves the row processing for the
@@ -1241,72 +1273,6 @@ public class PaymentService {
         }
         log.info("Game share by card {}: gameId={} paymentId={} amount={}",
                 payment.getStatus().getValue(), gameId, payment.getId(), payment.getAmount());
-        return payment;
-    }
-
-    @Transactional
-    public PaymentInitResponse initiateGamePayment(UUID gameId, String providerName, UUID userId) {
-        Payment.Provider provider = parseCheckoutProvider(providerName);
-
-        Game game = gameRepository.findById(gameId)
-                .orElseThrow(() -> new ResourceNotFoundException("Game not found"));
-        if ("team_vs_team".equals(game.getType())) {
-            throw new BadRequestException(
-                    "A team game is paid when creating or joining it, not through a checkout");
-        }
-        GameParticipant participant = gameParticipantRepository.findByGameIdAndUserId(gameId, userId)
-                .orElseThrow(() -> new BadRequestException("Join the game before paying"));
-
-        CardFeeSplit share = gameShareSplit(game);
-        Payment payment = Payment.builder()
-                .game(game)
-                .user(participant.getUser())
-                .amount(share.playerAmount())
-                .ownerAmount(share.ownerAmount())
-                .platformAmount(share.platformAmount())
-                .cardFeeExpected(share.atmosFee())
-                .commissionPercent(0)
-                .method(Payment.Method.CARD)
-                .paymentType(Payment.PaymentType.GAME_SHARE)
-                .provider(provider)
-                .status(Payment.Status.PENDING)
-                .build();
-        Payment saved = withMockTxnId(paymentRepository.saveAndFlush(payment));
-
-        participant.setPayment(saved);
-        gameParticipantRepository.save(participant);
-
-        String checkoutUrl = resolveProvider(provider).createCheckoutUrl(saved.getId());
-        log.info("Game payment initiated: id={} gameId={} userId={} amount={} provider={}",
-                saved.getId(), gameId, userId, saved.getAmount(), provider.getValue());
-        return initResponse(saved, provider, checkoutUrl);
-    }
-
-    @Transactional
-    public Payment handleProviderCallback(String providerName, String providerTxnId, String providerStatus) {
-        Payment.Provider provider = parseProvider(providerName);
-        Payment payment = paymentRepository.findByProviderAndProviderTxnId(provider, providerTxnId)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "No payment found for transaction " + providerTxnId));
-
-        if (payment.getStatus() == Payment.Status.COMPLETED) {
-            return payment; // idempotent: duplicate webhook for an already-completed payment
-        }
-
-        if (isSuccess(providerStatus)) {
-            Payment.Status statusBefore = payment.getStatus();
-            payment.setStatus(Payment.Status.COMPLETED);
-            paymentRepository.save(payment);
-            auditPaymentCompleted(payment, statusBefore);
-            onPaymentCompleted(payment);
-            log.info("Payment completed: id={} type={} provider={} txn={}",
-                    payment.getId(), payment.getPaymentType().getValue(), provider.getValue(), providerTxnId);
-        } else {
-            payment.setStatus(Payment.Status.FAILED);
-            paymentRepository.save(payment);
-            log.info("Payment failed: id={} provider={} txn={} providerStatus={}",
-                    payment.getId(), provider.getValue(), providerTxnId, providerStatus);
-        }
         return payment;
     }
 
@@ -1520,15 +1486,6 @@ public class PaymentService {
 
     // ---- Helpers ----
 
-    private void onPaymentCompleted(Payment payment) {
-        if (payment.getPaymentType() == Payment.PaymentType.BOOKING && payment.getBooking() != null) {
-            // Same single path as the card charge: expiry and overlap are checked there.
-            applySuccessfulBookingPayment(payment.getBooking(), payment);
-        } else if (payment.getPaymentType() == Payment.PaymentType.GAME_SHARE && payment.getGame() != null) {
-            gameService.handleGamePaymentConfirmed(payment.getGame().getId(), payment.getUser().getId());
-        }
-    }
-
     /**
      * The hold lapsed and the slot has gone to someone else: give the money
      * straight back and tell the player. The booking stays expired.
@@ -1572,15 +1529,6 @@ public class PaymentService {
     }
 
     /**
-     * Mock txn id derived from our payment id; the webhook echoes it back.
-     * TODO: Replace with the transaction id returned by the real provider.
-     */
-    private Payment withMockTxnId(Payment saved) {
-        saved.setProviderTxnId("mock-" + saved.getId());
-        return paymentRepository.save(saved);
-    }
-
-    /**
      * One player's share of a casual game, by card: the pitch share is the owner's and
      * the service fee the platform's, both grossed up — {@code playerAmount(share + fee)}.
      * Team games never reach here — their money is held on creation and charged on
@@ -1590,40 +1538,4 @@ public class PaymentService {
         return cardPricing.gameShareSplit(game);
     }
 
-    private PaymentInitResponse initResponse(Payment saved, Payment.Provider provider, String checkoutUrl) {
-        return PaymentInitResponse.builder()
-                .paymentId(saved.getId())
-                .checkoutUrl(checkoutUrl)
-                .provider(provider.getValue())
-                .build();
-    }
-
-    private Payment.Provider parseCheckoutProvider(String providerName) {
-        Payment.Provider provider = parseProvider(providerName);
-        if (provider == Payment.Provider.CASH) {
-            throw new BadRequestException("Cash is recorded by the owner, not initiated as a checkout");
-        }
-        return provider;
-    }
-
-    private Payment.Provider parseProvider(String providerName) {
-        try {
-            return Payment.Provider.fromValue(providerName);
-        } catch (IllegalArgumentException | NullPointerException ex) {
-            throw new BadRequestException("Unknown payment provider: " + providerName);
-        }
-    }
-
-    private LegacyCheckoutProvider resolveProvider(Payment.Provider provider) {
-        return paymentProviders.stream()
-                .filter(p -> p.provider() == provider)
-                .findFirst()
-                .orElseThrow(() -> new BadRequestException("Unsupported provider: " + provider.getValue()));
-    }
-
-    private boolean isSuccess(String providerStatus) {
-        return providerStatus == null
-                || providerStatus.isBlank()
-                || SUCCESS_TOKENS.contains(providerStatus.trim().toLowerCase(Locale.ROOT));
-    }
 }

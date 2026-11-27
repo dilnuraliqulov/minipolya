@@ -15,7 +15,12 @@ provider's code in exactly one place, `provider/DeclineReason.of`:
 |---|---|---|
 | `INSUFFICIENT_FUNDS` | `STPIMS-ERR-057`, `-112` | `0051` (or the balance spent) |
 | `CARD_EXPIRED` | `STPIMS-ERR-067` | `0054` |
-| `CARD_DECLINED` | every other refusal — the fallback; an unknown code is logged (the code only) | `0002` |
+| `WRONG_OTP` | `STPIMS-ERR-098` (changeset 056) | — |
+| `CARD_DECLINED` | every other refusal (`-058`, `-088` blocked, …) — the fallback; an unknown code is logged (the code only) | `0002` |
+
+A refusal that is **ours** — HTTP 401/403, a store id ATMOS does not know (`-037`), a
+recipient we do not have (`RECIPIENT_MISSING`, `OWNER_RECIPIENT_MISSING`) — has **no**
+reason: it is never shown as the card's fault (`AtmosCodes.isMisconfigured`, logged at ERROR).
 
 It is stored on the failed row (`payments.decline_reason`, changeset 047; null when a
 payment failed without a refusal, e.g. never acknowledged, or the provider was
@@ -28,8 +33,11 @@ unreachable) and shown as:
 - **`paymentState`** on `BookingResponse` (every view, always present), from the same
   latest card payment, so **`declined` ⇔ `declineReason` present**: `paid` (its money
   arrived, even if given back since), `processing` (no answer yet), `declined` (refused —
-  see the reason), `failed` (failed without a refusal, e.g. never acknowledged), `none`
-  (no card payment: cash, manual and game bookings). `BookingResponseFactory.paymentStateOf`;
+  see the reason), `failed` (failed without a refusal, e.g. never acknowledged, or the
+  provider could not be reached — see "A confirmation ATMOS could not answer"), `none`
+  (no card payment: cash, manual and game bookings). `BookingResponseFactory.paymentStateOf`.
+  The Mini App shows `processing` as "Toʻlov tekshirilmoqda", never as unpaid, and reads the
+  booking again every few seconds until it settles;
 - **`declineReason`** on `PaymentResponse` (`GET /api/payments/my`) and
   `AdminPaymentResponse`, on a refused row. Never the provider's own code or text.
 
@@ -43,21 +51,30 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
 | `bindCardInit(cardNumber, expiry)` → bindingId, maskedPhone | `POST /partner/bind-card/init` |
 | `bindCardConfirm(bindingId, otp)` → cardToken, cardId, maskedPan, expiry | `POST /partner/bind-card/confirm` |
 | `removeCard(cardId, cardToken)` | `POST /partner/remove-card` |
-| `charge(splits, token \| number+expiry, account)` → transaction ids, needs OTP without a token | `POST /merchant/bulk/pay/create` + `pre-apply` |
-| `confirmCharge(transactionIds, otp)` → successTransIds, commission, ofdUrl | `POST /merchant/bulk/pay/apply` |
+| `charge(splits, token \| number+expiry, account)` → transaction ids, needs OTP without a token | one split (every booking, remainder and staging-collapsed payment): `POST /merchant/pay/create` + `pre-apply`; two or more (a team game's owner + platform): `POST /merchant/bulk/pay/create` + `pre-apply` |
+| `confirmCharge(transactionIds, otp)` → successTransIds, commission, ofdUrl | one transaction id: `POST /merchant/pay/apply`; several: `POST /merchant/bulk/pay/apply` |
 | `getCharge(transactionId)` — after a lost answer | `POST /merchant/pay/get` |
 | `reverse(successTransId, reason)` — the whole transaction | `POST /merchant/pay/reverse` |
-| `hold(splits, cardToken, account, durationMinutes)` → holdId | `POST /hold/multiple/create` |
+| `hold(splits, cardToken, account, durationMinutes)` → holdId | `POST /hold/multiple/create` (no `/merchant` prefix) |
 | `confirmHold(holdId, otp)` | `PUT /hold/multiple/apply/{id}` |
 | `captureHold(holdId)` — always the full amount | `POST /hold/{id}` |
-| `releaseHold(holdId)` | `DELETE /hold/{id}` (`send_cancel_sms=true`) |
-| `getHold(holdId)` | `GET /hold/{id}` |
+| `releaseHold(holdId)` | `DELETE /hold/{id}` (`send_cancel_sms=true`); `OK`, `-145` and `-144` all mean released |
+| `getHold(holdId)` | `GET /hold/{id}`; `-142` is "created, not applied"; a `store_transaction` with a `success_trans_id` is **captured**, `confirmed` without one **held** (TODO(ATMOS): unverified on the sandbox) |
 
 - A split names the stadium owner's ATMOS recipient (`owner_legal_details.atmos_recipient_id`,
   the only place it is stored — see "Owner legal details") or the platform, whose
   recipient the provider takes from `ATMOS_PLATFORM_RECIPIENT_ID`.
 - `account` is our payment row id: the row is written first (`processing`), so a retry
   never charges twice.
+- **Who can be paid at all.** `PaymentService` passes an owner's recipient only when
+  `OwnerLegalDetails.canReceivePayouts()` — a `signed` contract with an id. The id is the
+  ATMOS store id, validated where an admin types it: trimmed, **digits only, 1–20**
+  (`OwnerLegalDetailsService`; a typo used to be a 502 on every card payment of that owner,
+  ATMOS `-037`). An owner who cannot be paid is, on staging, our own store (below); in
+  production a **502 "Maydon egasi toʻlov qabul qilishga hali ulanmagan"** with an ERROR
+  (`OWNER_RECIPIENT_MISSING`), never a card decline. A missing platform recipient is the
+  ordinary 502 service message (`RECIPIENT_MISSING`), and production refuses to start
+  without `ATMOS_PLATFORM_RECIPIENT_ID`.
 - A declined card is a `FAILED` outcome. `STPIMS-ERR-092` (transaction closed) and `-100`
   (already reversed), `-145` (hold cancelled) and `-144` (hold expired) are
   `TransactionClosedException`, `HoldCancelledException`, `HoldExpiredException`; any
@@ -84,8 +101,15 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   deployed server and nowhere else. Token from `POST /token`
   (Basic auth, `client_credentials`), cached until `expires_in` − 5 min; a 401 refreshes
   it once. `ofd_items` are sent only when `ATMOS_OFD_CODE_RENTAL` and
-  `ATMOS_OFD_CODE_SERVICE` are both set; `ofd_url` is saved on the payment. It never
-  logs a request or response body — only operation names, ids and result codes.
+  `ATMOS_OFD_CODE_SERVICE` are both set; `ofd_url` is saved on the payment.
+- **What a refusal writes down.** A request body is never logged. A **response** body is,
+  but only when ATMOS did not say OK: the line carries the method, the path, the HTTP
+  status, the result code, its description and the body with every card field redacted by
+  name (`provider/atmos/AtmosSafeBody`, tested by `AtmosSafeBodyTest`). It was added
+  because an HTTP 403 carries no result code at all — the reason is in the body — and
+  "ATMOS answered HTTP 403" was the whole of what we knew for a week. Card numbers,
+  expiry dates, SMS codes, card tokens, credentials, access tokens and phone numbers are
+  still never logged. See [atmos-endpoint-audit.md](atmos-endpoint-audit.md).
 - **Who a split is paid to.** The owner's split carries the recipient id an admin entered on
   the owner's legal details (`owner_legal_details.atmos_recipient_id`, required once the
   contract is `signed`), and the platform's split carries none — the provider fills in
@@ -162,16 +186,19 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
 | A declined card | card ending `0002` (`STPIMS-ERR-058`): booking stays `pending`, row `failed` |
 | Insufficient funds | ending `0051` (`-057`), or spend the 10 000 000 so'm balance (`-112`) |
 | An expired card at payment | ending `0054` (`-067`) |
-| A lost answer that did charge | ending `0091`: the payment stays `processing`; the reconcile job (or `getCharge`) finds it paid. On a hold it is the **capture** that times out (and went through): a join answers 202 and the job confirms the game |
-| A lost answer that did not | ending `0092`: `processing`, then `failed` on reconciliation. On a hold the capture times out and the hold is gone: the job undoes the join |
+| A lost answer that did charge | ending `0091`: `PaymentSettler` asks `getCharge` inside the request and the booking comes back `paid` — the ATMOS `STPIMS-ERR-041` case. On a hold it is the **capture** that times out (and went through): a join answers 202 and the job confirms the game |
+| A lost answer that did not | ending `0092`: asked at once too, and the booking comes back `declined` with the card's own code. On a hold the capture times out and the hold is gone: the job undoes the join |
+| An answer that never comes | ending `0093`: `getCharge` keeps saying "pending", so the payment really does stay `processing` — the booking keeps its slot past its hold, and no second charge is allowed, until `PaymentReconcileService` gives up on it |
 | The provider down | ending `0099`: every charge / hold → 502 |
 | A refund the provider refuses | ending `0098`: payments work, every reverse is refused (`-15`) → `refund_failed`, then admin retry / mark-refunded |
 | A team game whose capture fails | creator's card ending `0097`: the hold works, the capture is refused with an ordinary code (`STPIMS-ERR-058`) and the hold stays → the joiner is reversed, the hold released, the game ends |
 | A hold that lapses | create a team game, then let `hold_expires_at` pass (or move `games.starts_at` inside 3 h and let `GameTimeoutJob` release it) |
 | An amount ATMOS refuses | any split under 500 so'm → `STPIMS-ERR-039`, a `failed` row |
 | What happened | `GET /api/dev/fake-payments` with `X-Dev-Login-Key` |
-- `LegacyCheckoutProvider` (Payme/Click hosted checkout) is **legacy**, kept only as the
-  no-`cardId` branch of the friends-game pay endpoint. Never use it in a new flow.
+- The Payme/Click hosted checkout (`LegacyCheckoutProvider`, `POST /api/payments/initiate`,
+  `POST /webhooks/payme` / `click`) is **removed**: its webhooks were public, unsigned and read
+  a missing status as success. Rows it left (`provider` `payme`/`click`, status
+  `pending`/`completed`) stay readable; `completed` still counts as money that arrived.
 
 ### Payment rows
 
@@ -188,7 +215,8 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   meanwhile — refunded it, started giving it back — nothing is sent to the provider. Two
   cancellations at once (player and owner) reverse once (`NoDoubleReverseTest`).
 - Statuses: `processing` (provider called, answer not in) → `paid` / `held` / `failed`;
-  `held` → `captured` or `released`; a give-back goes through `return_pending` →
+  `held` → `captured` or `released`; **`needs_review`** (changeset 056) — a hold whose
+  capture or give-back has no clear outcome (see "Reconciliation"), settled only by an admin; a give-back goes through `return_pending` →
   `refunded` / `released`; a capture through `capture_pending` → `captured`. A give-back
   ATMOS declines leaves the original `refund_failed` and its refund row `failed` (with
   `failure_reason`) until an admin retries it or marks it refunded by hand
@@ -196,7 +224,8 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
   `refunded`. A **cash** row voided by undoing the owner's "cash received" mark becomes
   `cancelled` (changeset 050) — not a refund, no money moved through the platform.
 - `provider_txn_id`: the charge's transaction ids (comma-separated, one per split) or the
-  hold id. `provider_success_txn_ids`: what a reverse needs. `hold_expires_at`: when an
+  hold id. `capture_requested_at` (changeset 056): when a capture of the hold was first asked
+  for — null means none ever was. `provider_success_txn_ids`: what a reverse needs. `hold_expires_at`: when an
   unsettled hold lapses.
 - A refund is a NEW row with the negative gross (fee included) and `refund_reason`.
 - Payment types: `booking`, `remainder`, `team_game`, `game_share`, `service_fee`,
@@ -206,7 +235,7 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
 
 | Rule | The creating team (hold) | The other team (charged) |
 |---|---|---|
-| Creating a game | **hold** for (minutes to the 3-hour point) + 120, capped at `app.payments.hold-max-minutes` (43 200); longer → the game cannot be created | — |
+| Creating a game | **hold** for (minutes to the 3-hour point) + 120, capped at `ATMOS_HOLD_MAX_MINUTES` (10 080 = 7 days); longer → the game cannot be created yet, see below | — |
 | Waiting, slot taken by a booking | **release** | — |
 | Waiting, 3-hour point (`GameTimeoutJob`) | **release** (already released counts as done) | — |
 | Waiting, leader cancels before the deadline | **release** | — |
@@ -219,6 +248,30 @@ operations. Amounts are tiyin; **there is no partial refund anywhere**.
 | Owner cancels the booking / admin blocks the stadium | **reverse** | **reverse** |
 | A team's remainder in the app | **charge**; reversed with the rest of that team's money when it is given back | |
 
+#### How far ahead a team game can be created
+
+A team game is created **with its hold or not at all**: the creating team's money is held the
+moment the game goes on the board, which is the promise the whole flow rests on. So the hold
+has to last until the 3-hour point — plus `TeamGameService.HOLD_SLACK_MINUTES` (120), so the
+timeout job can release it before it lapses — and a game too far off to be held that long
+**cannot be created yet**.
+
+- The cap is `ATMOS_HOLD_MAX_MINUTES`, default **10 080 minutes (7 days)**. ATMOS has never
+  documented a maximum hold duration (open question 8 in
+  [atmos-endpoint-audit.md](atmos-endpoint-audit.md)), so it is a setting: raise it with a
+  restart the moment they confirm a longer hold really holds.
+- `TeamGameService.holdHorizonDays()` turns the cap into the number a player is told — whole
+  days, rounded down, because a day we promise has to work. With the default it is **7**.
+- Past it, `POST /api/games` answers **400**: "A team game can be created at most 7 days
+  before kick-off: creating it holds your team's money on the card until the game is
+  confirmed, and a card payment cannot hold it for longer. Create the game nearer the date."
+  The Mini App shows this as the Uzbek sentence in
+  `docs/frontend-field-changes-2026-11-26.md`.
+- **The alternative was rejected**: create the game now and hold later, once it is inside the
+  window. That would put a game on the board with nobody's money behind it, so a team could
+  withdraw — or its card could be gone — at the one moment an opponent has just committed.
+  A game two weeks out asked for a 19 591-minute hold; that is what the cap refuses.
+
 Each row is tested in `TeamGameOperationMappingTest`. Joining (see "Joining" under
 team_vs_team, tested end to end in `TeamGameJoinPaymentTest`): (1) book the slot
 (EXCLUDE constraint), (2) charge the joiner, (3) capture the waiting team's hold, each
@@ -227,13 +280,51 @@ waiting (an unanswered charge is given back by reconciliation). If (3) is refuse
 any code the joiner's charge is reversed, the hold released, the booking deleted, the
 game cancelled and both teams notified; if (3) has no clear answer it is left
 `capture_pending` (202 `PAYMENT_PENDING`) and the reconcile job confirms or undoes the
-game. A join waits while the creating team's hold is still `processing`.
+game. A join waits while the creating team's hold is still `processing` or `needs_review`.
+If the joiner's charge itself has no clear answer (ATMOS `-041`), `PaymentSettler` asks
+`pay/get` straight away, as for a booking, before the join is dropped.
 
 Ordinary bookings and friends games use **charge / reverse**: a refund (player before
 the deadline, owner at any time, admin block) reverses every split's transaction in
 full. Friends games never held money — each player pays as they go and the slot is
 booked once everyone has — so they pay by card (`POST /api/games/{id}/pay?cardId=`)
 and are reversed if the game is called off. Cash is never touched.
+
+### A confirmation ATMOS could not answer (`STPIMS-ERR-041`)
+
+ATMOS answers `pay/apply` with `STPIMS-ERR-041` ("Проблема соединения") for payments it has
+**in fact taken**: `pay/get` says `confirmed` moments later. It is in `AtmosCodes.UNAVAILABLE`,
+so nothing treats it as a decline:
+
+- `DeclineReason.of` gives **no reason** for any unavailable code. A connection problem is
+  not the card's fault, and showing it as `CARD_DECLINED` sent the player off to try another
+  card for a payment that had already gone through.
+- The charge was created, so whether the money moved is unknown: the row stays `processing`
+  and the card is never charged again (`refusedByProvider`, `created = true`).
+- `PaymentSettler` then asks `pay/get` **straight away**, from the controller, after the
+  charge's own transaction has committed — `app.payments.settle-now.attempts` times (6),
+  `…delay` apart (3 s), stopping as soon as the row moves and never holding the request up
+  for longer than `…budget` (20 s), because one ATMOS call alone may take
+  `app.atmos.timeout-seconds`. It does this by calling
+  `PaymentReconcileService.reconcile`, **the same call the job makes**: there is no second
+  path from money to a confirmed booking. A provider still not answering is not an error —
+  the row simply stays where it was. `attempts: 0` turns it off.
+- `BookingExpiryJob` never expires a booking whose card payment is `processing` or
+  `capture_pending` (`BookingRepository.findExpirablePending`), so the slot is still there
+  when the answer arrives. Nothing waits for ever: the charge is failed after
+  `ABANDONED_AFTER`, and the next run of the job expires the booking.
+- The Mini App shows `paymentState: processing` as "Toʻlov tekshirilmoqda" and polls the
+  booking until it settles.
+
+**Which difference causes it** is not settled: the app's `pay/apply` is `deploy/atmos-smoke.sh`'s
+`pay/apply` field for field (same single endpoint — an ordinary booking pays one recipient —
+same numeric `transaction_id`, same `otp` `111111`, sent straight after pre-apply), and what
+differs is what `pay/create` named three calls earlier: the owner's recipient in `store_id`
+(our own store with `ATMOS_RECIPIENT_FIELD=terminal_id`), a 36-character UUID `account`, and
+`ofd_items` when both OFD codes are set. `./atmos-smoke.sh --bisect` binds a card once and
+takes the payment again per difference, reversing each; the first failing variant names the
+cause. The log line `ATMOS single payment: account=… createStore=… recipientField=… receipts=…`
+says which shape a given server sends.
 
 ### Reconciliation
 
@@ -246,10 +337,24 @@ transaction:
   — or the money given straight back if what it paid for has gone (an abandoned join);
   unconfirmed after 30 minutes → failed, no money moved.
 - `processing` hold → `getHold`: held, or failed (the waiting game it was for ends).
-- `return_pending` → reversed if the money was taken, released if it is held. A reverse
-  ATMOS declines becomes a failed refund (`refund_failed` + a `failed` refund row), so
-  the job stops trying; a release that fails stays `return_pending` for the next run.
-- `capture_pending` → captured if still held; released with an error if it lapsed.
+- `return_pending` → reversed if the money was taken (`getHold` says captured), released if
+  it is held. A hold ATMOS reports as neither is released **only if no capture was ever
+  asked for** (`capture_requested_at` null); otherwise it is `needs_review`. A reverse ATMOS
+  declines becomes a failed refund (`refund_failed` + a `failed` refund row), so the job
+  stops trying; a release that fails stays `return_pending` for the next run.
+- `capture_pending` → captured if `getHold` says captured, or captures it if still held (a
+  capture refused then is released — the lost one did not happen). Anything else is
+  **`needs_review`**, never released: the capture whose answer was lost may have gone
+  through, and what `GET /hold/{id}` answers after a capture is undocumented (F6).
+
+**`needs_review`** is never touched by the job. The row keeps its `failure_reason`
+("Capture unclear: …" / "Give-back unclear: …"), an audit entry `PAYMENT_NEEDS_REVIEW`
+(SYSTEM) and an ERROR log line. A team join waiting on it stays `joining` (and nobody else
+may join meanwhile). An admin checks the transaction at ATMOS and resolves it at
+`POST /api/admin/payments/{id}/resolve-review` `{outcome, reason}` — `captured` (taken and
+kept), `released` (nothing taken) or `refunded` (taken and since given back: the refund row
+is written, marked returned by hand) — audited `PAYMENT_REVIEW_RESOLVED`; the job's next run
+then confirms or undoes the join from it (`PaymentReviewService`, `AdminPaymentReviewTest`).
 - Then the **team joins** still `joining` after five minutes are resumed
   (`GameService.resumeStuckJoins` → `TeamGameService.resumeJoin`): confirmed or undone
   from the rows just settled. A joining team's own charge is never given back by the
@@ -272,7 +377,10 @@ masked number and expiry; deleting a card removes it at ATMOS (`removeCard`) and
 `is_active = false`. Endpoints: `POST /api/cards` (→ `bindingId`, `maskedPhone` like
 `+998 ** *** ** 58`), `POST /api/cards/resend {bindingId}` (a new code after 60 s),
 `POST /api/cards/confirm`, `GET /api/cards`, `DELETE /api/cards/{id}`. Refusals: see "The
-provider" above.
+provider" above. **A card the player already has** (same masked number and expiry among their
+active cards) is **409 `CARD_ALREADY_ADDED` "Bu karta allaqachon qoʻshilgan"** before ATMOS is
+asked; ATMOS's own answer to a card it bound before — `STPIMS-ERR-001` at `bind-card/init` —
+is the same 409, not the 502 that code means elsewhere.
 
 **Never logged or returned**: card numbers, expiry dates, SMS codes, card tokens, ATMOS
 credentials or access tokens. The request DTOs and provider records override
@@ -280,6 +388,15 @@ credentials or access tokens. The request DTOs and provider records override
 
 ### Open ATMOS questions
 
+> The full list, with what we do meanwhile and the endpoint-by-endpoint comparison behind
+> it, is [atmos-endpoint-audit.md](atmos-endpoint-audit.md). What follows is the short form.
+
+- [ ] What does `GET /hold/{id}` answer **after a capture**? Until the sandbox shows it, a hold
+      not reported held or captured after a capture was asked for is `needs_review`.
+- [ ] **`POST /hold/multiple/create` answers HTTP 403** from the server, with a token
+      `merchant/pay/create` accepts. Is the holding API on our sandbox subscription? The
+      backend now logs the gateway's fault body; `deploy/atmos-smoke.sh --hold` reproduces it.
+- [ ] How long may a hold last? Capped at `ATMOS_HOLD_MAX_MINUTES` (7 days) meanwhile.
 - [ ] `store_id` vs `terminal_id`: which identifies a split's recipient (the bulk and
       hold requests use `store_id`, the responses `terminal_id`).
 - [ ] Bulk `pay/create`: `store_id` per `params` item (the table) or one at the top (the
@@ -291,8 +408,9 @@ credentials or access tokens. The request DTOs and provider records override
 - [ ] How is a captured hold reversed — which transaction id? We send the hold id.
 - [ ] `pay/get` and `hold/{id}` status values are not listed; `confirmed: true` is read as
       success / held.
-- [ ] `hold_till`'s format; and whether `DELETE /hold/{id}` answering `STPIMS-ERR-145`
-      means "released" (its example) or an error.
+- [ ] `hold_till`'s format. Whether `DELETE /hold/{id}` answering `STPIMS-ERR-145` means
+      "released" is **settled by its own example**, which answers exactly that: we read
+      `OK`, `-145` and `-144` as released and only `-143` as not.
 - [ ] The token lifetime: the text says 3600 s, the example 2525.
 - [ ] `/token`: `grant_type` in the form body (the docs) or the query string?
 - [ ] Card binding: no way to resend the SMS code is documented (only `pay/retry-otp`, for

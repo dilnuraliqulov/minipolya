@@ -15,6 +15,8 @@ public enum DeclineReason {
     INSUFFICIENT_FUNDS,
     /** The card has expired ({@code STPIMS-ERR-067}). */
     CARD_EXPIRED,
+    /** The SMS / confirmation code was wrong ({@code STPIMS-ERR-098}); nothing was taken. */
+    WRONG_OTP,
     /** Any other refusal — the fallback. */
     CARD_DECLINED;
 
@@ -33,16 +35,40 @@ public enum DeclineReason {
             AtmosCodes.WRONG_CARD_NUMBER,
             "STPIMS-ERR-050",               // карта не может быть зарегистрирована
             AtmosCodes.WRONG_AMOUNT,        // e.g. under the minimum
-            "STPIMS-ERR-042",               // не разрешенная сумма платежа
-            AtmosCodes.WRONG_OTP);
+            "STPIMS-ERR-042");              // не разрешенная сумма платежа
 
     /**
      * The reason for a refusal the provider answered with {@code providerCode}. An unknown
      * code is a plain decline and is logged (the code only); no code at all — a payment that
      * failed without the provider refusing it — has no reason.
+     *
+     * <p>Nor has a code that means the provider or the bank behind it could not be reached
+     * ({@link AtmosCodes#isUnavailable}, e.g. {@code STPIMS-ERR-041} "Проблема соединения"):
+     * the card said nothing, so there is nothing to tell the player about their card. Showing
+     * such a payment as declined blamed the card for ATMOS's own connection, and sent the
+     * player off to try another one — while the money had usually already been taken. It has
+     * no reason instead, which the Mini App reads as {@code failed}: try again, not "your
+     * card was refused".
+     *
+     * <p>The same goes, more sharply, for a refusal that is <b>our own</b>
+     * ({@link AtmosCodes#isMisconfigured}: HTTP 401 or 403, an inactive partner, a store id
+     * ATMOS does not know). No card of the player's can fix it, so telling them their card
+     * was declined sends them looking for another one for nothing — and hides an integration
+     * that is down behind what look like ordinary declines. It is logged as an error, because
+     * it is one of ours.
      */
     public static DeclineReason of(String providerCode) {
         if (providerCode == null || providerCode.isBlank()) {
+            return null;
+        }
+        if (AtmosCodes.isMisconfigured(providerCode)) {
+            log.error("Not a decline but the payment service refusing our own call — nothing to tell the "
+                    + "player about their card, and something for us to fix: code={}", providerCode);
+            return null;
+        }
+        if (AtmosCodes.isUnavailable(providerCode)) {
+            log.info("Not a decline but a provider connection problem, left without a reason: code={}",
+                    providerCode);
             return null;
         }
         if (INSUFFICIENT.contains(providerCode)) {
@@ -50,6 +76,9 @@ public enum DeclineReason {
         }
         if (AtmosCodes.CARD_EXPIRED.equals(providerCode)) {
             return CARD_EXPIRED;
+        }
+        if (AtmosCodes.WRONG_OTP.equals(providerCode)) {
+            return WRONG_OTP;
         }
         if (!KNOWN_DECLINES.contains(providerCode)) {
             log.warn("Unknown decline code from the payment provider, shown as CARD_DECLINED: code={}", providerCode);

@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import uz.minipolya.minipolya_backend.entity.Booking;
+import uz.minipolya.minipolya_backend.entity.Payment;
 
 import java.time.OffsetDateTime;
 import java.util.Collection;
@@ -38,8 +39,35 @@ public interface BookingRepository extends JpaRepository<Booking, UUID>, JpaSpec
     Page<Booking> findByStadiumIdAndStartsAtBetween(UUID stadiumId, OffsetDateTime from, OffsetDateTime to,
                                                     Pageable pageable);
 
-    /** Used by BookingExpiryJob to find pending bookings past their hold deadline. */
-    List<Booking> findByStatusAndExpiresAtBefore(String status, OffsetDateTime time);
+    /**
+     * Pending bookings past their hold deadline that BookingExpiryJob may actually expire:
+     * the ones with <b>no card payment still on its way</b>.
+     *
+     * <p>A payment is on its way while it is {@code processing} or {@code capture_pending} —
+     * the provider has been asked and has not given a clear answer. ATMOS does exactly this:
+     * it answers {@code pay/apply} with "connection problem" for money it has taken, and
+     * {@code pay/get} says "paid" moments later. Expiring the booking meanwhile freed the
+     * slot for somebody else, so when the payment turned out paid the player's money had to
+     * be given back and their slot was gone — for a payment that had always been fine.
+     *
+     * <p>So the slot stays held until the payment is resolved. Nothing waits forever:
+     * PaymentReconcileService fails an unconfirmed charge after its own
+     * {@code ABANDONED_AFTER}, and the next run of this job then expires the booking.
+     */
+    @Query("""
+            SELECT b FROM Booking b
+            WHERE b.status = :status AND b.expiresAt < :time
+              AND NOT EXISTS (
+                SELECT 1 FROM Payment p
+                WHERE p.booking = b
+                  AND p.method <> :cash
+                  AND p.amount > 0
+                  AND p.status IN :inFlight)
+            """)
+    List<Booking> findExpirablePending(@Param("status") String status,
+                                       @Param("time") OffsetDateTime time,
+                                       @Param("cash") Payment.Method cash,
+                                       @Param("inFlight") Collection<Payment.Status> inFlight);
 
     /** Used by ReminderJob to find bookings starting within a window. */
     List<Booking> findByStatusAndStartsAtBetween(String status, OffsetDateTime from, OffsetDateTime to);

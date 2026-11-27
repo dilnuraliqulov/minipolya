@@ -25,6 +25,8 @@ public enum AuditAction {
     USER_ROLE_CHANGED,
     REFUND_RETRIED,
     REFUND_MARKED_MANUAL,
+    /** F6: an admin settled a hold left needs_review — captured, released or refunded. */
+    PAYMENT_REVIEW_RESOLVED,
     OWNER_LEGAL_DETAILS_CHANGED,
     STADIUM_NOTE_ADDED,
     /** The deposit and cancellation window, agreed with the owner by phone (D3). */
@@ -78,6 +80,8 @@ public enum AuditAction {
     GAME_AUTO_CANCELLED,
     PAYMENT_COMPLETED,
     PAYMENT_RELEASED,
+    /** F6: a hold's capture or give-back had no clear outcome; left for an admin. */
+    PAYMENT_NEEDS_REVIEW,
     REFUND_CREATED,
     REFUND_FAILED,
     PROMOTION_EXPIRED

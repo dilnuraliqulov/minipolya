@@ -87,11 +87,24 @@ app:
     # one is cancelled. Does not apply to casual games.
     opponent-deadline-hours: 3
   payments:
-    # `fake` wires up FakePaymentProvider, which refuses to start under the prod
-    # profile. The real ATMOS client replaces this once its API docs land.
+    # `fake` wires up FakePaymentProvider (dev, tests, plain staging), which refuses to start
+    # under prod or atmos. The real client, AtmosPaymentProvider, comes with the atmos profile
+    # (staging,atmos on the sandbox server, prod,atmos in production) and ignores this value.
     provider: ${PAYMENTS_PROVIDER:fake}
-    # The longest a team game's hold may last (30 days); a game needing longer cannot be created.
-    hold-max-minutes: 43200
+    # ATMOS_HOLD_MAX_MINUTES: the longest a team game's hold may last, in minutes
+    # (default 10080 = 7 days). A game whose hold would need longer cannot be created yet;
+    # the creating team makes it nearer the date. See docs/claude/payments.md, "How far ahead
+    # a team game can be created".
+    hold-max-minutes: ${ATMOS_HOLD_MAX_MINUTES:10080}
+    # A payment left `processing` — the apply answered "connection problem" (STPIMS-ERR-041)
+    # or did not answer — is asked about straight away, so the player sees the outcome in
+    # seconds instead of waiting for PaymentReconcileJob. attempts: 0 turns it off.
+    # budget is the hard limit on how long one request may be held up, whatever the
+    # attempts would add up to: one ATMOS call alone may take app.atmos.timeout-seconds.
+    settle-now:
+      attempts: 6
+      delay: 3s
+      budget: 20s
     # FakePaymentProvider only (dev and tests): see "To simulate X in dev" in CLAUDE.md.
     fake:
       otp-length: 6

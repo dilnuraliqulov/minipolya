@@ -61,7 +61,7 @@ class BookingCancellationRefundTest {
 
         paymentService = new PaymentService(paymentRepository, mock(BookingRepository.class),
                 mock(UserRepository.class), mock(GameRepository.class), mock(GameParticipantRepository.class),
-                mock(PaymentMapper.class), List.of(), mock(GameService.class),
+                mock(PaymentMapper.class), mock(GameService.class),
                 mock(NotificationService.class), mock(AuditService.class), paymentProvider, settings, mock(OwnerLegalDetailsRepository.class));
 
         BookingMapper bookingMapper = mock(BookingMapper.class);

@@ -21,6 +21,7 @@ import uz.minipolya.minipolya_backend.dto.response.ManualBookingPriceResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.entity.Booking;
 import uz.minipolya.minipolya_backend.service.BookingService;
+import uz.minipolya.minipolya_backend.service.PaymentSettler;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -31,6 +32,7 @@ import java.util.UUID;
 public class BookingController {
 
     private final BookingService bookingService;
+    private final PaymentSettler paymentSettler;
 
     /**
      * Creates the booking and charges the chosen card. The booking survives a
@@ -41,7 +43,7 @@ public class BookingController {
     @PostMapping("/api/bookings")
     public ApiResponse<BookingResponse> create(@AuthenticationPrincipal UUID userId,
                                                @Valid @RequestBody CreateBookingRequest request) {
-        BookingResponse booking = bookingService.createBooking(userId, request);
+        BookingResponse booking = settled(userId, bookingService.createBooking(userId, request));
         return ApiResponse.ok(booking, paymentMessage(booking));
     }
 
@@ -54,8 +56,27 @@ public class BookingController {
     public ApiResponse<BookingResponse> pay(@AuthenticationPrincipal UUID userId,
                                             @PathVariable UUID id,
                                             @Valid @RequestBody PayBookingRequest request) {
-        BookingResponse booking = bookingService.retryPayment(userId, id, request.getCardId());
+        BookingResponse booking = settled(userId, bookingService.retryPayment(userId, id, request.getCardId()));
         return ApiResponse.ok(booking, paymentMessage(booking));
+    }
+
+    /**
+     * A payment the provider gave no clear answer about is asked after straight away, here —
+     * once the charge's own transaction has committed, never inside it — so the player sees
+     * {@code paid} or {@code declined} in seconds. ATMOS answers {@code pay/apply} with
+     * "connection problem" for payments it has taken, and waiting for the five-minute
+     * reconcile job to notice made every such payment look unpaid meanwhile.
+     *
+     * <p>When nothing moves the response is the one the charge produced: {@code processing},
+     * which the Mini App shows as "being checked" and the job settles later.
+     */
+    private BookingResponse settled(UUID userId, BookingResponse booking) {
+        if (booking.getPaymentState() != BookingResponse.PaymentState.PROCESSING) {
+            return booking;
+        }
+        return paymentSettler.settleBookingNow(booking.getId())
+                ? bookingService.getBookingForUser(userId, booking.getId())
+                : booking;
     }
 
     /** The same message for a booking's first payment and a retried one. */
@@ -76,7 +97,7 @@ public class BookingController {
     public ApiResponse<BookingResponse> payRemainder(@AuthenticationPrincipal UUID userId,
                                                      @PathVariable UUID id,
                                                      @Valid @RequestBody PayRemainderRequest request) {
-        BookingResponse booking = bookingService.payRemainder(userId, id, request.getCardId());
+        BookingResponse booking = settled(userId, bookingService.payRemainder(userId, id, request.getCardId()));
         return ApiResponse.ok(booking, booking.getPaymentStatus() == Booking.PaymentStatus.PAID
                 ? "Booking paid in full"
                 : "Payment failed — the remainder is still due");

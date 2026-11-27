@@ -12,8 +12,6 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
 import uz.minipolya.minipolya_backend.provider.ChargeRequest;
-import uz.minipolya.minipolya_backend.provider.ClickProvider;
-import uz.minipolya.minipolya_backend.provider.PaymeProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.repository.OwnerLegalDetailsRepository;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
@@ -59,7 +57,7 @@ class CasualGameCardPaymentTest {
         when(settings.current()).thenReturn(PlatformSettings.builder().build());
         service = new PaymentService(paymentRepository, mock(BookingRepository.class), mock(UserRepository.class),
                 gameRepository, participants, mock(PaymentMapper.class),
-                List.of(new PaymeProvider(), new ClickProvider()), gameService,
+                gameService,
                 mock(NotificationService.class), mock(AuditService.class), provider, settings, ProviderStubs.ownersPaidTo("rcp-owner"));
 
         User player = User.builder().id(PLAYER_ID).name("Player").build();

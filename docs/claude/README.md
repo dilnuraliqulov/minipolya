@@ -30,6 +30,7 @@ Quoted cross-references inside these files (`see "Cancellation Policy"`) still n
 | Platform Settings | `pricing.md` |
 | Payments → The player price · API fields | `pricing.md` |
 | Payments → declines, the provider, fake-provider recipes, payment rows, team money → ATMOS operations, reconciliation, saved cards, open ATMOS questions | `payments.md` |
+| Every ATMOS call compared with the docs, the HTTP 403 on holds, the questions for ATMOS | `atmos-endpoint-audit.md` |
 | Availability Calculation | `availability.md` |
 | Audit log (all subsections) | `audit-log.md` |
 | Admin panel API · Revenue · Failed refunds · Owner legal details | `admin-api.md` |
@@ -60,6 +61,7 @@ Quoted cross-references inside these files (`see "Cancellation Policy"`) still n
 | `availability.md` | the availability endpoint, slot statuses, the free-slot count |
 | `pricing.md` | the player price, card fee, rounding, minimum booking amount, platform settings |
 | `payments.md` | the provider, declines, refunds, holds, payment rows, saved cards, reconciliation |
+| `atmos-endpoint-audit.md` | our ATMOS calls against docs.atmos.uz, field by field: what was wrong, what changed, what only ATMOS can answer |
 | `teams.md` | teams, members, invite links |
 | `games.md` | casual and open games, rules shared by all three flows |
 | `team-games.md` | `team_vs_team`: holds, joins, deadlines, cancellation bands, remainders, the board |

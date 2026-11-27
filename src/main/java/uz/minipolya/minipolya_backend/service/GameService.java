@@ -331,15 +331,6 @@ public class GameService {
     }
 
     /**
-     * Casual games only — the hosted checkout. A team game is paid for when it
-     * is created and when an opponent joins, from a saved card.
-     */
-    @Transactional
-    public PaymentInitResponse payForGame(UUID gameId, UUID userId, String provider) {
-        return paymentService.initiateGamePayment(gameId, provider, userId);
-    }
-
-    /**
      * A casual player pays their share from a saved card through ATMOS: charged now,
      * grossed up by the card fee, and reversed in full if the game is called off. The
      * existing rule is unchanged — each player pays as they go, and the slot is booked once

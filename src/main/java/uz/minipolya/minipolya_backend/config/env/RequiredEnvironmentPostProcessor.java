@@ -69,9 +69,9 @@ public class RequiredEnvironmentPostProcessor implements EnvironmentPostProcesso
             // The four the real ATMOS client cannot make a single call without. They are
             // checked here, before any bean exists, as well as in
             // AtmosPaymentProvider.requireConfiguration, which sees the bound app.atmos.*
-            // values. ATMOS_PLATFORM_RECIPIENT_ID is deliberately NOT here: a sandbox is
-            // given one later than the rest, and without it only the platform's own split
-            // of a team game fails (AtmosPaymentProvider.recipientOf), nothing else.
+            // values. ATMOS_PLATFORM_RECIPIENT_ID is not among them — a sandbox is given one
+            // later than the rest, and without it only the platform's own split of a team game
+            // fails — but production needs it (below): there it would switch team games off.
             // Production must say which side of ATMOS it is on; AtmosEnvironmentGuard then
             // refuses to start it on anything but "production". Not asked for anywhere else:
             // an unset value means the sandbox, which is the safe end of that mistake.
@@ -79,7 +79,10 @@ public class RequiredEnvironmentPostProcessor implements EnvironmentPostProcesso
                     new Setting("ATMOS_ENVIRONMENT", "exactly \"production\" on a production server. "
                             + "The ATMOS sandbox answers on the same host with credentials that look the "
                             + "same, so nothing else can tell them apart: left unset this server would "
-                            + "quietly take nobody's money.")),
+                            + "quietly take nobody's money."),
+                    new Setting("ATMOS_PLATFORM_RECIPIENT_ID", "the platform's own ATMOS recipient, where a "
+                            + "team game's fee is paid. Without it every team game's creation and join is "
+                            + "refused.")),
             "atmos", List.of(
                     new Setting("ATMOS_BASE_URL", "the ATMOS API root, e.g. https://apigw.atmos.uz — no "
                             + "trailing slash. ATMOS answers only calls from an IP it has allowed, so this "

@@ -118,10 +118,16 @@ class BookingPaymentRetryTest extends FakeProviderFlowSupport {
         assertThat(balance(good)).isEqualTo(START);
     }
 
+    /**
+     * A payment the provider will not say anything about — not even when asked straight away
+     * ({@code 0093}) — stays {@code processing}, and nothing may charge the player a second
+     * time for that booking while it does. {@code 0091} is not this case any more: asking
+     * pay/get settles it inside the request.
+     */
     @Test
     void aPaymentStillProcessingBlocksARetry() throws Exception {
         User player = data.user("Retry Processing Player");
-        UUID unclear = addCard(player, "8600123412340091");
+        UUID unclear = addCard(player, "8600123412340093");
         UUID good = addCard(player, "8600123412341237");
         UUID bookingId = bookingId(book(player, unclear, "FULL", slot(4, 14))
                 .andExpect(jsonPath("$.data.paymentState").value("processing")));

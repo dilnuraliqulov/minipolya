@@ -49,6 +49,11 @@ What is worth knowing without reading all of it:
   and are never printed; the money goes to our own store and comes back. It refuses to run
   against `ATMOS_ENVIRONMENT=production` unless told to in so many words. ATMOS answers only
   calls from an IP it has allowed, so there is no way to do this from a laptop.
+  `./atmos-smoke.sh --bisect` binds the card once and then takes the payment again per
+  difference between this script's request and the app's (the store `pay/create` names, a
+  UUID `account`, `ofd_items`), reversing each: the first failing variant names why
+  `pay/apply` answers `STPIMS-ERR-041` in the app. See "A confirmation ATMOS could not
+  answer" in [payments.md](payments.md).
 
 ## Deployment checklist
 
@@ -119,10 +124,11 @@ forwarded headers — and then every admin shares one 20-attempt budget.
   (`PUT /api/admin/users/{id}/legal-details`) — a stadium cannot be approved before
   that. Settle the "Open ATMOS
   questions" (see "Payments") against the real API first.
-- The Payme/Click webhooks are still mocks that trust the body without checking a
-  signature (see "Deferred until the payment model is final"). Don't expose
-  `/webhooks/payme` and `/webhooks/click` until they verify it — block them in
-  Nginx otherwise.
+- The Payme/Click hosted checkout and its unsigned webhooks are **removed** (they could
+  confirm a booking nobody paid for). `/webhooks/telegram` is the only public path under
+  `/webhooks`; anything else there needs a JWT and does not exist.
+- `ATMOS_PLATFORM_RECIPIENT_ID` is **required** under `prod`: the app refuses to start
+  without it, because every team game would be refused.
 
 ## Build and run
 
@@ -158,7 +164,7 @@ forwarded headers — and then every admin shares one 20-attempt budget.
   origins, comma-separated (e.g. `https://admin.minipolya.uz,https://app.minipolya.uz`)
   — never `*`. It then covers `/api/**` (methods GET, POST, PUT, PATCH, DELETE,
   OPTIONS; headers Authorization, Content-Type; no credentials; preflights cached
-  3600 s). Preflights pass without a JWT; other origins get 403; `/webhooks/**` never
+  3600 s). Preflights pass without a JWT; other origins get 403; `/webhooks/telegram` never
   has CORS.
 - Logging at `INFO`, `spring.jpa.show-sql: false` (already). Check that no log line
   carries tokens, card numbers or passwords before raising any level to DEBUG.

@@ -109,3 +109,5 @@ databaseChangeLog:
       file: db/changelog/changes/054-team-level.sql
   - include:
       file: db/changelog/changes/055-game-message-system.sql
+  - include:
+      file: db/changelog/changes/056-payment-needs-review.sql

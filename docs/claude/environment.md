@@ -36,7 +36,15 @@ ATMOS_PLATFORM_RECIPIENT_ID=...
 ATMOS_RECIPIENT_FIELD=      # store_id (the default) or terminal_id — see payments.md
 ATMOS_OFD_CODE_RENTAL=      # optional: fiscal receipts are sent only when both are set
 ATMOS_OFD_CODE_SERVICE=
+ATMOS_HOLD_MAX_MINUTES=     # optional: longest team-game hold, default 10080 (7 days)
 ```
+
+- `ATMOS_HOLD_MAX_MINUTES` is the longest a team game's hold may last. A game further off
+  than that cannot be created yet — the hold is placed when the game is created or the game
+  is not created — and the creating team is told how many days ahead it may try. ATMOS has
+  never documented a maximum, so it is a setting rather than a constant: see
+  [payments.md](payments.md), "How far ahead a team game can be created", and
+  [atmos-endpoint-audit.md](atmos-endpoint-audit.md), open question 8.
 
 - Spring reads it itself: `application.yaml` has
   `spring.config.import: optional:file:.env[.properties]`, so `.env` is loaded
@@ -107,11 +115,14 @@ refuses to start `prod` on anything but `production` (and refuses a value that i
 under any profile), and `GET /api/admin/payments/provider-check` reports it so the admin
 panel can show which side a server is on.
 
-`ATMOS_PLATFORM_RECIPIENT_ID` is deliberately **not** required to start: a sandbox is
-usually given it last, and without it only the platform's own split of a team-game fee
-fails (`AtmosPaymentProvider.recipientOf`, `RECIPIENT_MISSING`) — ordinary bookings, which
-the platform takes nothing from, are paid and refunded as usual. It is logged as missing
-at startup instead. `AtmosPaymentProvider.requireConfiguration` checks the same four again
+`ATMOS_PLATFORM_RECIPIENT_ID` is **not** required to start a sandbox (`staging,atmos`): a
+sandbox is usually given it last, and without it only the platform's own split of a
+team-game fee fails (`AtmosPaymentProvider.recipientOf`, `RECIPIENT_MISSING` — a 502 with an
+ERROR in the log, never a card decline) and staging pays our own store instead; ordinary
+bookings, which the platform takes nothing from, are paid and refunded as usual. It is
+logged as missing at startup. Under **`prod` it is required** —
+`RequiredEnvironmentPostProcessor` and `AtmosPaymentProvider.requireConfiguration` both
+refuse to start without it, because every team game would be refused. `AtmosPaymentProvider.requireConfiguration` checks the same four again
 on the bound `app.atmos.*` values, so a context built any other way is covered too, and
 every `ATMOS_*` value is trimmed as it is bound (`AppProperties.Atmos`): a space pasted
 into `.env` is not a 401 to debug, and a value that is only whitespace counts as missing.

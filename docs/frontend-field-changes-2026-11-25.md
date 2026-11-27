@@ -1,6 +1,7 @@
-# API changes for the frontend — the payment provider check (2026-11-25)
+# API changes for the frontend (2026-11-25)
 
-One new admin endpoint. Nothing existing changed, nothing was removed.
+One new admin endpoint, one new audit field, and two behaviours worth knowing about a
+payment that is still being checked. No field was removed and none changed meaning.
 
 ## `GET /api/admin/payments/provider-check` — new
 
@@ -44,3 +45,41 @@ else.
 - **No token and no credential is ever in the body**, by construction: the response has only
   the four fields above, and the host rather than the URL (a URL can carry `user:password@`).
 - Calling it costs an ATMOS round trip, so don't poll it.
+
+## A card payment that is still being checked — no new field, new behaviour
+
+ATMOS answers `pay/apply` with `STPIMS-ERR-041` ("Проблема соединения") for payments it has
+**in fact taken**, so a booking could come back with `paymentState: "processing"` even though
+the money had left the card. Two things changed around that; the fields are the ones that
+were already there.
+
+- **`paymentState: "processing"` now resolves in seconds, not minutes.** The backend asks the
+  provider again before answering `POST /api/bookings`, `POST /api/bookings/{id}/pay` and
+  `POST /api/bookings/{id}/pay-remainder` (up to six asks, three seconds apart), so those
+  responses usually already say `paid` or `declined`. When they still say `processing`, the
+  outcome is genuinely unknown.
+- **Never show `processing` as unpaid.** Show "Toʻlov tekshirilmoqda" (Не оплачено → *Проверяем
+  оплату*) and read the booking again every few seconds until `paymentState` changes. The Mini
+  App does this in `useBooking` / `PaymentSummary`.
+- **A booking whose payment is `processing` is not offered a new payment** and does not expire
+  while it lasts: its `expiresAt` may be in the past while `status` is still `pending`. Treat
+  "the hold ran out" as a reason to hide the pay button, not as a reason to say the booking is
+  gone — `status` is what says that.
+- **`declineReason` is absent when the provider could not be reached.** A connection problem is
+  not the card's fault, so such a payment is `paymentState: "failed"` with no reason, not
+  `"declined"` with `CARD_DECLINED`. Keep the "try again" wording for `failed`, and card-specific
+  wording ("your card was refused") only for `declined`.
+
+## Audit log: `BOOKING_CREATED` now carries `cardPrice`
+
+`GET /api/admin/audit` entries for `BOOKING_CREATED` have one more change line:
+
+| Field | What it is |
+|---|---|
+| `price` | the **owner's** price for the hour, in tiyin — unchanged, same meaning as before |
+| `cardPrice` | what the player's card was charged for the booking, in tiyin (the booking's own `cardPrice`) |
+
+`price` alone was being read as "what was paid", which on a card booking it never was. Add a
+label for `cardPrice` beside "Narx" — "Karta narxi" / "Цена по карте" — and format it as money
+like the rest. `MANUAL_BOOKING_CREATED` still has only `price`: a walk-in is cash, and cash
+carries no card fee. Older entries have no `cardPrice`; render them as before.

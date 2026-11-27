@@ -41,7 +41,13 @@ public class OwnerLegalDetailsService {
 
     private static final Pattern NINE_DIGITS = Pattern.compile("\\d{9}");
     private static final Pattern FOURTEEN_DIGITS = Pattern.compile("\\d{14}");
-    private static final int MAX_RECIPIENT_ID = 50;
+    /**
+     * An ATMOS recipient (store) id is a number — ours on the sandbox is 11299. Up to 20
+     * digits, well past any store id ATMOS has shown. A typo here is a 502 on every card
+     * payment of that owner's stadiums (ATMOS answers STPIMS-ERR-037), so it is caught where
+     * it is typed.
+     */
+    private static final java.util.regex.Pattern RECIPIENT_ID = java.util.regex.Pattern.compile("[0-9]{1,20}");
 
     private final OwnerLegalDetailsRepository repository;
     private final UserRepository userRepository;
@@ -87,8 +93,8 @@ public class OwnerLegalDetailsService {
             if (recipientId.isEmpty()) {
                 throw new BadRequestException("atmosRecipientId is required when the contract is signed");
             }
-            if (recipientId.length() > MAX_RECIPIENT_ID) {
-                throw new BadRequestException("atmosRecipientId must be at most 50 characters");
+            if (!RECIPIENT_ID.matcher(recipientId).matches()) {
+                throw new BadRequestException("atmosRecipientId must be the ATMOS store id: digits only, at most 20");
             }
         }
 

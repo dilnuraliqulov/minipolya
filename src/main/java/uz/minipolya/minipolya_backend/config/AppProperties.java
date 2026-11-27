@@ -143,13 +143,50 @@ public class AppProperties {
         private String provider = "fake";
 
         /**
-         * The longest a team game's hold may last, in minutes (default 43 200 = 30 days).
-         * A game whose hold would need longer cannot be created.
+         * {@code ATMOS_HOLD_MAX_MINUTES}: the longest a team game's hold may last, in minutes
+         * (default 10 080 = 7 days). A game whose hold would need longer cannot be created
+         * yet — see {@code TeamGameService.holdMinutes} and, for what the player is told,
+         * {@code docs/claude/payments.md}.
+         *
+         * <p>It is a setting and not a constant because ATMOS has never documented how long a
+         * hold may last: the parameter table says only "hold duration in minutes". Seven days
+         * is what their own examples and support have been willing to confirm, so that is the
+         * default, and it can be raised the moment ATMOS says a longer one holds — a restart,
+         * not a release.
          */
-        private int holdMaxMinutes = 43_200;
+        private int holdMaxMinutes = 10_080;
+
+        /**
+         * How long a request waits for a payment whose confirmation the provider did not
+         * answer clearly, before leaving it to PaymentReconcileJob.
+         */
+        private SettleNow settleNow = new SettleNow();
 
         /** FakePaymentProvider's behaviour (dev and tests only; see "To simulate X in dev" in CLAUDE.md). */
         private Fake fake = new Fake();
+    }
+
+    /**
+     * {@code app.payments.settle-now.*}: asking the provider straight away about a payment
+     * left {@code processing} — an apply that answered "connection problem"
+     * ({@code STPIMS-ERR-041}) or did not answer at all. The money has usually already moved,
+     * so the player should see the outcome in seconds rather than wait for the five-minute
+     * reconcile job. Only timing lives here; what the asking does is PaymentReconcileService's.
+     */
+    @Getter
+    @Setter
+    public static class SettleNow {
+        /** How many times the provider is asked. 0 turns it off: the job settles it instead. */
+        private int attempts = 6;
+        /** How long to wait between two of those asks. */
+        private java.time.Duration delay = java.time.Duration.ofSeconds(3);
+        /**
+         * The longest the whole thing may hold up one request, however slow the provider is.
+         * One ATMOS call may itself take {@code app.atmos.timeout-seconds}, so without this
+         * the attempts alone could keep a player waiting for minutes; whatever is unfinished
+         * when it runs out is the reconcile job's, as it was before.
+         */
+        private java.time.Duration budget = java.time.Duration.ofSeconds(20);
     }
 
     /** {@code app.payments.fake.*}: how the fake provider imitates ATMOS. */

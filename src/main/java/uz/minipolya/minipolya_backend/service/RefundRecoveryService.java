@@ -118,7 +118,7 @@ public class RefundRecoveryService {
         return refund;
     }
 
-    private static String requireReason(String reason) {
+    static String requireReason(String reason) {
         String text = reason == null ? "" : reason.trim();
         if (text.isEmpty()) {
             throw new BadRequestException("reason is required");

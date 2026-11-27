@@ -923,6 +923,15 @@ Worth knowing before you run it:
   ATMOS client and it says so instead of running.
 - Test card numbers for the sandbox are in the ATMOS docs under "Песочница", not in
   this repository.
+- **`./atmos-smoke.sh --bisect`** answers "why does `pay/apply` work here but return
+  `STPIMS-ERR-041` in the app?". It binds the card once and then takes the payment several
+  times over, adding one difference between this script's request and the backend's each
+  time — the store `pay/create` names, the 36-character UUID `account`, `ofd_items` — and
+  reverses every one in full. The first variant whose `pay/apply` fails names the cause.
+  Pass the owner's recipient id to include that variant:
+  `ATMOS_SMOKE_RECIPIENT_ID=<owner_legal_details.atmos_recipient_id> ./atmos-smoke.sh --bisect`.
+  The backend log line `ATMOS single payment: account=… createStore=… recipientField=…
+  receipts=…` says which shape this server actually sends.
 
 ---
 

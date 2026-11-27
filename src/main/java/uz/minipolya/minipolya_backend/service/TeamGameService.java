@@ -125,6 +125,19 @@ public class TeamGameService {
     private final org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     /**
+     * Asks ATMOS about a joiner's charge that had no clear answer, while the leader waits —
+     * the same as a booking does. Set by Spring, lazily: the settler reaches this service
+     * through {@code PaymentReconcileService}, so it cannot be a constructor argument. Null in
+     * unit tests that build this service by hand, which then leave the row to the job as before.
+     */
+    private PaymentSettler paymentSettler;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setPaymentSettler(@org.springframework.context.annotation.Lazy PaymentSettler paymentSettler) {
+        this.paymentSettler = paymentSettler;
+    }
+
+    /**
      * Puts the creating team on side A and holds its fee and advance. No
      * booking is written: a waiting game holds no slot.
      *
@@ -217,12 +230,22 @@ public class TeamGameService {
             switch (created) {
                 case UNAVAILABLE -> throw new ProviderUnavailableException(
                         "To'lov tizimi vaqtincha ishlamayapti. Birozdan so'ng qayta urinib ko'ring");
+                case OWNER_NOT_CONNECTED -> throw new ProviderUnavailableException(PaymentService.OWNER_NOT_CONNECTED);
                 case UNKNOWN -> throw new PaymentStepFailedException(CHARGE_UNCONFIRMED);
                 default -> throw CardDeclinedException.of(
                         step(() -> paymentService.teamPaymentById(start.paymentId())), JOIN_DECLINED);
             }
         }
         Payment charge = step(() -> paymentService.confirmCommittedCharge(start.paymentId()));
+        if (charge.getStatus() == Payment.Status.PROCESSING && paymentSettler != null) {
+            // ATMOS answers pay/apply with "connection problem" (STPIMS-ERR-041) for money it
+            // has taken: ask pay/get now rather than drop the join and refund it five minutes
+            // later. Each attempt is its own transaction (this method holds none), and it is
+            // the reconcile job's own call — a joining team's charge is only settled there,
+            // never acted on: the join below still decides what the money was for.
+            paymentSettler.settleNow(start.paymentId());
+            charge = step(() -> paymentService.teamPaymentById(start.paymentId()));
+        }
         if (charge.getStatus() != Payment.Status.PAID) {
             // Declined: nothing moved. Unanswered: the row stays processing and the
             // reconcile job gives the money back if it was taken — the team has left by then.
@@ -348,7 +371,9 @@ public class TeamGameService {
                 .map(id -> paymentService.teamPaymentById(id))
                 .toList());
         if (settled.stream().anyMatch(p -> p.getStatus() == Payment.Status.CAPTURE_PENDING
-                || p.getStatus() == Payment.Status.PROCESSING)) {
+                || p.getStatus() == Payment.Status.PROCESSING
+                // F6: whether the hold was taken is an admin's to find out; the join waits for it.
+                || p.getStatus() == Payment.Status.NEEDS_REVIEW)) {
             log.warn("Join of gameTeam {} waits: the waiting team's capture has no clear answer yet", gameTeamId);
             return JoinState.PENDING;
         }
@@ -1092,16 +1117,41 @@ public class TeamGameService {
      * How long the creating team's hold must last: until the 3-hour point, when the game
      * either has an opponent (and the hold is captured) or is over (and it is released),
      * plus {@value #HOLD_SLACK_MINUTES} minutes of slack. Capped by
-     * {@code app.payments.hold-max-minutes}; a game that would need longer cannot be created.
+     * {@code ATMOS_HOLD_MAX_MINUTES} ({@code app.payments.hold-max-minutes}).
+     *
+     * <p>A game further off than the cap <b>cannot be created yet</b>, and that is the
+     * deliberate choice between the two ways out. The alternative — create the game now and
+     * place the hold later, once it is inside the window — would mean a game sitting on the
+     * board with nobody's money behind it: a team could withdraw, or its card could be gone,
+     * at the one moment an opponent has just committed. A team game's promise is that the
+     * creating team's money is already held, so the hold is placed when the game is created
+     * or the game is not created. The team is told how many days ahead it may create it and
+     * comes back nearer the date; a game two weeks away wanted a 19 591-minute hold, which
+     * is what this refuses.
      */
     int holdMinutes(Game game, OffsetDateTime now) {
         long minutes = Math.max(0, Duration.between(now, opponentDeadline(game)).toMinutes()) + HOLD_SLACK_MINUTES;
         int max = appProperties.getPayments().getHoldMaxMinutes();
         if (minutes > max) {
-            throw new BadRequestException("A team game can be created at most "
-                    + (max - HOLD_SLACK_MINUTES) / (24 * 60) + " days before it is played");
+            throw new BadRequestException("A team game can be created at most " + holdHorizonDays()
+                    + " days before kick-off: creating it holds your team's money on the card until"
+                    + " the game is confirmed, and a card payment cannot hold it for longer."
+                    + " Create the game nearer the date.");
         }
         return (int) minutes;
+    }
+
+    /**
+     * How far ahead a team game can be created, in whole days: the hold cap, plus the hours
+     * before kick-off the hold need not cover ({@code app.game.opponent-deadline-hours}),
+     * less the slack it must ({@value #HOLD_SLACK_MINUTES} minutes). Whole days, rounded
+     * down, because this is what a player is told and a day they are promised must work.
+     */
+    int holdHorizonDays() {
+        long ahead = (long) appProperties.getPayments().getHoldMaxMinutes()
+                + appProperties.getGame().getOpponentDeadlineHours() * 60L
+                - HOLD_SLACK_MINUTES;
+        return (int) Math.max(0, ahead / (24 * 60));
     }
 
     // ---- Helpers ----
@@ -1147,7 +1197,8 @@ public class TeamGameService {
     private void requireWaitingHoldsInPlace(Game game) {
         for (GameTeam waiting : gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)) {
             boolean unsettled = paymentService.teamPayments(waiting.getId()).stream()
-                    .anyMatch(p -> p.getStatus() == Payment.Status.PROCESSING);
+                    .anyMatch(p -> p.getStatus() == Payment.Status.PROCESSING
+                            || p.getStatus() == Payment.Status.NEEDS_REVIEW);
             if (unsettled) {
                 throw new BadRequestException(
                         "The other team's payment is still being confirmed; try again in a few minutes");

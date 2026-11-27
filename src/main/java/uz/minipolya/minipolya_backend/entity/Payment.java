@@ -142,6 +142,14 @@ public class Payment {
     @Column(name = "hold_expires_at")
     private OffsetDateTime holdExpiresAt;
 
+    /**
+     * When a capture of this hold was first asked for (changeset 056); null if it never was.
+     * It is what tells a hold ATMOS reports as gone apart: never captured means simply
+     * released, while asked to be captured means the money may have been taken.
+     */
+    @Column(name = "capture_requested_at")
+    private OffsetDateTime captureRequestedAt;
+
     @Builder.Default
     @Convert(converter = StatusConverter.class)
     @Column(nullable = false, length = 20)
@@ -256,8 +264,10 @@ public class Payment {
      * then moves forward exactly once, to {@link #CAPTURED} or
      * {@link #RELEASED}. A status only ever moves forward.
      *
-     * <p>{@link #PENDING} and {@link #COMPLETED} belong to the legacy hosted
-     * checkout and disappear with it.
+     * <p>{@link #PENDING} and {@link #COMPLETED} belonged to the removed Payme/Click hosted
+     * checkout. Nothing writes them any more, but rows it left behind may still carry them
+     * (the database constraint allows both), so they stay readable and {@code COMPLETED}
+     * still counts as money that arrived wherever {@code PAID} does.
      */
     public enum Status {
         /** Written, provider called, answer not in yet (or lost): settled by the reconcile job. */
@@ -272,6 +282,12 @@ public class Payment {
          * the reconcile job leaves it alone.
          */
         REFUND_FAILED,
+        /**
+         * F6 (changeset 056): a hold whose capture or give-back has no clear outcome — the
+         * money may or may not have been taken. Never settled automatically, and never assumed
+         * released: an admin finds out at ATMOS and resolves it by hand.
+         */
+        NEEDS_REVIEW,
         HELD, CAPTURED, RELEASED, PAID, REFUNDED, FAILED, PENDING, COMPLETED,
         /**
          * E5: a cash row voided because the owner (or an admin) undid the "cash received"

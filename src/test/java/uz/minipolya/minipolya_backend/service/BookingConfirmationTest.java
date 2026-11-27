@@ -84,7 +84,7 @@ class BookingConfirmationTest {
 
         service = new PaymentService(paymentRepository, bookingRepository, userRepository,
                 mock(GameRepository.class), mock(GameParticipantRepository.class), mock(PaymentMapper.class),
-                List.of(), mock(GameService.class), notificationService, auditService,
+                mock(GameService.class), notificationService, auditService,
                 paymentProvider, platformSettingsService, mock(OwnerLegalDetailsRepository.class));
 
         player = User.builder().id(USER_ID).name("Player").build();

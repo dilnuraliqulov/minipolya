@@ -30,6 +30,12 @@
   `paymentState` and `declineReason` (see "Why a card payment was refused").
 - Hold: unpaid bookings set `expires_at = now + 10 minutes`, status = `pending`
 - Expiry: `BookingExpiryJob` runs every minute, marks expired pending bookings as `expired`
+  — **except one whose card payment is still on its way** (`processing` or
+  `capture_pending`): the slot stays held until the payment is resolved, because ATMOS
+  answers a confirmation it has in fact taken the money for with a connection error. The
+  query is `BookingRepository.findExpirablePending`; see "A confirmation ATMOS could not
+  answer" in [payments.md](payments.md). Nothing waits for ever — the charge is failed after
+  `PaymentReconcileService.ABANDONED_AFTER` and the next run expires the booking.
 - Status flow:
   - `pending` → `confirmed` (paid) → `completed`
   - `pending` → `expired` (unpaid timeout)

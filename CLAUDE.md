@@ -123,7 +123,8 @@ Break none of these. Each is explained in full in the doc named beside it.
 - The Mini App and the admin panel are a **separate repository**, checked out beside this one
   as `../minipolyaFrontend`. No frontend code or frontend docs here.
 - The API serves JSON under `/api/**`, uploaded photos under `GET /api/uploads/**` and the
-  Telegram webhook under `/webhooks/**`. One origin fronts both repos (Caddy), so
+  Telegram webhook at `POST /webhooks/telegram` — the only public path under `/webhooks` (the
+  unsigned Payme/Click callbacks are gone). One origin fronts both repos (Caddy), so
   `CORS_ALLOWED_ORIGINS` is normally empty.
 - `deploy/` is the **only** copy of the deployment walkthrough; the frontend repository points
   at it rather than duplicating it.
@@ -180,8 +181,8 @@ src/main/java/uz/minipolya/minipolya_backend/
 │   │                        #   Unauthorized, ResourceNotFound, Forbidden, …
 │   └── GlobalExceptionHandler.java # @RestControllerAdvice
 ├── provider/                # The payment provider behind one interface (see "Payments"): PaymentProvider,
-│                            #   AtmosPaymentProvider, FakePaymentProvider, LegacyCheckoutProvider (legacy),
-│                            #   DeclineReason, AtmosCodes, CardMask
+│                            #   AtmosPaymentProvider, FakePaymentProvider, DeclineReason, AtmosCodes, CardMask
+│                            #   (the Payme/Click hosted checkout is removed)
 ├── scheduler/               # @Scheduled cron jobs
 │   ├── BookingExpiryJob.java        # Expire unpaid bookings every minute
 │   ├── GameTimeoutJob.java          # Cancel unfilled games (team: 3h before start; others: at start)
@@ -264,6 +265,9 @@ For paginated lists:
     cutoff. Money rules live in `platform_settings`, not here — only timing does.
   - `app.admin-login.*` holds the admin password sign-in limits (see "Admin accounts").
   - `app.payments.fake.*` shapes the fake provider (see "Payments → The provider").
+  - `app.payments.settle-now.*` is how long a request waits for a payment the provider gave
+    no clear answer about before leaving it to `PaymentReconcileJob` (see `payments.md`,
+    "A confirmation ATMOS could not answer").
 - Use constructor injection (Lombok `@RequiredArgsConstructor`), never `@Autowired` on fields
 - Log important actions: booking created, payment received, game confirmed, errors
 - Write unit tests for service layer, integration tests for controllers
@@ -318,6 +322,7 @@ CLAUDE.md section to its new file.
 | `availability.md` | before touching the availability endpoint, slot statuses or the free-slot count |
 | `pricing.md` | before touching any amount a player sees, the card fee, rounding, the minimum amount, settings |
 | `payments.md` | before touching payments, the ATMOS or fake provider, declines, refunds, holds, cards, reconciliation |
+| `atmos-endpoint-audit.md` | before changing any ATMOS request or reading its answer, and before asking ATMOS a question — it may be open there already |
 | `teams.md` | before touching teams, members or invite links |
 | `games.md` | before touching the casual or open game flow, or a rule shared by all three flows |
 | `team-games.md` | before touching team games: holds, joins, the two deadlines, cancellation bands, remainders, the board |
@@ -329,5 +334,5 @@ CLAUDE.md section to its new file.
 | `deployment.md` | before deploying, or changing the reverse proxy, HTTPS, secrets, backups, the Compose server |
 | `testing.md` | before writing or running tests (the separate test database, `@DatabaseTest`) |
 | `dependencies.md` | before adding a dependency or touching the MapStruct / Lombok annotation processors |
-| `deferred.md` | before trusting owner revenue figures, casual-game share rounding, or the Payme / Click mocks |
+| `deferred.md` | before trusting owner revenue figures or casual-game share rounding |
 | `build-order.md` | only for the original vertical-slice build order — history, not a to-do list |

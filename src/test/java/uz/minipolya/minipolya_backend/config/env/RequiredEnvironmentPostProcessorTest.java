@@ -30,7 +30,8 @@ class RequiredEnvironmentPostProcessorTest {
             Map.entry("ATMOS_CONSUMER_KEY", "a-consumer-key"),
             Map.entry("ATMOS_CONSUMER_SECRET", "a-consumer-secret"),
             Map.entry("ATMOS_STORE_ID", "777"),
-            Map.entry("ATMOS_ENVIRONMENT", "production"));
+            Map.entry("ATMOS_ENVIRONMENT", "production"),
+            Map.entry("ATMOS_PLATFORM_RECIPIENT_ID", "900"));
 
     /** The four the atmos profile adds; the fifth variable, the recipient id, is not one. */
     private static final String[] ATMOS_SETTINGS =
@@ -127,6 +128,16 @@ class RequiredEnvironmentPostProcessorTest {
      * Only production is asked which side of ATMOS it is on. Everywhere else an unset value
      * means the sandbox, and AtmosEnvironmentGuard is what refuses prod on anything else.
      */
+    /** F2: production refuses to start without the platform's recipient; the sandbox server does not. */
+    @Test
+    void thePlatformRecipientIsRequiredOnProdOnly() {
+        assertThatThrownBy(() -> check(without("ATMOS_PLATFORM_RECIPIENT_ID"), "prod", "atmos"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("ATMOS_PLATFORM_RECIPIENT_ID");
+        assertThatCode(() -> check(without("ATMOS_PLATFORM_RECIPIENT_ID"), "staging", "atmos"))
+                .doesNotThrowAnyException();
+    }
+
     @Test
     void theAtmosEnvironmentIsRequiredOnProdOnly() {
         assertThatThrownBy(() -> check(without("ATMOS_ENVIRONMENT"), "prod"))

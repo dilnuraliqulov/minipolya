@@ -11,6 +11,7 @@ import uz.minipolya.minipolya_backend.audit.AuditChange;
 import uz.minipolya.minipolya_backend.audit.AuditEntry;
 import uz.minipolya.minipolya_backend.audit.Audited;
 import uz.minipolya.minipolya_backend.entity.Booking;
+import uz.minipolya.minipolya_backend.entity.Payment;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
 import uz.minipolya.minipolya_backend.service.AuditService;
 import uz.minipolya.minipolya_backend.service.NotificationService;
@@ -43,7 +44,8 @@ class BookingExpiryJobTest {
     void expiresEveryOverduePendingBooking() {
         Booking a = Booking.builder().id(UUID.randomUUID()).status("pending").build();
         Booking b = Booking.builder().id(UUID.randomUUID()).status("pending").build();
-        when(bookingRepository.findByStatusAndExpiresAtBefore(eq("pending"), any(OffsetDateTime.class)))
+        when(bookingRepository.findExpirablePending(eq("pending"), any(OffsetDateTime.class),
+                eq(Payment.Method.CASH), eq(BookingExpiryJob.PAYMENT_IN_FLIGHT)))
                 .thenReturn(List.of(a, b));
 
         job.expirePendingBookings();
@@ -67,11 +69,31 @@ class BookingExpiryJobTest {
 
     @Test
     void doesNothingWhenNoneAreOverdue() {
-        when(bookingRepository.findByStatusAndExpiresAtBefore(eq("pending"), any(OffsetDateTime.class)))
+        when(bookingRepository.findExpirablePending(eq("pending"), any(OffsetDateTime.class),
+                eq(Payment.Method.CASH), eq(BookingExpiryJob.PAYMENT_IN_FLIGHT)))
                 .thenReturn(List.of());
 
         job.expirePendingBookings();
 
         verify(bookingRepository, never()).saveAll(any());
+    }
+
+    /**
+     * The job only ever sees what the query gives it, and the query leaves out a booking
+     * whose card payment is still on its way — so a payment ATMOS has taken but not clearly
+     * answered ({@code STPIMS-ERR-041}) can never lose the player their slot. The statuses
+     * that mean "on its way" are asserted here because the query is built from them.
+     */
+    @Test
+    void asksOnlyForBookingsWhoseCardPaymentIsNotStillOnItsWay() {
+        assertThat(BookingExpiryJob.PAYMENT_IN_FLIGHT)
+                .containsExactly(Payment.Status.PROCESSING, Payment.Status.CAPTURE_PENDING);
+
+        job.expirePendingBookings();
+
+        // The query the job asks is the one that leaves those bookings out: there is no
+        // plain "every overdue pending booking" query left for it to reach for.
+        verify(bookingRepository).findExpirablePending(eq("pending"), any(OffsetDateTime.class),
+                eq(Payment.Method.CASH), eq(BookingExpiryJob.PAYMENT_IN_FLIGHT));
     }
 }
