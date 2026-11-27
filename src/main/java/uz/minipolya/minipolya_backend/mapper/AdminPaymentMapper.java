@@ -22,6 +22,8 @@ public interface AdminPaymentMapper {
     @Mapping(source = "game.id", target = "gameId")
     @Mapping(source = "cardFeeExpected", target = "atmosFee")
     @Mapping(source = "refundOfPayment.id", target = "refundOfPaymentId")
+    @Mapping(source = "gameTeam.id", target = "gameTeamId")
+    @Mapping(source = "gameTeam.side", target = "teamSide")
     @Mapping(target = "stadiumId", ignore = true)
     @Mapping(target = "stadiumName", ignore = true)
     @Mapping(target = "linkedPayments", ignore = true)

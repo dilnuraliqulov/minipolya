@@ -43,7 +43,7 @@ public class AdminPaymentService {
                                            UUID stadiumId, LocalDate from, LocalDate to, int page, int size) {
         AdminPaymentFilter filter = new AdminPaymentFilter(search,
                 parse(type, Payment.PaymentType::fromValue, "Invalid type"),
-                parse(status, Payment.Status::fromValue, "Invalid status"),
+                statuses(status),
                 parse(method, Payment.Method::fromValue, "Invalid method"),
                 stadiumId, TashkentDays.range(from, to));
         // Unsorted on purpose: the specification orders (failed refunds first, then newest).
@@ -94,6 +94,21 @@ public class AdminPaymentService {
 
     private static long zeroIfNull(Long amount) {
         return amount == null ? 0L : amount;
+    }
+
+    /** {@code status}: one, or several comma-separated ({@code held,capture_pending,…}); blank = all. */
+    private static java.util.Set<Payment.Status> statuses(String value) {
+        if (value == null || value.isBlank()) {
+            return java.util.Set.of();
+        }
+        java.util.Set<Payment.Status> statuses = java.util.EnumSet.noneOf(Payment.Status.class);
+        for (String one : value.split(",")) {
+            Payment.Status status = parse(one, Payment.Status::fromValue, "Invalid status");
+            if (status != null) {
+                statuses.add(status);
+            }
+        }
+        return statuses;
     }
 
     private static <T> T parse(String value, Function<String, T> parser, String message) {

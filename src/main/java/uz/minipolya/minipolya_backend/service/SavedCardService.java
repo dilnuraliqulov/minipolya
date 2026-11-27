@@ -55,7 +55,21 @@ public class SavedCardService {
     @Transactional(readOnly = true)
     public CardBindingResponse addCard(UUID userId, AddCardRequest request) {
         requireUser(userId);
-        CardBindingStart binding = binding(() -> paymentProvider.bindCardInit(request.getCardNumber(), request.getExpiry()));
+        requireNotSavedAlready(userId, request.getCardNumber(), request.getExpiry());
+        CardBindingStart binding = binding(() -> {
+            try {
+                return paymentProvider.bindCardInit(request.getCardNumber(), request.getExpiry());
+            } catch (PaymentProviderException ex) {
+                // ATMOS answers bind-card/init with STPIMS-ERR-001 ("internal error") for a card
+                // it has already bound — seen on the sandbox when a card was added again. Here,
+                // and only here, that means "you have this card", not "the service is down".
+                if (BIND_INIT_DUPLICATE.equals(ex.getCode())) {
+                    log.info("Card binding refused by the provider as a card bound before: userId={}", userId);
+                    throw CardBindingException.alreadyAdded();
+                }
+                throw ex;
+            }
+        });
         log.info("Card binding started for userId={} bindingId={}", userId, binding.bindingId());
         return toResponse(binding);
     }
@@ -153,6 +167,29 @@ public class SavedCardService {
 
     static final String PROVIDER_UNAVAILABLE =
             "To'lov tizimi vaqtincha ishlamayapti. Birozdan so'ng qayta urinib ko'ring";
+
+    /** What ATMOS answers bind-card/init with for a card that is already bound. */
+    static final String BIND_INIT_DUPLICATE = "STPIMS-ERR-001";
+
+    /**
+     * 409 when the player already has this card: the same masked number (first and last four
+     * digits) and the same expiry among their active cards. Checked before ATMOS is asked,
+     * because ATMOS refuses a card it has bound before with a bare internal error.
+     */
+    private void requireNotSavedAlready(UUID userId, String cardNumber, String expiry) {
+        String masked = CardMask.pan(cardNumber);
+        String expiryDigits = digits(expiry);
+        boolean saved = savedCardRepository.findByUserIdAndIsActiveTrue(userId).stream()
+                .anyMatch(card -> masked.equals(card.getMaskedNumber()) && expiryDigits.equals(digits(card.getExpiry())));
+        if (saved) {
+            log.info("Card binding refused before the provider: userId={} already has {}", userId, masked);
+            throw CardBindingException.alreadyAdded();
+        }
+    }
+
+    private static String digits(String value) {
+        return value == null ? "" : value.replaceAll("[^0-9]", "");
+    }
 
     static CardBindingException bindingError(String providerCode) {
         return switch (providerCode == null ? "" : providerCode) {

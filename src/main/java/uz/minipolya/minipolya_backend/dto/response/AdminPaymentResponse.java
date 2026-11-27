@@ -49,6 +49,12 @@ public class AdminPaymentResponse {
     /** What the platform keeps after ATMOS: exactly the fee on a team payment. */
     private Long platformNet;
     private Long providerCommission;
+
+    /** A hold: when it lapses at the provider if nobody settles it (UTC). */
+    private OffsetDateTime holdExpiresAt;
+    /** A team-game payment: the team it belongs to, and its side ({@code a} / {@code b}). */
+    private UUID gameTeamId;
+    private uz.minipolya.minipolya_backend.entity.GameParticipant.Side teamSide;
     private Integer commissionPercent;
 
     private Payment.Method method;

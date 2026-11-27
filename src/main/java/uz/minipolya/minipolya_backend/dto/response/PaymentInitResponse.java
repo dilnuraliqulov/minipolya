@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 
 import java.util.UUID;
 
-/** What the frontend receives to redirect the player to Payme/Click checkout. */
+/** A casual game share charged to a saved card: the payment, its provider and where it stands. */
 @Data
 @Builder
 @NoArgsConstructor
@@ -17,7 +17,6 @@ import java.util.UUID;
 public class PaymentInitResponse {
 
     private UUID paymentId;
-    private String checkoutUrl;
     private String provider;
     /** For a saved-card payment: paid, or processing while the provider has not answered. */
     private String status;

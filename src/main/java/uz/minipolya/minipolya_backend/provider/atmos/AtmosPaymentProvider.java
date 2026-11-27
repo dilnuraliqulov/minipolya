@@ -68,8 +68,11 @@ import java.util.Set;
  * logged, never shown raw to a player. A call that times out is a
  * {@link ProviderTimeoutException}: never assumed failed, never sent again.
  *
- * <p><b>Never logged</b>: request or response bodies, card numbers, expiry dates, SMS codes,
- * card tokens, credentials or the access token. Only operation names, ids and result codes.
+ * <p><b>Logging.</b> A request body is never logged. A response body is logged only when ATMOS
+ * did not answer OK, on one line with the method, path, HTTP status, result code and
+ * description, and with every card field redacted by name first ({@link AtmosSafeBody}).
+ * Card numbers, expiry dates, SMS codes, card tokens, credentials, the access token and phone
+ * numbers are never logged.
  *
  * <p>Where the docs contradict themselves this follows their examples; each such spot is a
  * {@code TODO(ATMOS)} naming the open question.
@@ -94,7 +97,12 @@ public class AtmosPaymentProvider implements PaymentProvider {
             "STPIMS-ERR-058", // card blocked
             "STPIMS-ERR-079", // card not activated
             "STPIMS-ERR-067", // card expired
-            "STPIMS-ERR-090"  // card not found / wrong expiry
+            "STPIMS-ERR-090", // card not found / wrong expiry
+            // F10: refusals at apply that are answers, not unknowns. Left out, they were a
+            // PaymentProviderException after the charge was created, so the payment sat in
+            // processing for the reconcile job although no money had moved.
+            "STPIMS-ERR-088", // card blocked
+            AtmosCodes.WRONG_OTP // "OTP код указан неверно"
     );
     /**
      * TODO(ATMOS): the docs give "111111" as the OTP to send when applying a payment or hold
@@ -114,6 +122,7 @@ public class AtmosPaymentProvider implements PaymentProvider {
     private final Clock clock;
     private final AtmosRecipientField recipientField;
     private final boolean fallbackToOwnStore;
+    private final boolean production;
     private final ObjectMapper json = JsonMapper.builder().build();
 
     private String accessToken;
@@ -129,8 +138,8 @@ public class AtmosPaymentProvider implements PaymentProvider {
         this.recipientField = AtmosRecipientField.of(config.getRecipientField());
         // Only a staging test server may pay itself instead of a recipient it does not know,
         // and prod is named explicitly so that no combination of profiles can turn it on there.
-        this.fallbackToOwnStore = environment.acceptsProfiles(Profiles.of("staging"))
-                && !environment.acceptsProfiles(Profiles.of("prod"));
+        this.production = environment.acceptsProfiles(Profiles.of("prod"));
+        this.fallbackToOwnStore = environment.acceptsProfiles(Profiles.of("staging")) && !production;
     }
 
     /**
@@ -163,6 +172,12 @@ public class AtmosPaymentProvider implements PaymentProvider {
                     + String.join(", ", missing));
         }
         if (platformRecipientMissing()) {
+            if (production) {
+                // Every team game's creation and join would be refused: in production that is a
+                // feature switched off by accident, not a setting still to come.
+                throw new IllegalStateException("The prod profile needs ATMOS_PLATFORM_RECIPIENT_ID: without it "
+                        + "no team game can be created or joined (the platform's fee has nowhere to go).");
+            }
             log.warn("ATMOS_PLATFORM_RECIPIENT_ID is not set: a team game's platform fee cannot be collected "
                     + "until it is. Ordinary bookings are unaffected.");
         }
@@ -592,10 +607,21 @@ public class AtmosPaymentProvider implements PaymentProvider {
     /**
      * {@code GET /hold/{id}}, with no body.
      *
-     * <p>TODO(ATMOS): hold statuses are not listed; an OK answer with {@code confirmed=true}
-     * is read as still held. {@code -144} (lapsed) and {@code -145} (cancelled) are a hold
-     * that is gone; {@code -142} ("холдирование не подтверждено") is one that was
-     * created and never applied, which is {@code PENDING}, not an error.
+     * <p>{@code -144} (lapsed) and {@code -145} (cancelled) are a hold that is gone; {@code -142}
+     * ("холдирование не подтверждено") is one that was created and never applied, which is
+     * {@code PENDING}, not an error. An OK answer is read from its {@code store_transaction}
+     * (an object, or an array for a multiple hold — every item must agree):
+     * <ul>
+     *   <li>a {@code success_trans_id} is a debit that went through: {@code CAPTURED}. This is
+     *       what keeps a capture whose answer was lost from being recorded as released (F6);</li>
+     *   <li>{@code confirmed=true} without one is money reserved and not taken: {@code HELD};</li>
+     *   <li>anything else: {@code PENDING}.</li>
+     * </ul>
+     *
+     * <p>TODO(ATMOS): hold statuses are not documented, and neither is what this call answers
+     * after a capture. Until the sandbox shows it ({@code deploy/atmos-smoke.sh --hold}), a hold
+     * that is not reported held or captured after a capture was asked for is left
+     * {@code needs_review} by the services, never assumed released.
      */
     @Override
     public HoldOutcome getHold(String holdId) {
@@ -608,8 +634,26 @@ public class AtmosPaymentProvider implements PaymentProvider {
             return new HoldOutcome(holdId, ProviderStatus.PENDING, null, null, code);
         }
         requireOk(answer, "hold get");
-        boolean confirmed = answer.path("store_transaction").path("confirmed").asBoolean(false);
-        return new HoldOutcome(holdId, confirmed ? ProviderStatus.HELD : ProviderStatus.PENDING, null, null, null);
+        List<JsonNode> transactions = transactionsOf(answer);
+        if (transactions.isEmpty()) {
+            return new HoldOutcome(holdId, ProviderStatus.PENDING, null, null, null);
+        }
+        boolean allDebited = transactions.stream().allMatch(AtmosPaymentProvider::debited);
+        if (allDebited) {
+            return new HoldOutcome(holdId, ProviderStatus.CAPTURED, null, commissionOf(transactions), null);
+        }
+        boolean allConfirmed = transactions.stream().allMatch(t -> t.path("confirmed").asBoolean(false));
+        return new HoldOutcome(holdId, allConfirmed ? ProviderStatus.HELD : ProviderStatus.PENDING, null, null, null);
+    }
+
+    /** A transaction that carries a success id: money taken, not merely reserved. */
+    private static boolean debited(JsonNode transaction) {
+        JsonNode id = transaction.path("success_trans_id");
+        if (id.isMissingNode() || id.isNull()) {
+            return false;
+        }
+        String text = id.asString("").trim();
+        return !text.isEmpty() && !"0".equals(text);
     }
 
     // ---- HTTP ----
@@ -909,13 +953,13 @@ public class AtmosPaymentProvider implements PaymentProvider {
     private String recipientOf(Split split) {
         if (split.platform()) {
             if (platformRecipientMissing()) {
-                throw new PaymentProviderException("RECIPIENT_MISSING",
+                throw new PaymentProviderException(AtmosCodes.RECIPIENT_MISSING,
                         "ATMOS_PLATFORM_RECIPIENT_ID is not set; the platform's split cannot be paid out");
             }
             return config.getPlatformRecipientId();
         }
         if (split.recipientId() == null || split.recipientId().isBlank()) {
-            throw new PaymentProviderException("RECIPIENT_MISSING",
+            throw new PaymentProviderException(AtmosCodes.OWNER_NOT_CONNECTED,
                     "The stadium owner has no ATMOS recipient yet; card payments cannot be split to them");
         }
         return split.recipientId();

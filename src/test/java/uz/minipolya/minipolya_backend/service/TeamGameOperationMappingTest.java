@@ -14,8 +14,6 @@ import uz.minipolya.minipolya_backend.entity.Stadium;
 import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
-import uz.minipolya.minipolya_backend.provider.ClickProvider;
-import uz.minipolya.minipolya_backend.provider.PaymeProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.repository.OwnerLegalDetailsRepository;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
@@ -100,7 +98,7 @@ class TeamGameOperationMappingTest {
 
         paymentService = new PaymentService(paymentRepository, bookingRepository, mock(UserRepository.class),
                 gameRepository, mock(GameParticipantRepository.class), mock(PaymentMapper.class),
-                List.of(new PaymeProvider(), new ClickProvider()), mock(GameService.class),
+                mock(GameService.class),
                 mock(NotificationService.class), mock(AuditService.class),
                 paymentProvider, platformSettingsService, mock(OwnerLegalDetailsRepository.class));
 

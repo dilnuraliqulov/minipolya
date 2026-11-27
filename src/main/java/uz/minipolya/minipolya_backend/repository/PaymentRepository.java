@@ -101,8 +101,6 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
 
     Page<Payment> findByUserId(UUID userId, Pageable pageable);
 
-    /** Looks up a payment by its provider transaction id — the webhook idempotency key. */
-    Optional<Payment> findByProviderAndProviderTxnId(Payment.Provider provider, String providerTxnId);
 
     Optional<Payment> findByBookingIdAndPaymentTypeAndStatus(UUID bookingId,
                                                              Payment.PaymentType paymentType,

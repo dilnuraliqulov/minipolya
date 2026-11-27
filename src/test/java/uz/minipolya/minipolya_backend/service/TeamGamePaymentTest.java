@@ -14,11 +14,9 @@ import uz.minipolya.minipolya_backend.entity.Team;
 import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
 import uz.minipolya.minipolya_backend.provider.ChargeRequest;
-import uz.minipolya.minipolya_backend.provider.ClickProvider;
 import uz.minipolya.minipolya_backend.provider.HoldCancelledException;
 import uz.minipolya.minipolya_backend.provider.HoldExpiredException;
 import uz.minipolya.minipolya_backend.provider.HoldRequest;
-import uz.minipolya.minipolya_backend.provider.PaymeProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProviderException;
 import uz.minipolya.minipolya_backend.provider.ProviderTimeoutException;
@@ -77,7 +75,7 @@ class TeamGamePaymentTest {
 
         service = new PaymentService(paymentRepository, mock(BookingRepository.class), mock(UserRepository.class),
                 mock(GameRepository.class), mock(GameParticipantRepository.class), mock(PaymentMapper.class),
-                List.of(new PaymeProvider(), new ClickProvider()), mock(GameService.class),
+                mock(GameService.class),
                 mock(NotificationService.class), mock(AuditService.class),
                 paymentProvider, platformSettingsService, ProviderStubs.ownersPaidTo("rcp-owner"));
 

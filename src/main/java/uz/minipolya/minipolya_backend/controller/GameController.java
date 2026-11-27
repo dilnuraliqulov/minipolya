@@ -23,6 +23,7 @@ import uz.minipolya.minipolya_backend.dto.response.GameParticipantResponse;
 import uz.minipolya.minipolya_backend.dto.response.GameResponse;
 import uz.minipolya.minipolya_backend.dto.response.PageResponse;
 import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
+import uz.minipolya.minipolya_backend.exception.BadRequestException;
 import uz.minipolya.minipolya_backend.service.GameService;
 import uz.minipolya.minipolya_backend.util.Pagination;
 
@@ -118,18 +119,17 @@ public class GameController {
     }
 
     /**
-     * A casual player's share. With {@code cardId}: charged now to that saved card through
-     * ATMOS. Without it: the legacy hosted checkout of {@code provider} (payme/click).
+     * A casual player's share, charged now to a saved card through ATMOS. {@code cardId} is
+     * required: the hosted Payme/Click checkout that answered without one is gone.
      */
     @PostMapping("/api/games/{id}/pay")
     public ApiResponse<PaymentInitResponse> pay(@AuthenticationPrincipal UUID userId,
                                                 @PathVariable UUID id,
-                                                @RequestParam(required = false) String provider,
                                                 @RequestParam(required = false) UUID cardId) {
-        if (cardId != null) {
-            return ApiResponse.ok(gameService.payForGameByCard(id, userId, cardId));
+        if (cardId == null) {
+            throw new BadRequestException("cardId is required");
         }
-        return ApiResponse.ok(gameService.payForGame(id, userId, provider));
+        return ApiResponse.ok(gameService.payForGameByCard(id, userId, cardId));
     }
 
     @PostMapping("/api/games/{id}/pay-remainder")

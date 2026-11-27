@@ -44,7 +44,10 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/stadiums/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/reviews/stadium/**").permitAll()
-                        .requestMatchers("/webhooks/**").permitAll()
+                        // The Telegram webhook, and nothing else under /webhooks: it checks its own
+                        // secret header (TelegramWebhookController). The unsigned Payme/Click
+                        // callbacks are gone, and any other /webhooks path needs a JWT like the API.
+                        .requestMatchers(HttpMethod.POST, "/webhooks/telegram").permitAll()
                         // The host's health check, called without credentials. It answers
                         // {"status":"UP"} only (management.endpoint.health.show-details: never),
                         // and health is the one actuator endpoint exposed at all.
@@ -80,7 +83,7 @@ public class SecurityConfig {
      * ({@code CORS_ALLOWED_ORIGINS}), exactly those — never {@code *}. The JWT travels in the
      * {@code Authorization} header, so no credentials (cookies) are allowed. With no origins
      * configured, the default, no request gets any CORS header: only same-origin pages can
-     * call the API. {@code /webhooks/**} is called server to server and never has CORS.
+     * call the API. {@code /webhooks/telegram} is called server to server and never has CORS.
      */
     CorsConfigurationSource corsConfigurationSource() {
         List<String> origins = appProperties.getCors().getAllowedOrigins().stream()

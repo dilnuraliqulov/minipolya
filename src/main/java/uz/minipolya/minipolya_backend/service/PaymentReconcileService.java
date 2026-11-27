@@ -238,6 +238,13 @@ public class PaymentReconcileService {
         paymentService.recordRefund(payment, statusBefore, reason);
     }
 
+    /**
+     * A capture whose answer was lost. Still held: capture it now. Reported captured: done.
+     * Anything else is <b>not</b> "released": the capture we asked for may have gone through
+     * and ATMOS may simply report the hold as gone afterwards (F6 — what {@code GET /hold/{id}}
+     * answers after a capture is undocumented), so recording it released would be recording
+     * money taken as money never taken. It becomes {@code needs_review} for an admin.
+     */
     private void finishCapture(Payment payment) {
         HoldOutcome where = paymentProvider.getHold(payment.getProviderTxnId());
         if (where.status() == ProviderStatus.CAPTURED) {
@@ -251,11 +258,18 @@ public class PaymentReconcileService {
                 payment.setProviderCommission(captured.commission());
                 return;
             } catch (HoldCancelledException | HoldExpiredException ex) {
-                // fell through below
+                // Held a moment ago, so the capture we lost did not happen; this one was refused
+                // outright. Nothing was taken.
+                payment.setStatus(Payment.Status.RELEASED);
+                log.error("Payment {} was to be kept but its hold could no longer be taken: {}",
+                        payment.getId(), ex.getCode());
+                return;
             }
         }
-        payment.setStatus(Payment.Status.RELEASED);
-        log.error("Payment {} was to be kept but its hold could no longer be taken", payment.getId());
+        // TODO(ATMOS): GET /hold/{id} after a capture — until the sandbox says, never assume.
+        paymentService.markNeedsReview(payment, "Capture unclear: ATMOS reports the hold as "
+                + where.status().name().toLowerCase(java.util.Locale.ROOT)
+                + " after a capture whose answer was lost; it may have been taken");
     }
 
     // ---- helpers ----

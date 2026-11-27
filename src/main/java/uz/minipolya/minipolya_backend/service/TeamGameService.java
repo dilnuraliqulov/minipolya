@@ -125,6 +125,19 @@ public class TeamGameService {
     private final org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     /**
+     * Asks ATMOS about a joiner's charge that had no clear answer, while the leader waits —
+     * the same as a booking does. Set by Spring, lazily: the settler reaches this service
+     * through {@code PaymentReconcileService}, so it cannot be a constructor argument. Null in
+     * unit tests that build this service by hand, which then leave the row to the job as before.
+     */
+    private PaymentSettler paymentSettler;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setPaymentSettler(@org.springframework.context.annotation.Lazy PaymentSettler paymentSettler) {
+        this.paymentSettler = paymentSettler;
+    }
+
+    /**
      * Puts the creating team on side A and holds its fee and advance. No
      * booking is written: a waiting game holds no slot.
      *
@@ -217,12 +230,22 @@ public class TeamGameService {
             switch (created) {
                 case UNAVAILABLE -> throw new ProviderUnavailableException(
                         "To'lov tizimi vaqtincha ishlamayapti. Birozdan so'ng qayta urinib ko'ring");
+                case OWNER_NOT_CONNECTED -> throw new ProviderUnavailableException(PaymentService.OWNER_NOT_CONNECTED);
                 case UNKNOWN -> throw new PaymentStepFailedException(CHARGE_UNCONFIRMED);
                 default -> throw CardDeclinedException.of(
                         step(() -> paymentService.teamPaymentById(start.paymentId())), JOIN_DECLINED);
             }
         }
         Payment charge = step(() -> paymentService.confirmCommittedCharge(start.paymentId()));
+        if (charge.getStatus() == Payment.Status.PROCESSING && paymentSettler != null) {
+            // ATMOS answers pay/apply with "connection problem" (STPIMS-ERR-041) for money it
+            // has taken: ask pay/get now rather than drop the join and refund it five minutes
+            // later. Each attempt is its own transaction (this method holds none), and it is
+            // the reconcile job's own call — a joining team's charge is only settled there,
+            // never acted on: the join below still decides what the money was for.
+            paymentSettler.settleNow(start.paymentId());
+            charge = step(() -> paymentService.teamPaymentById(start.paymentId()));
+        }
         if (charge.getStatus() != Payment.Status.PAID) {
             // Declined: nothing moved. Unanswered: the row stays processing and the
             // reconcile job gives the money back if it was taken — the team has left by then.
@@ -348,7 +371,9 @@ public class TeamGameService {
                 .map(id -> paymentService.teamPaymentById(id))
                 .toList());
         if (settled.stream().anyMatch(p -> p.getStatus() == Payment.Status.CAPTURE_PENDING
-                || p.getStatus() == Payment.Status.PROCESSING)) {
+                || p.getStatus() == Payment.Status.PROCESSING
+                // F6: whether the hold was taken is an admin's to find out; the join waits for it.
+                || p.getStatus() == Payment.Status.NEEDS_REVIEW)) {
             log.warn("Join of gameTeam {} waits: the waiting team's capture has no clear answer yet", gameTeamId);
             return JoinState.PENDING;
         }
@@ -1172,7 +1197,8 @@ public class TeamGameService {
     private void requireWaitingHoldsInPlace(Game game) {
         for (GameTeam waiting : gameTeamRepository.findByGameIdAndStatus(game.getId(), GameTeam.Status.ACTIVE)) {
             boolean unsettled = paymentService.teamPayments(waiting.getId()).stream()
-                    .anyMatch(p -> p.getStatus() == Payment.Status.PROCESSING);
+                    .anyMatch(p -> p.getStatus() == Payment.Status.PROCESSING
+                            || p.getStatus() == Payment.Status.NEEDS_REVIEW);
             if (unsettled) {
                 throw new BadRequestException(
                         "The other team's payment is still being confirmed; try again in a few minutes");

@@ -87,8 +87,9 @@ app:
     # one is cancelled. Does not apply to casual games.
     opponent-deadline-hours: 3
   payments:
-    # `fake` wires up FakePaymentProvider, which refuses to start under the prod
-    # profile. The real ATMOS client replaces this once its API docs land.
+    # `fake` wires up FakePaymentProvider (dev, tests, plain staging), which refuses to start
+    # under prod or atmos. The real client, AtmosPaymentProvider, comes with the atmos profile
+    # (staging,atmos on the sandbox server, prod,atmos in production) and ignores this value.
     provider: ${PAYMENTS_PROVIDER:fake}
     # ATMOS_HOLD_MAX_MINUTES: the longest a team game's hold may last, in minutes
     # (default 10080 = 7 days). A game whose hold would need longer cannot be created yet;

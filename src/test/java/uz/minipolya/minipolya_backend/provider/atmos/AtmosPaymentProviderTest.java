@@ -13,6 +13,7 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 import uz.minipolya.minipolya_backend.config.AppProperties;
 import uz.minipolya.minipolya_backend.provider.ChargeOutcome;
+import uz.minipolya.minipolya_backend.provider.AtmosCodes;
 import uz.minipolya.minipolya_backend.provider.ChargeRequest;
 import uz.minipolya.minipolya_backend.provider.HoldCancelledException;
 import uz.minipolya.minipolya_backend.provider.HoldOutcome;
@@ -525,6 +526,59 @@ class AtmosPaymentProviderTest {
                         + "\"amount\":5000000}}", MediaType.APPLICATION_JSON));
 
         assertThat(provider.getHold("3001").status()).isEqualTo(ProviderStatus.HELD);
+    }
+
+    /**
+     * F6: a store_transaction carrying a success_trans_id is money taken, not reserved — a
+     * capture whose answer was lost reads back as captured, never as released.
+     */
+    @Test
+    void aHoldReadBackWithASuccessIdIsCaptured() {
+        expectToken();
+        server.expect(requestTo(BASE + "/hold/3001"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("{" + OK + ",\"store_transaction\":{\"confirmed\":true,"
+                        + "\"success_trans_id\":987654,\"commission_value\":\"75000\",\"amount\":5000000}}",
+                        MediaType.APPLICATION_JSON));
+
+        HoldOutcome read = provider.getHold("3001");
+
+        assertThat(read.status()).isEqualTo(ProviderStatus.CAPTURED);
+        assertThat(read.commission()).isEqualTo(75_000L);
+    }
+
+    /** A multiple hold answers one transaction per item: captured only when every item was. */
+    @Test
+    void aMultipleHoldIsCapturedOnlyWhenEveryItemWasDebited() {
+        expectToken();
+        server.expect(requestTo(BASE + "/hold/3001"))
+                .andRespond(withSuccess("{" + OK + ",\"store_transaction\":["
+                        + "{\"confirmed\":true,\"success_trans_id\":11},"
+                        + "{\"confirmed\":true,\"success_trans_id\":null}]}", MediaType.APPLICATION_JSON));
+
+        assertThat(provider.getHold("3001").status()).isEqualTo(ProviderStatus.HELD);
+    }
+
+    /** F10: a blocked card and a wrong code at apply are answers, not unknowns left processing. */
+    @Test
+    void aBlockedCardOrAWrongCodeAtApplyIsAFailedOutcome() {
+        for (String code : new String[]{"STPIMS-ERR-088", "STPIMS-ERR-098"}) {
+            RestClient.Builder builder = RestClient.builder();
+            MockRestServiceServer one = MockRestServiceServer.bindTo(builder).build();
+            AtmosPaymentProvider fresh = providerWith(properties, builder);
+            expectTokenOn(one);
+            one.expect(requestTo(BASE + "/merchant/pay/apply"))
+                    .andRespond(withSuccess("{\"result\":{\"code\":\"" + code + "\"}}", MediaType.APPLICATION_JSON));
+
+            ChargeOutcome outcome = fresh.confirmCharge(List.of("1001"), null);
+
+            assertThat(outcome.status()).isEqualTo(ProviderStatus.FAILED);
+            assertThat(outcome.errorCode()).isEqualTo(code);
+        }
+        assertThat(uz.minipolya.minipolya_backend.provider.DeclineReason.of("STPIMS-ERR-098"))
+                .isEqualTo(uz.minipolya.minipolya_backend.provider.DeclineReason.WRONG_OTP);
+        assertThat(uz.minipolya.minipolya_backend.provider.DeclineReason.of("STPIMS-ERR-088"))
+                .isEqualTo(uz.minipolya.minipolya_backend.provider.DeclineReason.CARD_DECLINED);
     }
 
     /** {@code -142} is a hold created and never applied: pending, not an error. */
@@ -1092,7 +1146,43 @@ class AtmosPaymentProviderTest {
         // Refused while the request is still being built, so nothing is ever sent.
         assertThatThrownBy(() -> provider.charge(charge()))
                 .isInstanceOf(PaymentProviderException.class)
+                .hasMessageContaining("ATMOS_PLATFORM_RECIPIENT_ID")
+                .extracting(ex -> ((PaymentProviderException) ex).getCode())
+                .isEqualTo(AtmosCodes.RECIPIENT_MISSING);
+    }
+
+    /** F2: production with no platform recipient would refuse every team game; it does not start. */
+    @Test
+    void productionDoesNotStartWithoutThePlatformRecipient() {
+        properties.getAtmos().setPlatformRecipientId(" ");
+        AtmosPaymentProvider prod = onProfiles(properties, RestClient.builder(), "prod", "atmos");
+
+        assertThatThrownBy(prod::requireConfiguration)
+                .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("ATMOS_PLATFORM_RECIPIENT_ID");
+        // The sandbox server still starts, as before.
+        assertThatCode(onProfiles(properties, RestClient.builder(), "staging", "atmos")::requireConfiguration)
+                .doesNotThrowAnyException();
+    }
+
+    /**
+     * F2/F7: a recipient we do not have is our own refusal, never the card's: both codes are
+     * "misconfigured", so the player is told the service failed and the row gets no decline.
+     */
+    @Test
+    void aMissingRecipientIsOursNeverACardDecline() {
+        properties.getAtmos().setPlatformRecipientId(null);
+        AtmosPaymentProvider prod = onProfiles(properties, RestClient.builder(), "prod", "atmos");
+
+        assertThatThrownBy(() -> prod.charge(ChargeRequest.withToken(List.of(Split.owner(null, 5_000_000L)),
+                "card-token", "0190c3a1-0000-7000-8000-000000000009")))
+                .isInstanceOf(PaymentProviderException.class)
+                .extracting(ex -> ((PaymentProviderException) ex).getCode())
+                .isEqualTo(AtmosCodes.OWNER_NOT_CONNECTED);
+        for (String code : new String[]{AtmosCodes.RECIPIENT_MISSING, AtmosCodes.OWNER_NOT_CONNECTED}) {
+            assertThat(AtmosCodes.isMisconfigured(code)).isTrue();
+            assertThat(uz.minipolya.minipolya_backend.provider.DeclineReason.of(code)).isNull();
+        }
     }
 
     @Test

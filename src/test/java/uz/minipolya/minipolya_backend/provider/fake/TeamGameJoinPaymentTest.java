@@ -39,6 +39,8 @@ class TeamGameJoinPaymentTest extends FakeProviderFlowSupport {
     private uz.minipolya.minipolya_backend.service.GameService gameService;
     @Autowired
     private jakarta.persistence.EntityManager entityManager;
+    @Autowired
+    private uz.minipolya.minipolya_backend.service.PaymentReviewService paymentReviewService;
     /** The real fake, spied only to simulate a crash. */
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
     private uz.minipolya.minipolya_backend.provider.PaymentProvider provider;
@@ -157,14 +159,34 @@ class TeamGameJoinPaymentTest extends FakeProviderFlowSupport {
                 .get().extracting(GameParticipant::getSide).isEqualTo(joiningEntry(s.gameId()).getSide());
     }
 
+    /**
+     * F6: the capture's answer was lost and the provider now reports the hold gone. That may
+     * mean taken, so the job no longer records it released: it becomes needs_review and the
+     * join waits. Once an admin has checked at ATMOS and resolved it as released, the next run
+     * undoes the join and gives the joiner everything back.
+     */
     @Test
-    void anUnclearCaptureThatFailedIsUndoneByTheReconcileJob() throws Exception {
+    void anUnclearCaptureThatFailedWaitsForAnAdminThenIsUndoneByTheReconcileJob() throws Exception {
         Setup s = waitingGame("8600123412340092", 12);
 
         join(s.leaderB(), s.gameId(), s.teamB(), s.cardB())
                 .andExpect(status().isAccepted());
         assertThat(payments.findById(s.hold().getId()).orElseThrow().getStatus()).isEqualTo(Payment.Status.CAPTURE_PENDING);
 
+        reconcile();
+
+        Payment held = payments.findById(s.hold().getId()).orElseThrow();
+        assertThat(held.getStatus()).isEqualTo(Payment.Status.NEEDS_REVIEW);
+        assertThat(held.getFailureReason()).contains("Capture unclear");
+        assertThat(games.findById(s.gameId()).orElseThrow().getStatus()).isEqualTo("open");
+        assertThat(joiningEntry(s.gameId()).getStatus()).isEqualTo(GameTeam.Status.JOINING);
+        assertThat(joinerPayment(s.gameId()).getStatus()).isEqualTo(Payment.Status.PAID);
+
+        reconcile(); // nothing an admin has not decided moves
+        assertThat(payments.findById(s.hold().getId()).orElseThrow().getStatus()).isEqualTo(Payment.Status.NEEDS_REVIEW);
+
+        paymentReviewService.resolve(s.hold().getId(), "released",
+                "ATMOS support: the hold was cancelled, nothing debited", data.admin("Review Admin").getId());
         reconcile();
 
         assertUndone(s);
@@ -293,25 +315,39 @@ class TeamGameJoinPaymentTest extends FakeProviderFlowSupport {
         assertThat(balance(declining)).isEqualTo(START);
     }
 
+    /**
+     * Item 7: the joiner's apply has no clear answer but the money was taken (ATMOS's
+     * STPIMS-ERR-041). PaymentSettler asks pay/get while the leader waits, as a booking does,
+     * so the join goes through now instead of being dropped and refunded five minutes later.
+     */
     @Test
-    void anUnansweredJoinerChargeIsGivenBackAndTheGameGoesOnWaiting() throws Exception {
+    void anUnclearJoinerChargeThatWentThroughIsSettledWhileTheLeaderWaits() throws Exception {
         Setup s = waitingGame("8600123412341116", 18);
         UUID unclear = addCard(s.leaderB(), "8600123412340091");
 
-        join(s.leaderB(), s.gameId(), s.teamB(), unclear)
+        join(s.leaderB(), s.gameId(), s.teamB(), unclear).andExpect(status().isOk());
+
+        assertThat(games.findById(s.gameId()).orElseThrow().getStatus()).isEqualTo("confirmed");
+        assertThat(joinerPayment(s.gameId()).getStatus()).isEqualTo(Payment.Status.PAID);
+        assertThat(payments.findById(s.hold().getId()).orElseThrow().getStatus()).isEqualTo(Payment.Status.CAPTURED);
+        assertThat(gameTeams.findByGameId(s.gameId())).extracting(GameTeam::getStatus)
+                .containsOnly(GameTeam.Status.ACTIVE);
+    }
+
+    /** No answer even to pay/get: the join is dropped, the game goes on waiting, the row stays for the job. */
+    @Test
+    void aJoinerChargeThatStaysUnansweredLeavesTheGameWaiting() throws Exception {
+        Setup s = waitingGame("8600123412341130", 16);
+        UUID silent = addCard(s.leaderB(), "8600123412340093");
+
+        join(s.leaderB(), s.gameId(), s.teamB(), silent)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value(
                         "The card payment could not be confirmed; the game is still looking for an opponent. "
                                 + "If the money was taken it will be returned in full"));
         assertThat(games.findById(s.gameId()).orElseThrow().getStatus()).isEqualTo("open");
         assertThat(joinerPayment(s.gameId()).getStatus()).isEqualTo(Payment.Status.PROCESSING);
-
-        reconcile();
-
-        // It went through after all: the team had left, so it all comes back.
-        assertThat(joinerPayment(s.gameId()).getStatus()).isEqualTo(Payment.Status.REFUNDED);
-        assertThat(balance(unclear)).isEqualTo(START);
-        assertThat(games.findById(s.gameId()).orElseThrow().getStatus()).isEqualTo("open");
+        assertThat(joiningEntry(s.gameId()).getStatus()).isEqualTo(GameTeam.Status.CANCELLED);
         assertThat(payments.findById(s.hold().getId()).orElseThrow().getStatus()).isEqualTo(Payment.Status.HELD);
     }
 

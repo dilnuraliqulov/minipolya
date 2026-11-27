@@ -15,6 +15,8 @@ public enum DeclineReason {
     INSUFFICIENT_FUNDS,
     /** The card has expired ({@code STPIMS-ERR-067}). */
     CARD_EXPIRED,
+    /** The SMS / confirmation code was wrong ({@code STPIMS-ERR-098}); nothing was taken. */
+    WRONG_OTP,
     /** Any other refusal — the fallback. */
     CARD_DECLINED;
 
@@ -33,8 +35,7 @@ public enum DeclineReason {
             AtmosCodes.WRONG_CARD_NUMBER,
             "STPIMS-ERR-050",               // карта не может быть зарегистрирована
             AtmosCodes.WRONG_AMOUNT,        // e.g. under the minimum
-            "STPIMS-ERR-042",               // не разрешенная сумма платежа
-            AtmosCodes.WRONG_OTP);
+            "STPIMS-ERR-042");              // не разрешенная сумма платежа
 
     /**
      * The reason for a refusal the provider answered with {@code providerCode}. An unknown
@@ -75,6 +76,9 @@ public enum DeclineReason {
         }
         if (AtmosCodes.CARD_EXPIRED.equals(providerCode)) {
             return CARD_EXPIRED;
+        }
+        if (AtmosCodes.WRONG_OTP.equals(providerCode)) {
+            return WRONG_OTP;
         }
         if (!KNOWN_DECLINES.contains(providerCode)) {
             log.warn("Unknown decline code from the payment provider, shown as CARD_DECLINED: code={}", providerCode);

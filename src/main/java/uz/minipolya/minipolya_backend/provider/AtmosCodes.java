@@ -65,6 +65,16 @@ public final class AtmosCodes {
     public static final String BINDING_NOT_FOUND = "BINDING_NOT_FOUND";
     /** ATMOS documents no way to resend a binding's SMS code. */
     public static final String RESEND_UNSUPPORTED = "BIND_RESEND_UNSUPPORTED";
+    /**
+     * The platform's split has nowhere to go: {@code ATMOS_PLATFORM_RECIPIENT_ID} is not set.
+     * Ours, never the card's — refused before anything is sent to ATMOS.
+     */
+    public static final String RECIPIENT_MISSING = "RECIPIENT_MISSING";
+    /**
+     * The stadium owner cannot be paid yet: no signed contract with an ATMOS recipient id
+     * ({@code OwnerLegalDetails.canReceivePayouts}). Ours, never the card's.
+     */
+    public static final String OWNER_NOT_CONNECTED = "OWNER_RECIPIENT_MISSING";
 
     /** The payment service itself could not be reached, or would not answer. */
     private static final Set<String> UNREACHABLE = Set.of(
@@ -103,7 +113,9 @@ public final class AtmosCodes {
             "STPIMS-ERR-037", // Store ID не найден
             "STPIMS-ERR-044", // Магазин с данным ID не найден
             "STPIMS-ERR-056", // Проблема авторизации
-            "STPIMS-ERR-103"  // Терминал не найден
+            "STPIMS-ERR-103", // Терминал не найден
+            RECIPIENT_MISSING,
+            OWNER_NOT_CONNECTED
     );
 
     /**

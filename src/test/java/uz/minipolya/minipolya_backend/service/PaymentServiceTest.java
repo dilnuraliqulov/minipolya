@@ -2,7 +2,6 @@ package uz.minipolya.minipolya_backend.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import uz.minipolya.minipolya_backend.dto.response.PaymentInitResponse;
 import uz.minipolya.minipolya_backend.audit.AuditAction;
 import uz.minipolya.minipolya_backend.audit.AuditActorType;
 import uz.minipolya.minipolya_backend.audit.AuditChange;
@@ -16,8 +15,6 @@ import uz.minipolya.minipolya_backend.entity.User;
 import uz.minipolya.minipolya_backend.exception.ForbiddenException;
 import uz.minipolya.minipolya_backend.exception.ResourceNotFoundException;
 import uz.minipolya.minipolya_backend.mapper.PaymentMapper;
-import uz.minipolya.minipolya_backend.provider.ClickProvider;
-import uz.minipolya.minipolya_backend.provider.PaymeProvider;
 import uz.minipolya.minipolya_backend.provider.PaymentProvider;
 import uz.minipolya.minipolya_backend.repository.OwnerLegalDetailsRepository;
 import uz.minipolya.minipolya_backend.repository.BookingRepository;
@@ -82,7 +79,7 @@ class PaymentServiceTest {
 
         service = new PaymentService(paymentRepository, bookingRepository, userRepository,
                 gameRepository, gameParticipantRepository, paymentMapper,
-                List.of(new PaymeProvider(), new ClickProvider()), gameService, notificationService, auditService,
+                gameService, notificationService, auditService,
                 paymentProvider, platformSettingsService, mock(OwnerLegalDetailsRepository.class));
 
         player = User.builder().id(PLAYER_ID).name("Player").build();
@@ -92,77 +89,6 @@ class PaymentServiceTest {
 
     private Booking pendingBooking() {
         return Booking.builder().id(BOOKING_ID).status("pending").user(player).stadium(stadium).price(100_000L).build();
-    }
-
-    // ---- initiateBookingPayment ----
-
-    @Test
-    void initiateReturnsCheckoutUrlForValidPendingBooking() {
-        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(pendingBooking()));
-        when(paymentRepository.saveAndFlush(any(Payment.class))).thenAnswer(inv -> {
-            Payment p = inv.getArgument(0);
-            p.setId(PAYMENT_ID);
-            return p;
-        });
-        when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        PaymentInitResponse resp = service.initiateBookingPayment(BOOKING_ID, "payme", PLAYER_ID);
-
-        assertThat(resp.getPaymentId()).isEqualTo(PAYMENT_ID);
-        assertThat(resp.getProvider()).isEqualTo("payme");
-        assertThat(resp.getCheckoutUrl()).isEqualTo("https://checkout.paycom.uz/mock/" + PAYMENT_ID);
-    }
-
-    @Test
-    void initiateThrowsWhenBookingMissing() {
-        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> service.initiateBookingPayment(BOOKING_ID, "payme", PLAYER_ID))
-                .isInstanceOf(ResourceNotFoundException.class);
-    }
-
-    @Test
-    void initiateRejectsBookingOwnedByAnotherUser() {
-        when(bookingRepository.findById(BOOKING_ID)).thenReturn(Optional.of(pendingBooking()));
-
-        assertThatThrownBy(() -> service.initiateBookingPayment(BOOKING_ID, "payme", UUID.randomUUID()))
-                .isInstanceOf(ForbiddenException.class);
-    }
-
-    // ---- handleProviderCallback ----
-
-    @Test
-    void callbackCompletesPaymentAndConfirmsBooking() {
-        Booking booking = pendingBooking();
-        booking.setExpiresAt(java.time.OffsetDateTime.now());
-        Payment payment = Payment.builder().id(PAYMENT_ID).booking(booking).user(player).amount(100_000L)
-                .ownerAmount(100_000L).platformAmount(0L).commissionPercent(0).method(Payment.Method.CARD)
-                .paymentType(Payment.PaymentType.BOOKING).provider(Payment.Provider.PAYME)
-                .providerTxnId("mock-100").status(Payment.Status.PENDING).build();
-        when(paymentRepository.findByProviderAndProviderTxnId(Payment.Provider.PAYME, "mock-100"))
-                .thenReturn(Optional.of(payment));
-        when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        Payment result = service.handleProviderCallback("payme", "mock-100", "completed");
-
-        assertThat(result.getStatus()).isEqualTo(Payment.Status.COMPLETED);
-        assertThat(booking.getStatus()).isEqualTo("confirmed");
-        assertThat(booking.getExpiresAt()).isNull();
-    }
-
-    @Test
-    void callbackIsIdempotentForAnAlreadyCompletedPayment() {
-        Payment payment = Payment.builder().id(PAYMENT_ID).provider(Payment.Provider.PAYME)
-                .providerTxnId("mock-100").status(Payment.Status.COMPLETED).build();
-        when(paymentRepository.findByProviderAndProviderTxnId(Payment.Provider.PAYME, "mock-100"))
-                .thenReturn(Optional.of(payment));
-
-        Payment result = service.handleProviderCallback("payme", "mock-100", "completed");
-
-        assertThat(result.getStatus()).isEqualTo(Payment.Status.COMPLETED);
-        verify(paymentRepository, never()).save(any());
-        verify(bookingRepository, never()).save(any());
     }
 
     // ---- refundInFull: the only refund there is ----

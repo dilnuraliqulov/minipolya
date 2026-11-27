@@ -48,6 +48,8 @@ public final class PaymentSpecifications {
             } else {
                 Fetch<Payment, Booking> bookingFetch = root.fetch("booking", JoinType.LEFT);
                 Fetch<Payment, Game> gameFetch = root.fetch("game", JoinType.LEFT);
+                // The team a team-game payment belongs to (its side), in the same statement.
+                root.fetch("gameTeam", JoinType.LEFT);
                 booking = (Join<Payment, Booking>) bookingFetch;
                 game = (Join<Payment, Game>) gameFetch;
                 bookingStadium = stadiumWithAmenities(bookingFetch);
@@ -66,8 +68,8 @@ public final class PaymentSpecifications {
             if (filter.type() != null) {
                 where.add(cb.equal(root.get("paymentType"), filter.type()));
             }
-            if (filter.status() != null) {
-                where.add(cb.equal(root.get("status"), filter.status()));
+            if (!filter.statuses().isEmpty()) {
+                where.add(root.get("status").in(filter.statuses()));
             }
             if (filter.method() != null) {
                 where.add(cb.equal(root.get("method"), filter.method()));

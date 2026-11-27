@@ -102,6 +102,49 @@ class SavedCardServiceTest {
                 });
     }
 
+    /**
+     * Item 5: ATMOS answers bind-card/init with STPIMS-ERR-001 for a card it has bound before.
+     * At init that is the card already added — 409, not the 502 a misconfiguration gets.
+     */
+    @Test
+    void aCardAtmosHasBoundBeforeIsAlreadyAddedNotServiceDown() {
+        when(paymentProvider.bindCardInit(any(), any()))
+                .thenThrow(new PaymentProviderException("STPIMS-ERR-001", "Внутренняя ошибка"));
+
+        assertThatThrownBy(() -> service.addCard(USER_ID,
+                AddCardRequest.builder().cardNumber(PAN).expiry("12/29").build()))
+                .isInstanceOfSatisfying(CardBindingException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(ex.getCode()).isEqualTo("CARD_ALREADY_ADDED");
+                    assertThat(ex.getMessage()).isEqualTo("Bu karta allaqachon qoʻshilgan");
+                });
+    }
+
+    /** Only at init: the same code on confirm is still our own problem, a 502. */
+    @Test
+    void theSameCodeOnConfirmIsStillTheService() {
+        when(paymentProvider.bindCardConfirm(any(), any()))
+                .thenThrow(new PaymentProviderException("STPIMS-ERR-001", "Внутренняя ошибка"));
+
+        assertThatThrownBy(() -> service.confirmCard(USER_ID,
+                ConfirmCardRequest.builder().bindingId("bind-1").smsCode("123456").build()))
+                .isInstanceOf(ProviderUnavailableException.class);
+    }
+
+    /** A card the player already has is refused before ATMOS is asked at all. */
+    @Test
+    void aCardThePlayerAlreadyHasIsRefusedBeforeTheProvider() {
+        when(repository.findByUserIdAndIsActiveTrue(USER_ID)).thenReturn(java.util.List.of(
+                uz.minipolya.minipolya_backend.entity.SavedCard.builder()
+                        .maskedNumber("8600 •••• •••• 1234").expiry("12/29").build()));
+
+        assertThatThrownBy(() -> service.addCard(USER_ID,
+                AddCardRequest.builder().cardNumber("8600 1234 1234 1234").expiry("12/29").build()))
+                .isInstanceOfSatisfying(CardBindingException.class,
+                        ex -> assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT));
+        verify(paymentProvider, never()).bindCardInit(any(), any());
+    }
+
     @Test
     void everyBindingCodeHasItsOwnAnswer() {
         assertThat(SavedCardService.bindingError(AtmosCodes.WRONG_EXPIRY).getCode()).isEqualTo("CARD_EXPIRY_INVALID");

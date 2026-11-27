@@ -88,12 +88,12 @@ class AdminOwnerLegalDetailsTest {
                 .andExpect(jsonPath("$.data.updatedAt").exists());
 
         putDetails(owner.getId(), """
-                {"legalType":"self_employed","tin":"31234567890123","atmosContractStatus":"signed","atmosRecipientId":"RCP-77"}""")
+                {"legalType":"self_employed","tin":"31234567890123","atmosContractStatus":"signed","atmosRecipientId":" 77001 "}""")
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.atmosRecipientId").value("RCP-77"));
+                .andExpect(jsonPath("$.data.atmosRecipientId").value("77001")); // trimmed
         // The same again changes nothing and writes no entry.
         putDetails(owner.getId(), """
-                {"legalType":"self_employed","tin":"31234567890123","atmosContractStatus":"signed","atmosRecipientId":"RCP-77"}""")
+                {"legalType":"self_employed","tin":"31234567890123","atmosContractStatus":"signed","atmosRecipientId":" 77001 "}""")
                 .andExpect(status().isOk());
 
         mvc.perform(get("/api/admin/audit-log").header("Authorization", adminToken)
@@ -124,6 +124,17 @@ class AdminOwnerLegalDetailsTest {
                 {"legalType":"yatt","tin":"301234567","atmosContractStatus":"signed"}""")
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("atmosRecipientId is required when the contract is signed"));
+        // F7: a recipient id is the ATMOS store id, a number. Anything else used to be a 502 on
+        // every card payment of the owner's stadiums (STPIMS-ERR-037) instead of an error here.
+        for (String bad : new String[]{"RCP-77", "112 99", "11299a", "123456789012345678901", "   "}) {
+            putDetails(owner.getId(), """
+                    {"legalType":"yatt","tin":"301234567","atmosContractStatus":"signed","atmosRecipientId":"%s"}"""
+                    .formatted(bad))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message").value(bad.isBlank()
+                            ? "atmosRecipientId is required when the contract is signed"
+                            : "atmosRecipientId must be the ATMOS store id: digits only, at most 20"));
+        }
         putDetails(owner.getId(), """
                 {"legalType":"ooo","tin":"301234567","atmosContractStatus":"none"}""")
                 .andExpect(status().isBadRequest())
@@ -153,7 +164,7 @@ class AdminOwnerLegalDetailsTest {
         setStatus(stadium, "approved").andExpect(status().isBadRequest());
 
         putDetails(owner.getId(), """
-                {"legalType":"mchj","tin":"301234567","atmosContractStatus":"signed","atmosRecipientId":"RCP-1"}""");
+                {"legalType":"mchj","tin":"301234567","atmosContractStatus":"signed","atmosRecipientId":"11001"}""");
         // Signed, but a stadium also needs three photos (D7).
         stadium = data.photos(stadium, 2);
         setStatus(stadium, "approved")

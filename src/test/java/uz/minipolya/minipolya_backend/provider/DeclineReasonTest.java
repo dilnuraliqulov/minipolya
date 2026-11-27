@@ -97,6 +97,8 @@ class DeclineReasonTest {
         assertThat(DeclineReason.of("STPIMS-ERR-057")).isEqualTo(DeclineReason.INSUFFICIENT_FUNDS);
         assertThat(DeclineReason.of("STPIMS-ERR-067")).isEqualTo(DeclineReason.CARD_EXPIRED);
         assertThat(DeclineReason.of("STPIMS-ERR-058")).isEqualTo(DeclineReason.CARD_DECLINED);
-        assertThat(DeclineReason.of("STPIMS-ERR-098")).isEqualTo(DeclineReason.CARD_DECLINED);
+        // F10: a wrong code has its own reason; a blocked card (-088) is a plain decline like -058.
+        assertThat(DeclineReason.of("STPIMS-ERR-098")).isEqualTo(DeclineReason.WRONG_OTP);
+        assertThat(DeclineReason.of("STPIMS-ERR-088")).isEqualTo(DeclineReason.CARD_DECLINED);
     }
 }
