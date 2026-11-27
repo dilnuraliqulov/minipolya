@@ -167,6 +167,13 @@ services:
       # is paid into. The ATMOS docs contradict themselves, so it is a setting: if payouts
       # land in the wrong place, change this and restart rather than waiting for a release.
       ATMOS_RECIPIENT_FIELD: ${ATMOS_RECIPIENT_FIELD:-}
+      # The longest a team game's hold may last, in minutes: 10080 (7 days) unless ATMOS has
+      # confirmed a longer hold holds. A game further off cannot be created yet.
+      ATMOS_HOLD_MAX_MINUTES: ${ATMOS_HOLD_MAX_MINUTES:-10080}
+      # Fiscal receipt IKPU codes. Empty (the default) sends no receipt; ofd_items go with a
+      # payment only when BOTH are set. Note: --bisect's receipts variant needs them too.
+      ATMOS_OFD_CODE_RENTAL: ${ATMOS_OFD_CODE_RENTAL:-}
+      ATMOS_OFD_CODE_SERVICE: ${ATMOS_OFD_CODE_SERVICE:-}
 
       # Deliberately absent:
       #   CORS_ALLOWED_ORIGINS — Caddy serves the apps and the API on one origin, so there
@@ -175,7 +182,6 @@ services:
       #   DEV_LOGIN_KEY        — the dev-only sign-in exists only under the dev profile,
       #                          which staging refuses to run next to.
       #   TELEGRAM_WEBHOOK_SECRET — polling has no webhook.
-      #   ATMOS_OFD_CODE_*     — fiscal receipts are off until both codes are known.
 
     volumes:
       # Uploaded stadium photos. A named volume, not a bind mount: it survives

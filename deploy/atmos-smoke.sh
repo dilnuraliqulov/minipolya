@@ -85,8 +85,18 @@ cd "$(dirname "$0")"
 #   * ofd_items   — the app sends fiscal lines when ATMOS_OFD_CODE_RENTAL and
 #                   ATMOS_OFD_CODE_SERVICE are both set; this script never does.
 #
+# Two more differences are not in the request body at all, and --bisect tries them too:
+#
+#   * amount      — the app charges a deposit of 55 000 so'm (5 500 000 tiyin) or more; this
+#                   script 500 so'm. Variant 6 pays ATMOS_SMOKE_APP_AMOUNT (5 500 000).
+#   * token age   — the app pays with a card token bound days ago; this script with one bound
+#                   seconds before. Variant 7 waits until the token is ATMOS_SMOKE_TOKEN_AGE
+#                   seconds old (60) before paying.
+#
 # --bisect binds the card ONCE and then takes the payment several times over, adding one of
-# those differences each time and reversing every one in full. The first variant whose
+# those differences each time and reversing every one in full. Before each variant it prints
+# the request's SHAPE (which store pay/create names, terminal_id, the account's length, the
+# amount, ofd_items, the token's age — never a card, token or body). The first variant whose
 # pay/apply fails names the cause, and the backend log line "ATMOS single payment:" says
 # which shape that server actually sends.
 #
@@ -123,6 +133,8 @@ Settings (all optional):
   ATMOS_SMOKE_AMOUNT=50000           how much to pay / hold, in tiyin (500 so'm)
   ATMOS_SMOKE_HOLD_MINUTES=10        how long to hold it for
   ATMOS_SMOKE_RECIPIENT_ID=<id>      --bisect: also try an owner's recipient id
+  ATMOS_SMOKE_APP_AMOUNT=5500000     --bisect variant 6: the amount the app charges, in tiyin
+  ATMOS_SMOKE_TOKEN_AGE=60           --bisect variant 7: seconds the card token is left to age
   ATMOS_SMOKE_ALLOW_PRODUCTION=yes   allow a run against ATMOS production (real money)
 
 It never prints a card number, an expiry, an SMS code, a card token, an access token, a
@@ -164,6 +176,12 @@ case "$amount" in ''|*[!0-9]*) die "ATMOS_SMOKE_AMOUNT must be a whole number of
 
 hold_minutes=${ATMOS_SMOKE_HOLD_MINUTES:-10}
 case "$hold_minutes" in ''|*[!0-9]*) die "ATMOS_SMOKE_HOLD_MINUTES must be a whole number of minutes." ;; esac
+
+app_amount=${ATMOS_SMOKE_APP_AMOUNT:-5500000}
+case "$app_amount" in ''|*[!0-9]*) die "ATMOS_SMOKE_APP_AMOUNT must be a whole number of tiyin." ;; esac
+
+token_age=${ATMOS_SMOKE_TOKEN_AGE:-60}
+case "$token_age" in ''|*[!0-9]*) die "ATMOS_SMOKE_TOKEN_AGE must be a whole number of seconds." ;; esac
 
 # What the backend itself would send, printed so the run can be read against the app's.
 recipient_field=$(docker compose exec -T backend printenv ATMOS_RECIPIENT_FIELD 2>/dev/null | tr -d '\r' || true)
@@ -330,6 +348,8 @@ read -r amount
 read -r mode
 read -r recipient_id
 read -r hold_minutes
+read -r app_amount
+read -r token_age
 
 # The payment examples send ids as numbers; quote one that is not. The HOLD examples quote
 # store_id every time, and so does the app (a store id written "0001" must not become 1),
@@ -348,6 +368,8 @@ call POST /partner/bind-card/confirm "{\"transaction_id\":$binding,\"otp\":\"$ot
 expect bind-card/confirm "card bound" || exit 1
 card_token=$(field card_token "$body")
 card_id=$(field card_id "$body")
+bound_at=$(date +%s)
+token_note='fresh token'
 
 failures=''
 note_failure() { failures="$failures $1"; }
@@ -357,7 +379,7 @@ account_of() { printf 'smoke-%s-%s' "$1" "$(date +%s)"; }
 # ---------------------------------------------------------------------------------------
 # One whole payment: create, pre-apply, apply, get, reverse.
 #
-# pay_once <label> <create-store-json> <terminal-id|''> <account> <ofd yes|no>
+# pay_once <label> <create-store-json> <terminal-id|''> <account> <ofd yes|no> [amount]
 #
 # Everything the app can differ by is an argument, so one run can take the payment several
 # times over with one difference each (--bisect). Whatever happens to the apply it asks
@@ -371,11 +393,17 @@ pay_once() {
   terminal=$3
   account=$4
   ofd=$5
+  pay_amount=${6:-$amount}
 
-  create="{\"store_id\":$create_store,\"account\":\"$account\",\"amount\":$amount"
+  # The request's shape, so a failing variant can be read against the backend's own
+  # "ATMOS single payment:" line. Ids, lengths and flags only — never a card, token or body.
+  printf '      shape: create store_id=%s terminal_id=%s account=%s chars amount=%s tiyin ofd_items=%s card=%s\n' \
+    "$create_store" "${terminal:--}" "${#account}" "$pay_amount" "$ofd" "$token_note"
+
+  create="{\"store_id\":$create_store,\"account\":\"$account\",\"amount\":$pay_amount"
   [ -n "$terminal" ] && create="$create,\"terminal_id\":\"$terminal\""
   if [ "$ofd" = yes ]; then
-    create="$create,\"ofd_items\":[{\"ofd_code\":\"$ATMOS_OFD_CODE_RENTAL\",\"name\":\"Pitch rental\",\"amount\":$amount}]"
+    create="$create,\"ofd_items\":[{\"ofd_code\":\"$ATMOS_OFD_CODE_RENTAL\",\"name\":\"Pitch rental\",\"amount\":$pay_amount}]"
   fi
   create="$create}"
 
@@ -402,7 +430,7 @@ pay_once() {
   told "${label}pay/get" OK "confirmed=${confirmed:-?}, amount $(field amount "$body") tiyin"
 
   # ---- and back in full. There is no partial reverse anywhere in this application. ----
-  reverse "${label}pay/reverse" "$success" "$amount tiyin back" || return 1
+  reverse "${label}pay/reverse" "$success" "$pay_amount tiyin back" || return 1
 
   [ "$apply_code" = "OK" ] || return 2
   return 0
@@ -614,6 +642,22 @@ case "$mode" in
       blank
       printf '  5. skipped: no OFD codes are configured, so the app sends no ofd_items either\n'
     fi
+
+    blank
+    printf '  6. the amount the app charges: %s tiyin instead of %s (everything else as 1)\n' "$app_amount" "$amount"
+    pay_once "  " "$store" '' "smoke-$(date +%s)" no "$app_amount" || note_failure amount
+
+    blank
+    waited=$(( $(date +%s) - bound_at ))
+    if [ "$waited" -lt "$token_age" ]; then
+      printf '  7. an older card token, as the app has: waiting %s s until it is %s s old\n' \
+        "$((token_age - waited))" "$token_age"
+      sleep "$((token_age - waited))"
+    else
+      printf '  7. an older card token, as the app has: it is already %s s old\n' "$waited"
+    fi
+    token_note="token $(( $(date +%s) - bound_at ))s old"
+    pay_once "  " "$store" '' "smoke-$(date +%s)" no || note_failure token-age
     ;;
   hold)
     hold_suite
@@ -676,8 +720,9 @@ say ""
 # Half two: everything that touches the card token, in one call inside the container.
 # ---------------------------------------------------------------------------------------
 
-if printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
+if printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
      "$binding" "$otp" "$amount" "$mode" "${ATMOS_SMOKE_RECIPIENT_ID:-}" "$hold_minutes" \
+     "$app_amount" "$token_age" \
    | docker compose exec -T backend sh -c "$COMMON
 $PAY"; then
   unset otp
