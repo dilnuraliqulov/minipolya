@@ -950,24 +950,6 @@ public class AtmosPaymentProvider implements PaymentProvider {
         return node.put("store_id", id);
     }
 
-    /**
-     * Names the recipient of one split on a request.
-     *
-     * <p>With {@code store_id} (the default) the recipient <em>is</em> the store the item
-     * names. With {@code terminal_id} it is the terminal, and {@code store_id} stays our own
-     * merchant store, which is how the docs' single-payment example reads. Which of the two
-     * ATMOS actually pays out on is {@link AtmosRecipientField}'s open question.
-     */
-    private ObjectNode recipient(ObjectNode node, Split split) {
-        String id = recipientOf(split);
-        if (recipientField == AtmosRecipientField.TERMINAL_ID) {
-            withId(node, "store_id", config.getStoreId());
-            // A string in every example, unlike store_id.
-            return node.put("terminal_id", id);
-        }
-        return withId(node, "store_id", id);
-    }
-
     private String recipientOf(Split split) {
         if (split.platform()) {
             if (platformRecipientMissing()) {
