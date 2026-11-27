@@ -190,7 +190,7 @@ What to do, in order:
 
 1. On the server: `./deploy/atmos-smoke.sh --hold`. It prints the method, path, HTTP status
    and ATMOS code of every hold step.
-2. `docker compose logs backend | grep 'ATMOS refused'` for the body of the 403 — the gateway
+2. `docker compose logs backend | grep 'ATMOS refused'` (from `deploy/`) for the body of the 403 — the gateway
    fault code is the answer.
 3. If `/hold/create` works and only `/hold/multiple/create` is forbidden: the endpoint is the
    problem, not us. Ask ATMOS to open it, and wire the single endpoint meanwhile (see above).
@@ -249,15 +249,15 @@ cd ~/minipolya/minipolyaBackend/deploy
 # the payment and the holds in one run, on one card binding
 ./atmos-smoke.sh --all
 
-# the body of any refusal, which is what the 403 question needs
-cd ~/minipolya/minipolyaBackend
+# the body of any refusal, which is what the 403 question needs (still in deploy/: the
+# compose file lives there, so every docker compose command runs from it)
 docker compose logs --since 30m backend | grep -E 'ATMOS (refused|answered)'
 
 # what this server sends, and the hold cap it is running with
 docker compose exec -T backend printenv | grep -E 'ATMOS_(ENVIRONMENT|STORE_ID|RECIPIENT_FIELD|HOLD_MAX_MINUTES)'
 
-# the whole test suite, from a checkout of this branch
-./mvnw test
+# the whole test suite, from a checkout of this branch (the repository root, not deploy/)
+cd ~/minipolya/minipolyaBackend && ./mvnw test
 ```
 
 Nothing here needs `.env`: the smoke script runs the calls inside the backend container,

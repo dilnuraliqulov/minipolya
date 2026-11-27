@@ -165,6 +165,8 @@ WHERE LOWER(username) = LOWER('dilnur');
 - `GET /api/uploads/**` → public (uploaded stadium photos, see "Stadium photos")
 - `GET /api/dev/**` → no JWT; exists only under the `dev` profile, behind `X-Dev-Login-Key`
   (the fake payments view)
-- `/webhooks/**` → verify provider signature, no JWT (`/webhooks/telegram`: the
-  `X-Telegram-Bot-Api-Secret-Token` header, see "Telegram bot")
+- `POST /webhooks/telegram` → no JWT; the `X-Telegram-Bot-Api-Secret-Token` header instead
+  (see "Telegram bot"). It is the **only** public path under `/webhooks`: the unsigned
+  Payme/Click callbacks were removed, and any other `/webhooks` path needs a JWT (401) and
+  does not exist (404) — `LegacyCheckoutRemovedTest`.
 

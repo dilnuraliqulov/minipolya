@@ -123,7 +123,8 @@ Break none of these. Each is explained in full in the doc named beside it.
 - The Mini App and the admin panel are a **separate repository**, checked out beside this one
   as `../minipolyaFrontend`. No frontend code or frontend docs here.
 - The API serves JSON under `/api/**`, uploaded photos under `GET /api/uploads/**` and the
-  Telegram webhook under `/webhooks/**`. One origin fronts both repos (Caddy), so
+  Telegram webhook at `POST /webhooks/telegram` — the only public path under `/webhooks` (the
+  unsigned Payme/Click callbacks are gone). One origin fronts both repos (Caddy), so
   `CORS_ALLOWED_ORIGINS` is normally empty.
 - `deploy/` is the **only** copy of the deployment walkthrough; the frontend repository points
   at it rather than duplicating it.
@@ -180,8 +181,8 @@ src/main/java/uz/minipolya/minipolya_backend/
 │   │                        #   Unauthorized, ResourceNotFound, Forbidden, …
 │   └── GlobalExceptionHandler.java # @RestControllerAdvice
 ├── provider/                # The payment provider behind one interface (see "Payments"): PaymentProvider,
-│                            #   AtmosPaymentProvider, FakePaymentProvider, LegacyCheckoutProvider (legacy),
-│                            #   DeclineReason, AtmosCodes, CardMask
+│                            #   AtmosPaymentProvider, FakePaymentProvider, DeclineReason, AtmosCodes, CardMask
+│                            #   (the Payme/Click hosted checkout is removed)
 ├── scheduler/               # @Scheduled cron jobs
 │   ├── BookingExpiryJob.java        # Expire unpaid bookings every minute
 │   ├── GameTimeoutJob.java          # Cancel unfilled games (team: 3h before start; others: at start)
@@ -333,5 +334,5 @@ CLAUDE.md section to its new file.
 | `deployment.md` | before deploying, or changing the reverse proxy, HTTPS, secrets, backups, the Compose server |
 | `testing.md` | before writing or running tests (the separate test database, `@DatabaseTest`) |
 | `dependencies.md` | before adding a dependency or touching the MapStruct / Lombok annotation processors |
-| `deferred.md` | before trusting owner revenue figures, casual-game share rounding, or the Payme / Click mocks |
+| `deferred.md` | before trusting owner revenue figures or casual-game share rounding |
 | `build-order.md` | only for the original vertical-slice build order — history, not a to-do list |

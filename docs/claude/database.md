@@ -77,7 +77,8 @@ db/changelog/
     ├── 052-game-team-payment-option.sql   # game_teams payment_option, join_price, remainder_price + remainder_mark / _marked_at / _marked_by
     ├── 053-stadium-weekly-hours.sql       # stadium_hours: one row per day of the week per stadium, backfilled from the stadiums' own open/close
     ├── 054-team-level.sql                 # teams.level: havaskor / orta / professional, nullable (teams from before have none)
-    └── 055-game-message-system.sql        # game_messages kind / event / event_team_name; user_id nullable for the platform's own lines
+    ├── 055-game-message-system.sql        # game_messages kind / event / event_team_name; user_id nullable for the platform's own lines
+    └── 056-payment-needs-review.sql       # payments.status 'needs_review', payments.capture_requested_at; decline_reason 'WRONG_OTP'
 ```
 
 ## Adding New Migrations

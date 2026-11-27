@@ -68,3 +68,60 @@ where some of those cases previously came back as a **declined card** (`declineR
 
 Real card problems are unchanged: `INSUFFICIENT_FUNDS`, `CARD_EXPIRED`, `CARD_DECLINED`
 (blocked card, wrong SMS code, card not found).
+
+---
+
+# Second round (2026-11-26, later): fields and endpoints that changed
+
+This round **does** change the API. In order of what the frontend must do:
+
+## 3. Removed: the Payme/Click hosted checkout
+
+- `POST /api/payments/initiate` — gone (404/405).
+- `POST /webhooks/payme`, `POST /webhooks/click` — gone (401 without a JWT, 404 with one).
+- `POST /api/games/{id}/pay` without `cardId` — now **400 "cardId is required"**; the
+  `provider` parameter is ignored. With `cardId` nothing changed.
+- `PaymentInitResponse.checkoutUrl` — gone (it was only ever on the removed checkout).
+
+Neither app called any of these. `docs/api-reference.md` should drop them.
+
+## 4. New `declineReason` / decline `code`: `WRONG_OTP`
+
+`STPIMS-ERR-098` (wrong confirmation code) at payment is now its own reason, `WRONG_OTP`,
+instead of `CARD_DECLINED`. It appears wherever the other three do: `declineReason` on
+`BookingResponse`, `PaymentResponse` and `AdminPaymentResponse`, and the `code` of the 400
+card declines. Nothing was taken. An unknown reason was already shown as a plain decline,
+so older clients are safe.
+
+## 5. New: adding a card the player already has is **409 `CARD_ALREADY_ADDED`**
+
+`POST /api/cards` answers
+
+```json
+{ "success": false, "code": "CARD_ALREADY_ADDED", "message": "Bu karta allaqachon qoʻshilgan", "data": null }
+```
+
+when the player already has that card (same masked number and expiry), and also when ATMOS
+itself says it bound the card before (it used to come back as the 502 "service down").
+
+## 6. New 502 message: the stadium's owner cannot be paid yet
+
+Any card payment (booking, remainder, team game create / join / remainder, friends game) can
+answer **502 "Maydon egasi toʻlov qabul qilishga hali ulanmagan"** — production only, when
+the stadium's owner has no signed ATMOS contract. Like the other 502: not the card's fault,
+nothing was taken; the player cannot fix it by trying again soon.
+
+## 7. Admin payments: a new status, three fields, a filter and an endpoint
+
+- **Status `needs_review`** on a payment: a hold whose capture or give-back had no clear
+  answer from ATMOS. `failureReason` says which ("Capture unclear: …" / "Give-back
+  unclear: …"). Only an admin settles it.
+- **`POST /api/admin/payments/{id}/resolve-review`** `{ "outcome": "captured" | "released" |
+  "refunded", "reason": "10–500 chars" }` → the payment detail, `"Payment resolved"`.
+  400 `"outcome must be one of captured, released, refunded"`, `"reason must be at least 10
+  characters"`, `"Only a payment that needs review can be resolved"`.
+- **`GET /api/admin/payments?status=`** takes several comma-separated statuses. The
+  "Ushlab turilgan" tab should send `held,capture_pending,return_pending,needs_review`.
+- New fields on `AdminPaymentResponse` (list and detail, absent when null): `holdExpiresAt`
+  (UTC, holds only), `gameTeamId` and `teamSide` (`"a"` / `"b"`, team-game payments only).
+- New audit actions: `PAYMENT_NEEDS_REVIEW` (system), `PAYMENT_REVIEW_RESOLVED` (admin).

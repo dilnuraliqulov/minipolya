@@ -30,9 +30,9 @@
   back (team games through `TeamGameService`, casual through participants)
 - Game statuses: `open` → `confirmed` → `completed`
 - Cancel statuses: `cancelled_slot_taken`, `cancelled_by_creator`, `cancelled_not_filled`
-- `POST /api/games/{id}/pay` is the **casual** payment and refuses a team game (a team
-  pays when creating or joining). With `cardId` it charges that saved card through
-  ATMOS (`playerAmount(share + service fee)`; all the owner's unless
-  `casual_game_service_fee > 0`, which then works like the team fee); without it, the
-  legacy hosted checkout.
+- `POST /api/games/{id}/pay?cardId=` is the **casual** payment and refuses a team game (a
+  team pays when creating or joining). It charges that saved card through ATMOS
+  (`playerAmount(share + service fee)`; all the owner's unless `casual_game_service_fee > 0`,
+  which then works like the team fee). `cardId` is required — **400 "cardId is required"**
+  without it: the legacy Payme/Click hosted checkout that answered then is removed.
 
